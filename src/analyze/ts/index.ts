@@ -9,6 +9,10 @@
  * Emits: file nodes, function nodes, type nodes, `imports` edges between files, and
  * `references` edges between the symbols that use each other. Nothing here guesses —
  * every node and edge is compiler-derived, provenance `static`.
+ *
+ * Everything is accumulated per file rather than into one pile, because a file's
+ * results are also the unit the cache stores between runs (see `cache.ts`). A file that
+ * has not been edited is restored from that cache and never reaches the compiler.
  */
 import path from 'node:path';
 import { Node, Project, SyntaxKind, ts } from 'ts-morph';
@@ -35,11 +39,12 @@ import { hashParts, hashText } from '../../util/hash.js';
 import { extOf, toPosix } from '../../util/paths.js';
 import { detectBoundaries } from '../boundaries/index.js';
 import type { BoundaryFinding } from '../boundaries/types.js';
-import type { LanguagePlugin, PluginContext, PluginResult } from '../plugin.js';
+import type { FileSlice, LanguagePlugin, PluginContext, PluginResult } from '../plugin.js';
 import type { SourceFileRef } from '../project.js';
 
 const TS_EXTENSIONS = new Set(['.ts', '.tsx', '.mts', '.cts', '.js', '.jsx', '.mjs', '.cjs']);
 const MAX_TYPE_TEXT = 180;
+const FILE_ID_PREFIX = 'file:';
 
 export const typescriptPlugin: LanguagePlugin = {
   id: 'typescript',
@@ -55,95 +60,143 @@ interface Registered {
   names: Set<string>;
 }
 
+/** What one file declared, before it is merged into the project-wide index. */
+interface Declared {
+  positions: [number, string][];
+  names: string[];
+}
+
+/** One fresh file, part-analyzed, on its way to becoming a slice. */
+interface Bucket {
+  ref: SourceFileRef;
+  sf: SourceFile;
+  fileNode: AtlasNode | null;
+  nodes: AtlasNode[];
+  edges: Map<string, AtlasEdge>;
+  boundaries: BoundaryFinding[];
+  positions: [number, string][];
+}
+
 export function analyzeTypeScript(ctx: PluginContext): PluginResult {
   const { project, files, options } = ctx;
   const warnings: string[] = [];
   const timings: Record<string, number> = {};
 
-  const t0 = Date.now();
-  const tsProject = createProject(project.tsConfigPath);
-  const byRelPath = new Map<string, SourceFileRef>();
-  const sourceFiles: { ref: SourceFileRef; sf: SourceFile }[] = [];
+  const nodes: AtlasNode[] = [];
+  const edges = new Map<string, AtlasEdge>();
+  const boundaries: BoundaryFinding[] = [];
+  const registered: Registered = { byPosition: new Map(), names: new Set() };
 
+  /**
+   * Absolute POSIX path (lowercased) → repo-relative path, for import resolution.
+   * Built from every file in the project, not only the ones being read this time: an
+   * edited file importing an untouched one still has to resolve that import.
+   */
+  const pathToRel = new Map<string, string>();
+  for (const ref of files) pathToRel.set(normPath(ref.absPath), ref.relPath);
+
+  // ---- Pass 0: restore whatever has not changed -----------------------------
+  const t0 = Date.now();
+  const staleRefs: SourceFileRef[] = [];
+  let reused = 0;
   for (const ref of files) {
-    byRelPath.set(ref.relPath, ref);
+    const slice = ctx.reuse?.get(ref.relPath);
+    if (!slice) {
+      staleRefs.push(ref);
+      continue;
+    }
+    nodes.push(...slice.nodes);
+    mergeEdges(edges, slice.edges);
+    boundaries.push(...slice.boundaries);
+    const posKey = normPath(ref.absPath);
+    for (const [pos, id] of slice.positions) registered.byPosition.set(`${posKey}|${pos}`, id);
+    for (const node of slice.nodes) {
+      if (node.kind !== 'file') registered.names.add(node.name);
+    }
+    reused++;
+  }
+  timings.restore = Date.now() - t0;
+
+  // ---- Load only what has to be read ----------------------------------------
+  const t1 = Date.now();
+  const tsProject = createProject(project.tsConfigPath);
+  const buckets: Bucket[] = [];
+  for (const ref of staleRefs) {
     try {
-      const sf = tsProject.addSourceFileAtPath(toPosix(ref.absPath));
-      sourceFiles.push({ ref, sf });
+      buckets.push({
+        ref,
+        sf: tsProject.addSourceFileAtPath(toPosix(ref.absPath)),
+        fileNode: null,
+        nodes: [],
+        edges: new Map(),
+        boundaries: [],
+        positions: [],
+      });
     } catch (err) {
       warnings.push(`Could not read ${ref.relPath}: ${(err as Error).message}`);
     }
   }
-  timings.load = Date.now() - t0;
-
-  /** Absolute POSIX path (lowercased) → repo-relative path, for import resolution. */
-  const pathToRel = new Map<string, string>();
-  for (const { ref } of sourceFiles) pathToRel.set(normPath(ref.absPath), ref.relPath);
-
-  const nodes: AtlasNode[] = [];
-  const edges = new Map<string, AtlasEdge>();
-  const registered: Registered = { byPosition: new Map(), names: new Set() };
+  timings.load = Date.now() - t1;
 
   // ---- Pass 1: declarations -------------------------------------------------
-  const t1 = Date.now();
+  const t2 = Date.now();
   let done = 0;
-  for (const { ref, sf } of sourceFiles) {
+  for (const bucket of buckets) {
+    const declared: Declared = { positions: [], names: [] };
     try {
-      extractFile(ref, sf, nodes, registered);
+      bucket.fileNode = extractFile(bucket.ref, bucket.sf, bucket.nodes, declared);
     } catch (err) {
-      warnings.push(`Failed to analyze ${ref.relPath}: ${(err as Error).message}`);
+      warnings.push(`Failed to analyze ${bucket.ref.relPath}: ${(err as Error).message}`);
     }
-    if (++done % 25 === 0) ctx.onProgress?.('Reading files', done, sourceFiles.length);
+    bucket.positions = declared.positions;
+    const posKey = normPath(bucket.ref.absPath);
+    for (const [pos, id] of declared.positions) registered.byPosition.set(`${posKey}|${pos}`, id);
+    for (const name of declared.names) registered.names.add(name);
+    if (++done % 25 === 0) ctx.onProgress?.('Reading files', done, buckets.length);
   }
-  ctx.onProgress?.('Reading files', sourceFiles.length, sourceFiles.length);
-  timings.declarations = Date.now() - t1;
+  if (buckets.length > 0) ctx.onProgress?.('Reading files', buckets.length, buckets.length);
+  timings.declarations = Date.now() - t2;
 
   // ---- Pass 2: imports ------------------------------------------------------
-  const t2 = Date.now();
-  const externalImportsByFile = new Map<string, Set<string>>();
-  for (const { ref, sf } of sourceFiles) {
+  const t3 = Date.now();
+  for (const bucket of buckets) {
     try {
-      extractImports(ref, sf, pathToRel, edges, externalImportsByFile);
+      const external = extractImports(bucket.ref, bucket.sf, pathToRel, bucket.edges);
+      if (bucket.fileNode) bucket.fileNode.meta.externalImports = external;
     } catch (err) {
-      warnings.push(`Failed to read imports in ${ref.relPath}: ${(err as Error).message}`);
+      warnings.push(`Failed to read imports in ${bucket.ref.relPath}: ${(err as Error).message}`);
     }
   }
-  for (const node of nodes) {
-    if (node.kind !== 'file') continue;
-    const external = externalImportsByFile.get(node.path ?? '');
-    if (external) node.meta.externalImports = [...external].sort();
-  }
-  timings.imports = Date.now() - t2;
+  timings.imports = Date.now() - t3;
 
   // ---- Pass 3: references ---------------------------------------------------
   if (options.followReferences) {
-    const t3 = Date.now();
+    const t4 = Date.now();
     done = 0;
-    for (const { ref, sf } of sourceFiles) {
+    for (const bucket of buckets) {
       try {
-        extractReferences(ref, sf, registered, edges);
+        extractReferences(bucket.ref, bucket.sf, registered, bucket.edges);
       } catch (err) {
-        warnings.push(`Failed to trace references in ${ref.relPath}: ${(err as Error).message}`);
+        warnings.push(`Failed to trace references in ${bucket.ref.relPath}: ${(err as Error).message}`);
       }
-      if (++done % 25 === 0) ctx.onProgress?.('Tracing references', done, sourceFiles.length);
+      if (++done % 25 === 0) ctx.onProgress?.('Tracing references', done, buckets.length);
     }
-    ctx.onProgress?.('Tracing references', sourceFiles.length, sourceFiles.length);
-    timings.references = Date.now() - t3;
+    if (buckets.length > 0) ctx.onProgress?.('Tracing references', buckets.length, buckets.length);
+    timings.references = Date.now() - t4;
   }
 
   // ---- Pass 4: boundaries ---------------------------------------------------
-  const boundaries: BoundaryFinding[] = [];
   if (options.detectBoundaries) {
-    const t4 = Date.now();
+    const t5 = Date.now();
     done = 0;
-    for (const { ref, sf } of sourceFiles) {
-      const posKey = normPath(ref.absPath);
-      const fileId = makeFileId(ref.relPath);
+    for (const bucket of buckets) {
+      const posKey = normPath(bucket.ref.absPath);
+      const fileId = makeFileId(bucket.ref.relPath);
       try {
-        boundaries.push(
+        bucket.boundaries.push(
           ...detectBoundaries({
-            ref,
-            sf,
+            ref: bucket.ref,
+            sf: bucket.sf,
             fileId,
             project,
             signals: project.signals,
@@ -151,15 +204,35 @@ export function analyzeTypeScript(ctx: PluginContext): PluginResult {
           }),
         );
       } catch (err) {
-        warnings.push(`Failed to read boundaries in ${ref.relPath}: ${(err as Error).message}`);
+        warnings.push(`Failed to read boundaries in ${bucket.ref.relPath}: ${(err as Error).message}`);
       }
-      if (++done % 25 === 0) ctx.onProgress?.('Finding the boundaries', done, sourceFiles.length);
+      if (++done % 25 === 0) ctx.onProgress?.('Finding the boundaries', done, buckets.length);
     }
-    ctx.onProgress?.('Finding the boundaries', sourceFiles.length, sourceFiles.length);
-    timings.boundaries = Date.now() - t4;
+    if (buckets.length > 0) ctx.onProgress?.('Finding the boundaries', buckets.length, buckets.length);
+    timings.boundaries = Date.now() - t5;
   }
 
-  return { nodes, edges: [...edges.values()], boundaries, warnings, timings };
+  // ---- Fold the fresh files back in, and keep a slice of each ---------------
+  const slices: FileSlice[] = [];
+  for (const bucket of buckets) {
+    const sliceEdges = [...bucket.edges.values()];
+    slices.push({
+      relPath: bucket.ref.relPath,
+      hash: ctx.hashes?.get(bucket.ref.relPath) ?? bucket.fileNode?.hash ?? '',
+      nodes: bucket.nodes,
+      edges: sliceEdges,
+      boundaries: bucket.boundaries,
+      positions: bucket.positions,
+      imports: sliceEdges
+        .filter((edge) => edge.kind === 'imports')
+        .map((edge) => edge.toId.slice(FILE_ID_PREFIX.length)),
+    });
+    nodes.push(...bucket.nodes);
+    mergeEdges(edges, sliceEdges);
+    boundaries.push(...bucket.boundaries);
+  }
+
+  return { nodes, edges: [...edges.values()], boundaries, warnings, timings, slices, reused };
 }
 
 function createProject(tsConfigPath: string | null): Project {
@@ -188,11 +261,10 @@ function createProject(tsConfigPath: string | null): Project {
 // Declarations
 // ---------------------------------------------------------------------------
 
-function extractFile(ref: SourceFileRef, sf: SourceFile, nodes: AtlasNode[], registered: Registered): void {
+function extractFile(ref: SourceFileRef, sf: SourceFile, nodes: AtlasNode[], declared: Declared): AtlasNode {
   const fileId = makeFileId(ref.relPath);
   const text = sf.getFullText();
   const doc = extractFileDoc(text);
-  const posKey = normPath(ref.absPath);
 
   const fileNode: AtlasNode = {
     id: fileId,
@@ -228,7 +300,7 @@ function extractFile(ref: SourceFileRef, sf: SourceFile, nodes: AtlasNode[], reg
   let typeCount = 0;
 
   const register = (id: string, ...positions: number[]) => {
-    for (const pos of positions) registered.byPosition.set(`${posKey}|${pos}`, id);
+    for (const pos of positions) declared.positions.push([pos, id]);
   };
 
   // --- functions ---
@@ -250,7 +322,7 @@ function extractFile(ref: SourceFileRef, sf: SourceFile, nodes: AtlasNode[], reg
       }),
     );
     register(id, fn.getStart());
-    registered.names.add(name);
+    declared.names.push(name);
     if (fn.isExported() || fn.isDefaultExport()) exportedNames.push(name);
     functionCount++;
   }
@@ -280,7 +352,7 @@ function extractFile(ref: SourceFileRef, sf: SourceFile, nodes: AtlasNode[], reg
     );
     // Both the variable declaration and the function body should map to this node.
     register(id, decl.getStart(), fnExpr.getStart());
-    registered.names.add(name);
+    declared.names.push(name);
     if (isExported) exportedNames.push(name);
     functionCount++;
   }
@@ -291,7 +363,7 @@ function extractFile(ref: SourceFileRef, sf: SourceFile, nodes: AtlasNode[], reg
     const id = uniqueId(makeTypeId(ref.relPath, name), usedIds);
     nodes.push(classNode(id, name, fileId, ref, cls));
     register(id, cls.getStart());
-    registered.names.add(name);
+    declared.names.push(name);
     if (cls.isExported() || cls.isDefaultExport()) exportedNames.push(name);
     typeCount++;
 
@@ -315,7 +387,7 @@ function extractFile(ref: SourceFileRef, sf: SourceFile, nodes: AtlasNode[], reg
         }),
       );
       register(methodId, method.getStart());
-      registered.names.add(methodName);
+      declared.names.push(methodName);
       functionCount++;
     }
   }
@@ -326,7 +398,7 @@ function extractFile(ref: SourceFileRef, sf: SourceFile, nodes: AtlasNode[], reg
     const id = uniqueId(makeTypeId(ref.relPath, name), usedIds);
     nodes.push(interfaceNode(id, name, fileId, ref, iface));
     register(id, iface.getStart());
-    registered.names.add(name);
+    declared.names.push(name);
     if (iface.isExported()) exportedNames.push(name);
     typeCount++;
   }
@@ -336,7 +408,7 @@ function extractFile(ref: SourceFileRef, sf: SourceFile, nodes: AtlasNode[], reg
     const id = uniqueId(makeTypeId(ref.relPath, name), usedIds);
     nodes.push(typeAliasNode(id, name, fileId, ref, alias));
     register(id, alias.getStart());
-    registered.names.add(name);
+    declared.names.push(name);
     if (alias.isExported()) exportedNames.push(name);
     typeCount++;
   }
@@ -346,7 +418,7 @@ function extractFile(ref: SourceFileRef, sf: SourceFile, nodes: AtlasNode[], reg
     const id = uniqueId(makeTypeId(ref.relPath, name), usedIds);
     nodes.push(enumNode(id, name, fileId, ref, enumDecl));
     register(id, enumDecl.getStart());
-    registered.names.add(name);
+    declared.names.push(name);
     if (enumDecl.isExported()) exportedNames.push(name);
     typeCount++;
   }
@@ -354,6 +426,7 @@ function extractFile(ref: SourceFileRef, sf: SourceFile, nodes: AtlasNode[], reg
   fileNode.meta.exportedNames = exportedNames.sort();
   fileNode.meta.functionCount = functionCount;
   fileNode.meta.typeCount = typeCount;
+  return fileNode;
 }
 
 interface FunctionNodeInput {
@@ -562,16 +635,15 @@ function typeNode(input: TypeNodeInput): AtlasNode {
 // Imports
 // ---------------------------------------------------------------------------
 
+/** Returns the packages this file imports; the file-to-file edges go into `edges`. */
 function extractImports(
   ref: SourceFileRef,
   sf: SourceFile,
   pathToRel: Map<string, string>,
   edges: Map<string, AtlasEdge>,
-  externalImports: Map<string, Set<string>>,
-): void {
+): string[] {
   const fromId = makeFileId(ref.relPath);
-  const external = externalImports.get(ref.relPath) ?? new Set<string>();
-  externalImports.set(ref.relPath, external);
+  const external = new Set<string>();
 
   const record = (specifier: string, targetFile: SourceFile | undefined, symbols: string[]) => {
     if (targetFile) {
@@ -607,6 +679,8 @@ function extractImports(
     const symbols = exp.getNamedExports().map((n) => n.getName());
     record(specifier, exp.getModuleSpecifierSourceFile(), symbols);
   }
+
+  return [...external].sort();
 }
 
 // ---------------------------------------------------------------------------
@@ -749,6 +823,27 @@ function addEdge(edges: Map<string, AtlasEdge>, input: EdgeInput): void {
     provenance: 'static',
     meta: input.meta,
   });
+}
+
+/**
+ * Folds one file's edges into the project-wide set.
+ *
+ * In practice nothing ever collides: every edge a file produces starts inside that
+ * file, so no two files can claim the same one. It still goes through `addEdge` rather
+ * than a plain assignment, so that if that ever stops being true the result is a merged
+ * edge and not a silently discarded one.
+ */
+function mergeEdges(target: Map<string, AtlasEdge>, incoming: Iterable<AtlasEdge>): void {
+  for (const edge of incoming) {
+    addEdge(target, {
+      kind: edge.kind,
+      fromId: edge.fromId,
+      toId: edge.toId,
+      weight: edge.weight,
+      confidence: edge.confidence,
+      meta: edge.meta,
+    });
+  }
 }
 
 function paramInfo(param: ParameterDeclaration): ParamInfo {

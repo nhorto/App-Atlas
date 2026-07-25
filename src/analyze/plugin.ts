@@ -10,11 +10,36 @@ import type { AtlasEdge, AtlasNode } from '../model/types.js';
 import type { BoundaryFinding } from './boundaries/types.js';
 import type { ProjectInfo, SourceFileRef } from './project.js';
 
+/**
+ * One file's whole contribution to the atlas, kept between runs so an unedited file is
+ * never parsed twice. Every edge in here starts inside the file it belongs to, which is
+ * what lets slices be restored in any order (see `cache.ts`).
+ */
+export interface FileSlice {
+  relPath: string;
+  /** Hash of the file's text — the cache key, and why `positions` can be trusted. */
+  hash: string;
+  nodes: AtlasNode[];
+  edges: AtlasEdge[];
+  boundaries: BoundaryFinding[];
+  /** Character offset of each declaration → the atlas node id it became. */
+  positions: [number, string][];
+  /** Repo-relative paths this file imports. */
+  imports: string[];
+}
+
 export interface PluginContext {
   project: ProjectInfo;
   /** Only the files this plugin claimed. */
   files: SourceFileRef[];
   options: PluginOptions;
+  /**
+   * Slices from the last run for files that have not changed since. A plugin that
+   * ignores this still produces a correct atlas — just a slower one.
+   */
+  reuse?: ReadonlyMap<string, FileSlice>;
+  /** Text hash of every claimed file, already computed by the cache. */
+  hashes?: ReadonlyMap<string, string>;
   onProgress?: (stage: string, done: number, total: number) => void;
 }
 
@@ -36,6 +61,10 @@ export interface PluginResult {
   boundaries: BoundaryFinding[];
   warnings: string[];
   timings: Record<string, number>;
+  /** Slices for the files this run actually read, for the cache to keep. */
+  slices?: FileSlice[];
+  /** How many files were restored rather than parsed. Reported to the user. */
+  reused?: number;
 }
 
 export interface LanguagePlugin {
