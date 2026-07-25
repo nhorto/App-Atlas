@@ -14,8 +14,6 @@
  * never starts an agent CLI, which is why backend selection is memoised rather than
  * resolved when the server boots.
  */
-import fs from 'node:fs';
-import path from 'node:path';
 import { selectBackend } from '../enrich/backends/index.js';
 import { symbolRequest } from '../enrich/prompts.js';
 import type { SymbolFacts } from '../enrich/prompts.js';
@@ -26,10 +24,7 @@ import { AtlasStore, atlasDbPath } from '../model/store.js';
 import type { AtlasGraph } from '../model/graph.js';
 import type { AtlasNode, FunctionMeta } from '../model/types.js';
 import { hashParts } from '../util/hash.js';
-
-/** Enough source to explain a function, capped so one huge file cannot blow a budget. */
-const MAX_SOURCE_LINES = 220;
-const MAX_SOURCE_CHARS = 7000;
+import { readSource } from './source.js';
 
 export interface AiServerOptions {
   /** False under `--no-ai`. The endpoint then explains only from the cache. */
@@ -134,7 +129,7 @@ export class Explainer {
       kind: node.kind === 'function' ? (meta.isMethod ? 'method' : 'function') : String(node.meta.typeKind ?? node.kind),
       path: node.path ?? '',
       signature: meta.signature,
-      source: readSource(graph.meta.root, node),
+      source: readSource(graph.meta.root, node)?.code,
       uses: (view?.outgoing ?? []).slice(0, 12).map((link) => link.other.name),
       usedBy: (view?.incoming ?? []).slice(0, 12).map((link) => link.other.name),
     };
@@ -145,27 +140,6 @@ function apply(node: AtlasNode, text: string): void {
   node.summary = text;
   node.summarySource = 'ai';
   node.provenance = 'ai';
-}
-
-/**
- * Pulls one declaration out of the file it lives in. Reading on demand rather than
- * keeping every function body in the atlas keeps the export small and means the
- * source shown is whatever is on disk right now.
- */
-function readSource(root: string, node: AtlasNode): string | undefined {
-  if (!node.path || !node.startLine) return undefined;
-  const absolute = path.resolve(root, node.path);
-  // Never read outside the analyzed project, whatever a node id claims.
-  if (!absolute.startsWith(path.resolve(root))) return undefined;
-
-  try {
-    const lines = fs.readFileSync(absolute, 'utf8').split(/\r?\n/);
-    const end = Math.min(node.endLine ?? node.startLine, node.startLine + MAX_SOURCE_LINES);
-    const slice = lines.slice(node.startLine - 1, end).join('\n');
-    return slice.length > MAX_SOURCE_CHARS ? `${slice.slice(0, MAX_SOURCE_CHARS)}\n…` : slice;
-  } catch {
-    return undefined;
-  }
 }
 
 function openStore(dbPath: string): AtlasStore | null {

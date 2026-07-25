@@ -20,6 +20,8 @@ export type { LevelView, NodeView, OverviewView } from './model/graph.js';
 export { buildBoundaryView } from './model/boundary.js';
 export type { BoundaryCard, BoundaryFlow, BoundaryView, BoundaryZone } from './model/boundary.js';
 export { buildSchemaNodes } from './analyze/schema.js';
+export { buildTours } from './model/tours.js';
+export type { Tour, TourStep } from './model/tours.js';
 export { buildTypeView } from './model/typeview.js';
 export type { TypeCard, TypeField, TypeLink, TypeView } from './model/typeview.js';
 export { buildInsights } from './model/insights.js';
