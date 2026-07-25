@@ -27,6 +27,11 @@ interface SharedOptions {
 
 const program = new Command();
 
+// The default command and the subcommands deliberately share flag names (`--port`,
+// `--json`, `-q`). Without this, commander treats the shared ones as global and
+// `app-atlas serve . --port 5000` silently keeps the default.
+program.enablePositionalOptions();
+
 program
   .name('app-atlas')
   .description('Understand any app — including the one your AI built.')
