@@ -146,6 +146,8 @@ This page is also where the **tours** live — see [Guided tours](#guided-tours)
 
 ### Data — dbdiagram for your code
 
+![Every shape the app moves around, with lines from the field that holds the reference](docs/data-view.png)
+
 Every shape your app moves around, on one canvas: interfaces, types, classes and enums
 from your code, **and your database tables** read straight out of `schema.prisma`, in
 the same picture. A line leaves the row that actually holds the reference, the way a
@@ -191,6 +193,8 @@ happens** button:
 - **What happens when…** — one per major entry point, traced through the code:
   *what happens when something sends POST to /api/users*, *when an outside service
   calls your webhook at /api/webhooks/stripe*, *when the schedule fires (0 8 \* \* \*)*.
+
+![A tour at step 3 of 5, with the parts it is describing lit and everything else dimmed](docs/walkthrough.png)
 
 Each step moves the map to the level being discussed, lights up what it is talking
 about, and offers the code underneath. You can click away mid-tour to follow your own
