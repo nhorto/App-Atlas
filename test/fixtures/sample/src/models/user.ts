@@ -16,3 +16,15 @@ export enum Status {
   Active = 'active',
   Suspended = 'suspended',
 }
+
+/** Whoever is signed in at the moment. */
+export class Session {
+  /** The person, when there is one — an annotation, so it links to User. */
+  signedIn: User | null = null;
+  /** An initializer rather than a type, so it must not link to anything. */
+  label = defaultLabel();
+}
+
+function defaultLabel(): string {
+  return 'nobody';
+}

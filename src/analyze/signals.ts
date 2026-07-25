@@ -20,11 +20,37 @@ export interface CronSignal {
   source: string;
 }
 
+/** One column of one table, as the schema declares it. */
+export interface SchemaField {
+  name: string;
+  /** The type as written, `[]` and `?` included. */
+  type: string;
+  optional: boolean;
+  list: boolean;
+  /** The model this field points at, when its type names one. */
+  relationTo: string | null;
+  isId: boolean;
+  isUnique: boolean;
+}
+
+export interface SchemaModel {
+  name: string;
+  fields: SchemaField[];
+  /** A `///` comment above the model — Prisma's own docstring convention. */
+  doc: string | null;
+  /** 1-based line of the `model X {` that opens it. */
+  line: number;
+  endLine: number;
+}
+
 export interface PrismaSignal {
   /** `postgresql`, `mysql`, `sqlite`, `mongodb`… */
   provider: string;
   models: string[];
+  /** The same models with their columns — what the type explorer draws. */
+  tables: SchemaModel[];
   path: string;
+  lineCount: number;
 }
 
 export interface ProjectSignals {
@@ -101,8 +127,13 @@ function readVercelCrons(root: string): CronSignal[] {
 }
 
 /**
- * Pulls the engine and the model names out of `schema.prisma`. Prisma users get the
- * name of their actual database for free, instead of a generic "Database" box.
+ * Pulls the engine, the models and their columns out of `schema.prisma`. Prisma users
+ * get the name of their actual database for free instead of a generic "Database" box —
+ * and, since M4, the tables themselves as shapes the type explorer can draw.
+ *
+ * A hand-rolled line reader rather than a real Prisma parser: the block syntax is
+ * simple, the dependency is not worth it, and anything unrecognised is skipped rather
+ * than allowed to fail the analysis.
  */
 function readPrismaSchema(root: string): PrismaSignal | null {
   const candidates = ['prisma/schema.prisma', 'schema.prisma', 'src/prisma/schema.prisma'];
@@ -112,14 +143,105 @@ function readPrismaSchema(root: string): PrismaSignal | null {
     try {
       const text = fs.readFileSync(file, 'utf8');
       const provider = /datasource\s+\w+\s*\{[^}]*?provider\s*=\s*"([^"]+)"/s.exec(text)?.[1] ?? 'sql';
-      const models: string[] = [];
-      for (const match of text.matchAll(/^\s*model\s+(\w+)\s*\{/gm)) models.push(match[1]);
-      return { provider, models: models.sort(), path: candidate };
+      const tables = readPrismaModels(text);
+      return {
+        provider,
+        models: tables.map((table) => table.name).sort(),
+        tables,
+        path: candidate,
+        lineCount: splitLines(text).length,
+      };
     } catch {
       return null;
     }
   }
   return null;
+}
+
+/** Scalars Prisma defines itself. Anything else naming a model is a relation. */
+const PRISMA_SCALARS = new Set([
+  'String',
+  'Boolean',
+  'Int',
+  'BigInt',
+  'Float',
+  'Decimal',
+  'DateTime',
+  'Json',
+  'Bytes',
+  'Unsupported',
+]);
+
+/**
+ * Splits on either line ending. A checkout on Windows leaves `\r` at the end of every
+ * line, and a `$`-anchored pattern silently matches nothing against it — which reads
+ * as "this schema has no documentation" rather than as the bug it is.
+ */
+function splitLines(text: string): string[] {
+  return text.split(/\r?\n/);
+}
+
+function readPrismaModels(text: string): SchemaModel[] {
+  const lines = splitLines(text);
+  const models: SchemaModel[] = [];
+  let current: SchemaModel | null = null;
+  let pendingDoc: string[] = [];
+
+  for (let i = 0; i < lines.length; i++) {
+    // `///` is Prisma's docstring. It is read verbatim, exactly like a JSDoc comment,
+    // so a documented schema never needs a generated description.
+    const docLine = /^\s*\/\/\/\s?(.*)$/.exec(lines[i]);
+    if (docLine) {
+      pendingDoc.push(docLine[1].trim());
+      continue;
+    }
+
+    const line = lines[i].replace(/\/\/.*$/, '').trim();
+
+    if (!current) {
+      const open = /^model\s+(\w+)\s*\{/.exec(line);
+      if (open) {
+        const doc = pendingDoc.join(' ').trim();
+        current = { name: open[1], fields: [], doc: doc || null, line: i + 1, endLine: i + 1 };
+      }
+      pendingDoc = [];
+      continue;
+    }
+
+    if (line === '}') {
+      current.endLine = i + 1;
+      models.push(current);
+      current = null;
+      continue;
+    }
+
+    // `@@index([userId])` and friends describe the table, not a column.
+    if (line.startsWith('@@') || line === '') continue;
+
+    const field = /^(\w+)\s+([\w.]+)(\[\])?(\?)?(.*)$/.exec(line);
+    if (!field) continue;
+    const [, name, baseType, list, optional, attributes] = field;
+    current.fields.push({
+      name,
+      type: `${baseType}${list ?? ''}${optional ?? ''}`,
+      optional: Boolean(optional),
+      list: Boolean(list),
+      relationTo: PRISMA_SCALARS.has(baseType) ? null : baseType,
+      isId: /@id\b/.test(attributes),
+      isUnique: /@unique\b/.test(attributes),
+    });
+  }
+
+  // An enum-typed column is not a relation. Only a type that names another table is,
+  // and that can only be known once every model has been read.
+  const known = new Set(models.map((model) => model.name));
+  for (const model of models) {
+    for (const field of model.fields) {
+      if (field.relationTo && !known.has(field.relationTo)) field.relationTo = null;
+    }
+  }
+
+  return models;
 }
 
 /** The variables the author meant you to set — the yardstick for the secrets badge. */
@@ -129,7 +251,7 @@ function readEnvExample(root: string): { envExample: Set<string>; envExamplePath
     const file = path.join(root, candidate);
     if (!fs.existsSync(file)) continue;
     try {
-      for (const line of fs.readFileSync(file, 'utf8').split('\n')) {
+      for (const line of splitLines(fs.readFileSync(file, 'utf8'))) {
         const match = /^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=/.exec(line);
         if (match) names.add(match[1]);
       }

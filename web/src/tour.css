@@ -1,0 +1,245 @@
+/**
+ * App Atlas — guided walkthroughs (SPEC.md 6.4).
+ *
+ * A drawer along the bottom of the canvas rather than a modal, because the map has to
+ * stay visible and clickable: the whole point is that the words and the picture move
+ * together, and that the reader can wander off mid-step without losing the tour.
+ */
+
+.walkthrough {
+  position: absolute;
+  left: 16px;
+  right: 16px;
+  bottom: 16px;
+  z-index: 30;
+  display: flex;
+  flex-direction: column;
+  max-height: min(52%, 420px);
+  border: 1px solid var(--line-strong);
+  border-radius: 12px;
+  background: var(--surface);
+  box-shadow: 0 10px 34px rgba(15, 23, 42, 0.16);
+  overflow: hidden;
+}
+
+/* The map fills the middle column; the drawer is anchored inside it. */
+.canvas {
+  position: relative;
+}
+
+.walkthrough.is-warn {
+  border-color: #fbbf24;
+}
+
+.wt-bar {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 9px 12px 9px 15px;
+  border-bottom: 1px solid var(--line);
+  background: #f8fafc;
+}
+
+.wt-where {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+  flex: 1;
+}
+
+.wt-tour {
+  font-size: 12.5px;
+  font-weight: 650;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.wt-count {
+  font-size: 11px;
+  color: var(--ink-faint);
+}
+
+.wt-dots {
+  display: flex;
+  gap: 6px;
+}
+
+.wt-dot {
+  width: 8px;
+  height: 8px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: var(--line-strong);
+  cursor: pointer;
+}
+
+.wt-dot.is-current {
+  background: var(--accent);
+  transform: scale(1.25);
+}
+
+.wt-close {
+  border: 0;
+  background: none;
+  font-size: 15px;
+  line-height: 1;
+  color: var(--ink-faint);
+  cursor: pointer;
+  padding: 4px 6px;
+}
+
+.wt-close:hover {
+  color: var(--ink);
+}
+
+.wt-body {
+  padding: 14px 18px 4px;
+  overflow-y: auto;
+}
+
+.wt-body h2 {
+  margin: 0 0 6px;
+  font-size: 16px;
+  letter-spacing: -0.01em;
+}
+
+.wt-text {
+  margin: 0;
+  max-width: 74ch;
+  font-size: 14px;
+  line-height: 1.6;
+  color: var(--ink);
+}
+
+.walkthrough.is-warn .wt-text {
+  color: #92400e;
+}
+
+/* Somebody else's words, and they look like it. */
+.wt-quote {
+  margin: 11px 0 0;
+  padding: 9px 12px;
+  border-left: 3px solid var(--line-strong);
+  background: #f8fafc;
+  border-radius: 0 6px 6px 0;
+  max-width: 74ch;
+}
+
+.wt-quote p {
+  margin: 5px 0 0;
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--ink-soft);
+}
+
+.wt-code {
+  margin-top: 11px;
+}
+
+.wt-code-toggle {
+  border: 0;
+  background: none;
+  padding: 0;
+  font-family: var(--mono);
+  font-size: 11.5px;
+  color: var(--ink-faint);
+  cursor: pointer;
+}
+
+.wt-code-toggle:hover {
+  color: var(--accent);
+}
+
+.wt-code pre {
+  margin: 7px 0 0;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: #f8fafc;
+  overflow-x: auto;
+  font-family: var(--mono);
+  font-size: 11.5px;
+  line-height: 1.55;
+}
+
+.wt-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 11px 15px 13px;
+}
+
+.wt-nav {
+  display: flex;
+  gap: 8px;
+}
+
+.wt-nav button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+/* --- the launch points ---------------------------------------------------- */
+
+.tour-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+  gap: 10px;
+}
+
+.tour-card {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-left: 4px solid var(--accent);
+  border-radius: var(--radius);
+  background: var(--surface);
+  text-align: left;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+  transition: box-shadow 120ms ease, border-color 120ms ease;
+}
+
+.tour-card:hover {
+  box-shadow: var(--shadow);
+  border-color: var(--line-strong);
+}
+
+.tour-card.tour-flow {
+  border-left-color: var(--zone-api);
+}
+
+.tour-title {
+  font-size: 13.5px;
+  font-weight: 600;
+  line-height: 1.4;
+}
+
+.tour-sub {
+  font-size: 11.5px;
+  color: var(--ink-faint);
+}
+
+.btn-tour {
+  margin-top: 9px;
+  padding: 7px 11px;
+  border: 1px solid var(--line-strong);
+  border-radius: 7px;
+  background: var(--surface);
+  font: inherit;
+  font-size: 12.5px;
+  color: var(--ink);
+  cursor: pointer;
+}
+
+.btn-tour:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}

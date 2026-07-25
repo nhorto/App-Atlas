@@ -16,6 +16,7 @@ import type {
   NodeView,
   OverviewView,
   ParamInfo,
+  Tour,
   ServiceMeta,
   StoreMeta,
 } from '../types';
@@ -26,12 +27,15 @@ interface Props {
   detail: NodeView | null;
   overview: OverviewView | null;
   aiEnabled: boolean;
+  /** The walkthrough that starts at this node, when there is one. */
+  tour: Tour | null;
   onReveal: (id: string) => void;
   onDrill: (id: string) => void;
+  onStartTour: (id: string) => void;
   onClose: () => void;
 }
 
-export function DetailPanel({ detail, overview, aiEnabled, onReveal, onDrill, onClose }: Props) {
+export function DetailPanel({ detail, overview, aiEnabled, tour, onReveal, onDrill, onStartTour, onClose }: Props) {
   // A description generated from this panel has to appear in this panel, and the atlas
   // on the server is the copy that got updated — not the one we were handed.
   const [written, setWritten] = useState<{ id: string; text: string } | null>(null);
@@ -61,6 +65,12 @@ export function DetailPanel({ detail, overview, aiEnabled, onReveal, onDrill, on
         {isContainer && detail.children.length > 0 ? (
           <button className="btn-primary" onClick={() => onDrill(node.id)}>
             Look inside →
+          </button>
+        ) : null}
+        {/* SPEC.md 6.5's "explain like I'm new": the same facts, walked instead of listed. */}
+        {tour ? (
+          <button className="btn-tour" onClick={() => onStartTour(tour.id)}>
+            Walk me through what happens →
           </button>
         ) : null}
       </header>

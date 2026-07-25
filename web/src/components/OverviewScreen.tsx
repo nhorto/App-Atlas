@@ -12,18 +12,20 @@
  * you just read it made up.
  */
 import type { ReactNode } from 'react';
-import type { AtlasNode, LevelNode, OverviewView } from '../types';
+import type { AtlasNode, LevelNode, OverviewView, Tour } from '../types';
 import { zoneLabel } from './AtlasNodeCard';
 import { TrustLabel } from './Trust';
 
 interface Props {
   view: OverviewView;
+  tours: Tour[];
   onDrill: (id: string) => void;
   onReveal: (id: string) => void;
+  onStartTour: (id: string) => void;
   onOpenBoundaries: () => void;
 }
 
-export function OverviewScreen({ view, onDrill, onReveal, onOpenBoundaries }: Props) {
+export function OverviewScreen({ view, tours, onDrill, onReveal, onStartTour, onOpenBoundaries }: Props) {
   const { meta, app, topLevel, busiestFiles } = view;
   const stats = meta.stats;
   const parts = topLevel.filter((node) => node.kind === 'module');
@@ -59,6 +61,22 @@ export function OverviewScreen({ view, onDrill, onReveal, onOpenBoundaries }: Pr
         <Stat value={stats.externalServices} label="outside services" onClick={onOpenBoundaries} />
         <Stat value={stats.stores} label={stats.stores === 1 ? 'data store' : 'data stores'} onClick={onOpenBoundaries} />
       </section>
+
+      {tours.length > 0 ? (
+        <Section
+          title="Take the tour"
+          hint="Each one walks the map for you, a step at a time. Traced from the code, so they are never out of date."
+        >
+          <div className="tour-grid">
+            {tours.map((tour) => (
+              <button key={tour.id} className={`tour-card tour-${tour.kind}`} onClick={() => onStartTour(tour.id)}>
+                <span className="tour-title">{tour.title}</span>
+                <span className="tour-sub">{tour.subtitle}</span>
+              </button>
+            ))}
+          </div>
+        </Section>
+      ) : null}
 
       {parts.length > 0 ? (
         <Section

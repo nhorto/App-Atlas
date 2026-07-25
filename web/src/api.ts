@@ -10,6 +10,9 @@ import type {
   LevelView,
   NodeView,
   OverviewView,
+  SourceSlice,
+  Tour,
+  TypeView,
 } from './types';
 
 async function get<T>(path: string): Promise<T> {
@@ -31,6 +34,20 @@ export function fetchBoundaries(): Promise<BoundaryView> {
 
 export function fetchInsights(): Promise<InsightsView> {
   return get<InsightsView>('/api/insights');
+}
+
+export function fetchTypes(): Promise<TypeView> {
+  return get<TypeView>('/api/types');
+}
+
+export async function fetchTours(): Promise<Tour[]> {
+  const { tours } = await get<{ tours: Tour[] }>('/api/tours');
+  return tours;
+}
+
+/** The code behind one walkthrough step, read from disk when the step is reached. */
+export function fetchSource(id: string): Promise<SourceSlice> {
+  return get<SourceSlice>(`/api/source?id=${encodeURIComponent(id)}`);
 }
 
 export function fetchLevel(id?: string): Promise<LevelView> {

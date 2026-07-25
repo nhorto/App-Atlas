@@ -1,0 +1,203 @@
+/**
+ * App Atlas — the type explorer (SPEC.md 6.3).
+ *
+ * Cards here are denser than anywhere else in the app on purpose: this is the one
+ * view where the reader is comparing rows across shapes, so the rows have to line up
+ * and the type text has to stay out of the way of the field name. Colour still only
+ * ever means zone — except for the one violet line, which means "this is a guess".
+ */
+
+.type-screen {
+  display: grid;
+  grid-template-rows: auto 1fr;
+  height: 100%;
+  min-height: 0;
+}
+
+.type-head {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 20px;
+  padding: 22px 26px 14px;
+  border-bottom: 1px solid var(--line);
+}
+
+.type-head h1 {
+  margin: 0;
+  font-size: 22px;
+  letter-spacing: -0.02em;
+}
+
+.type-legend {
+  display: flex;
+  gap: 16px;
+  font-size: 11.5px;
+  color: var(--ink-soft);
+}
+
+.type-legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.legend-line {
+  display: inline-block;
+  width: 26px;
+  height: 0;
+  border-top: 2px solid #94a3b8;
+}
+
+.legend-line.legend-guess {
+  border-top-style: dashed;
+  border-top-color: #a78bfa;
+}
+
+.type-canvas {
+  position: relative;
+  min-height: 0;
+}
+
+/* --- one card ------------------------------------------------------------ */
+
+.tcard {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 100%;
+  border: 1px solid var(--line-strong);
+  border-top: 3px solid var(--zone-unknown);
+  border-radius: 9px;
+  background: var(--surface);
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.06);
+  overflow: hidden;
+  transition: box-shadow 120ms ease, opacity 120ms ease;
+}
+
+.tcard.zone-ui { border-top-color: var(--zone-ui); }
+.tcard.zone-api { border-top-color: var(--zone-api); }
+.tcard.zone-logic { border-top-color: var(--zone-logic); }
+.tcard.zone-data { border-top-color: var(--zone-data); }
+.tcard.zone-config { border-top-color: var(--zone-config); }
+.tcard.zone-test { border-top-color: var(--zone-test); }
+
+/* A table is not a shape someone wrote in the app — it is the database itself. */
+.tcard-table {
+  background: #f8fafc;
+  border-color: #94a3b8;
+  border-style: solid;
+}
+
+.tcard.is-dim {
+  opacity: 0.22;
+}
+
+.tcard.is-selected {
+  box-shadow: 0 0 0 2px var(--accent), 0 6px 18px rgba(15, 23, 42, 0.12);
+}
+
+.tcard-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 11px 7px;
+  border-bottom: 1px solid var(--line);
+}
+
+.tcard-name {
+  font-size: 13.5px;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+}
+
+.tcard-kind {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--ink-faint);
+}
+
+.tcard-table .tcard-kind {
+  color: #0f766e;
+}
+
+.tcard-alias {
+  padding: 6px 11px;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--ink-soft);
+  border-bottom: 1px solid var(--line);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.tcard-fields {
+  margin: 0;
+  padding: 3px 0;
+  list-style: none;
+  flex: 1;
+}
+
+.tcard-fields li {
+  position: relative;
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 2px 11px;
+  font-size: 11.5px;
+  line-height: 17px;
+}
+
+.tcard-fields li.is-link {
+  background: rgba(148, 163, 184, 0.11);
+}
+
+.tfield-name {
+  font-family: var(--mono);
+  color: var(--ink);
+  white-space: nowrap;
+}
+
+.tfield-key {
+  margin-right: 4px;
+  color: #b45309;
+}
+
+.tfield-type {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--ink-faint);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 55%;
+}
+
+.tfield-more {
+  color: var(--ink-faint);
+  font-size: 11px;
+}
+
+.tcard-usage {
+  padding: 5px 11px 7px;
+  border-top: 1px solid var(--line);
+  font-size: 10.5px;
+  color: var(--ink-faint);
+}
+
+/* Row handles are anchors for the lines, not controls — never visible, never clickable. */
+.tcard .handle-row {
+  right: -3px;
+  top: 50%;
+  width: 5px;
+  height: 5px;
+  min-width: 0;
+  min-height: 0;
+  border: 0;
+  background: #94a3b8;
+  opacity: 0.9;
+}

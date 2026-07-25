@@ -15,6 +15,9 @@ import type { Atlas } from '../model/types.js';
 import { buildBoundaryView } from '../model/boundary.js';
 import { AtlasGraph } from '../model/graph.js';
 import { buildInsights } from '../model/insights.js';
+import { buildTours } from '../model/tours.js';
+import { buildTypeView } from '../model/typeview.js';
+import { readSource } from './source.js';
 import { Explainer } from './explain.js';
 import type { AiServerOptions } from './explain.js';
 
@@ -149,6 +152,22 @@ function handleRequest(
 
       case '/api/insights':
         return sendJson(res, 200, buildInsights(graph));
+
+      case '/api/types':
+        return sendJson(res, 200, buildTypeView(graph));
+
+      case '/api/tours':
+        return sendJson(res, 200, { tours: buildTours(graph) });
+
+      /** The code behind one step of a walkthrough, read from disk on demand. */
+      case '/api/source': {
+        const id = url.searchParams.get('id') ?? '';
+        const node = graph.getNodeById(id);
+        if (!node) return sendJson(res, 404, { error: `Unknown node: ${id}` });
+        const slice = readSource(graph.meta.root, node, 60);
+        if (!slice) return sendJson(res, 404, { error: 'No source for this one.' });
+        return sendJson(res, 200, slice);
+      }
 
       case '/api/level': {
         const id = url.searchParams.get('id') || graph.rootId;

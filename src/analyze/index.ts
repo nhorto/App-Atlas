@@ -12,13 +12,14 @@ import { hashParts } from '../util/hash.js';
 import { buildBoundaryGraph } from './boundaries/build.js';
 import type { BoundaryFinding } from './boundaries/types.js';
 import { buildModuleTree } from './modules.js';
+import { buildSchemaNodes } from './schema.js';
 import type { LanguagePlugin } from './plugin.js';
 import { discoverProject } from './project.js';
 import type { ProjectInfo } from './project.js';
 import { typescriptPlugin } from './ts/index.js';
 import { dominantZone } from './zones.js';
 
-export const TOOL_VERSION = '0.3.0';
+export const TOOL_VERSION = '0.4.0';
 
 export interface AnalyzeOptions {
   maxFiles?: number;
@@ -94,6 +95,13 @@ export async function analyzeProject(rootDir: string, options: AnalyzeOptions = 
     warnings.push(...result.warnings);
   }
 
+  // --- the database schema ---
+  // Read before the containment tree is built, because the schema file has to be in
+  // the folder tree like any other file for its tables to have somewhere to live.
+  const schema = buildSchemaNodes(project.signals.prisma);
+  nodes.push(...schema.nodes);
+  edges.push(...schema.edges);
+
   // --- boundaries ---
   // Merged once across every language, so a Python route and a TypeScript route land
   // in the same list rather than two parallel ones.
@@ -110,10 +118,9 @@ export async function analyzeProject(rootDir: string, options: AnalyzeOptions = 
 
   // --- containment tree ---
   options.onProgress?.('Building the map', 0, 1);
-  const { modules, parentForFile } = buildModuleTree(
-    project.files.map((f) => ({ relPath: f.relPath, zone: f.zone })),
-    appId,
-  );
+  const treeFiles = project.files.map((f) => ({ relPath: f.relPath, zone: f.zone as Zone }));
+  if (schema.filePath) treeFiles.push({ relPath: schema.filePath, zone: 'data' });
+  const { modules, parentForFile } = buildModuleTree(treeFiles, appId);
   nodes.push(...modules);
 
   for (const node of nodes) {

@@ -2,7 +2,7 @@
 
 > **One-liner:** Understand any app — including the one your AI built. Run one command in any project and get an interactive, always-accurate atlas of your application — where data enters, what happens to it inside, and where it goes.
 
-**Status:** ✅ Approved by Nick (2026-07-25). M1, M2 and M3 shipped; M4 (types & tours) is next. See section 13 for the build log. Incorporates feedback rounds 1–2: name locked, open source, provider-agnostic AI with agent-CLI passthrough, dual audience, security badges in v1.0, agent/MCP integration, explanation-source ladder (docstrings first).
+**Status:** ✅ Approved by Nick (2026-07-25). M1–M4 shipped; M5 (freshness & Python) is next. See section 13 for the build log. Incorporates feedback rounds 1–2: name locked, open source, provider-agnostic AI with agent-CLI passthrough, dual audience, security badges in v1.0, agent/MCP integration, explanation-source ladder (docstrings first).
 
 ---
 
@@ -243,7 +243,7 @@ Two directions, deliberately staged:
 1. **M1 — Skeleton: ✅ done.** CLI + TS analyzer (files/functions/types/imports) + atlas model + architecture map with drill-down (no AI). *Proves the core interaction on real repos.* See section 13.
 2. **M2 — Boundaries & badges: ✅ done.** Framework plugins + boundary detectors + boundary view with Sankey bands + security insight badges (auth coverage, external services, env inventory). *Proves the differentiator.* See section 13.
 3. **M3 — Words: ✅ done.** Provider-agnostic AI enricher (agent-CLI passthrough first, then API keys) + overview page + hover cards + detail panels + trust labels + `app-atlas init`. *Proves the explanation ladder.* See section 13.
-4. **M4 — Types & tours:** type explorer + walkthrough primitive + auto-generated "what happens when…" tours + `export --md` for agents.
+4. **M4 — Types & tours: ✅ done.** Type explorer (including database tables) + walkthrough primitive + auto-generated "what happens when…" tours + `app-atlas export` writing `ATLAS.md` for agents. *Proves the map can explain itself.* See section 13.
 5. **M5 — Freshness & Python:** incremental re-analysis, `--watch`, Python analyzer, monorepo scope switcher, polish, docs, open-source launch.
 
 Each milestone is testable against real agent-built repos (dogfood on Nick's own projects).
@@ -313,3 +313,20 @@ Decisions made during the build, worth carrying forward:
 - **A pass that runs and produces nothing has to say so.** Silence reads as "there was nothing to describe", which is the opposite of what happened.
 
 Measured, against a real Codex CLI on a subscription: the 9-file M2 fixture enriched in 21s (23 descriptions, 3 requests), and a second run over unchanged code did no work at all. The app paragraph named the real routes, the real companies and the real table names.
+
+**M4 — Types & tours: ✅ complete (2026-07-25).** The type explorer with field-level links and database tables read out of `schema.prisma`; the walkthrough primitive; auto-generated "welcome" and "what happens when…" tours; and `app-atlas export` writing `ATLAS.md` for coding agents. 20 new tests, 63 in total.
+
+Decisions made during the build, worth carrying forward:
+
+- **A link between two types records the field that made it.** The reference pass already knew that `Order` mentions `User`; it now notes the enclosing property name when the identifier sits in a field's *type annotation*, which is what lets a card draw its line out of the row that actually holds the reference. Only annotations count — a property initializer that happens to call something is not that property pointing at a type.
+- **Database tables are `type` nodes, not a new node kind.** A table is a named thing with typed fields, which is exactly what the type explorer draws, so `typeKind: 'table'` means every view that already understands types understands tables for free. The schema file joins the folder tree like any other file, which gives its tables somewhere to live.
+- **`///` is a docstring.** Prisma's own comment convention is read verbatim, exactly like JSDoc, so a documented schema never needs a generated description.
+- **A shared name is a link of its own kind.** A `User` table and a `User` interface are usually the same idea, and saying so is useful — but the compiler never said it, so a name match is drawn dashed, labelled "same name only", and *never enters the atlas itself*. Confining the guess to one view keeps the facts layer clean.
+- **Tours are traversals, not essays.** "What happens when someone posts to /api/checkout" is door → handler → what it reaches → where it lands, walked over the existing edges. Nothing calls a model, so tours are free, work offline, work under `--no-ai`, and cannot go stale. Every step body is compiler fact; a docstring or generated sentence rides along as a labelled *quote* rather than being blended into the narration.
+- **A webhook is not called by the framework that found it.** `meta.framework` is the detector's convention; "Next.js calls your webhook" is simply false. Small phrasing bugs like this are how a tool loses a reader's trust in everything else it says — the same reason "5 parts at the top level" was fixed to stop counting the two boundary containers as parts of the code.
+- **Framework-positional filenames get their folder back.** `route.ts` four times in a row tells the reader nothing, and neither does `types.ts` twice; names are disambiguated within whatever list they appear in.
+- **The export marks generated sentences `(ai)` and caps every list.** An agent reading `ATLAS.md` should weigh its own species' output accordingly, and a map that does not fit in a context window is not a map. 5 KB for a 75-file project. Webhooks and crons get their own short section: nothing outside can knock on them so they never appear in the auth table, but code that runs on its own is exactly what an agent about to make a change needs to know about.
+- **A card that reports its own size is what gives React Flow per-row handle positions.** Telling React Flow a node's dimensions up front (as the map does, to avoid a measurement flash) skips the measurement that registers where each field row's handle sits — and every field-level line is then silently dropped. The type explorer sizes through `style` instead.
+- **Fixed a Windows bug on the way through:** a checkout with CRLF line endings left `\r` at the end of every line, so any `$`-anchored pattern matched nothing. That read as "this schema has no documentation" rather than as the bug it was. Config readers now split on `/\r?\n/`.
+
+Measured: the M2 fixture (10 files, 3 tables) produces 6 tours and a 2.7 KB `ATLAS.md`; App Atlas itself (75 files, 194 types) produces 60 type cards with 58 links and a 5.5 KB export. Neither costs a model call.
