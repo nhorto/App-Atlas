@@ -268,6 +268,12 @@ export interface AtlasStats {
   linesOfCode: number;
   documentedFiles: number;
   documentedFunctions: number;
+  /** Nodes whose docstring describes code that has since changed. */
+  staleDocs: number;
+  /** Nodes of any kind whose description was generated rather than read from the code. */
+  aiSummaries: number;
+  /** The file-level subset, so it can be compared against `documentedFiles`. */
+  aiFiles: number;
   /** Every inbound door, of every kind. */
   endpoints: number;
   /** The subset that answers a URL — the ones auth coverage is measured over. */
@@ -302,7 +308,7 @@ export interface Atlas {
   edges: AtlasEdge[];
 }
 
-export const FORMAT_VERSION = 2;
+export const FORMAT_VERSION = 3;
 
 /** Node kinds a user can drill into on the canvas. */
 export const CONTAINER_KINDS: ReadonlySet<NodeKind> = new Set<NodeKind>([
