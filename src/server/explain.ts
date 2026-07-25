@@ -47,18 +47,18 @@ export interface ExplainError {
 export class Explainer {
   private resolved: Promise<EnrichBackend | null> | null = null;
 
-  constructor(
-    private readonly options: AiServerOptions,
-    private readonly getGraph: () => AtlasGraph,
-  ) {}
+  constructor(private readonly options: AiServerOptions) {}
 
   /** What the UI needs to label the button honestly before anything has been run. */
   status(): { enabled: boolean } {
     return { enabled: this.options.enabled };
   }
 
-  async explain(nodeId: string): Promise<ExplainResult | ExplainError> {
-    const graph = this.getGraph();
+  /**
+   * The graph is passed in rather than held, because in a monorepo the answer depends
+   * on which app the question came from.
+   */
+  async explain(nodeId: string, graph: AtlasGraph): Promise<ExplainResult | ExplainError> {
     const node = graph.getNodeById(nodeId);
     if (!node) return { error: `Unknown node: ${nodeId}` };
     if (node.summarySource === 'docs') {

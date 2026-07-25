@@ -250,6 +250,14 @@ export interface AiStatus {
   enabled: boolean;
 }
 
+/** One app inside a workspace. Absent entirely for an ordinary single-app repo. */
+export interface ScopeInfo {
+  id: string;
+  name: string;
+  dir: string;
+  kind: 'app' | 'library';
+}
+
 export interface ExplainResult {
   text: string;
   /** Which backend wrote it. Absent when the answer came from the cache. */

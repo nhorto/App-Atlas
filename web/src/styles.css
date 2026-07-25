@@ -145,6 +145,38 @@ code {
   color: var(--ink-faint);
 }
 
+/* The monorepo switcher. Only rendered when there is more than one app to pick. */
+.scope-picker {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: none;
+}
+
+.scope-label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--ink-faint);
+}
+
+.scope-picker select {
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink);
+  background: var(--surface);
+  border: 1px solid var(--line-strong);
+  border-radius: 7px;
+  padding: 4px 8px;
+  cursor: pointer;
+  max-width: 200px;
+}
+
+.scope-picker select:hover {
+  border-color: var(--accent);
+}
+
 /* Shown for a couple of seconds after --watch rebuilds, then it gets out of the way. */
 .live-badge {
   font-size: 11px;

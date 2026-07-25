@@ -32,9 +32,11 @@ import {
   fetchLevel,
   fetchNode,
   fetchOverview,
+  fetchScopes,
   fetchTours,
   fetchTypes,
   onAtlasUpdated,
+  setScope,
 } from './api';
 import { layoutLevel, sizeOf, type Positioned } from './layout';
 import type {
@@ -44,6 +46,7 @@ import type {
   LevelView,
   NodeView,
   OverviewView,
+  ScopeInfo,
   Tour,
   TypeView,
   Zone,
@@ -102,8 +105,47 @@ function AtlasApp() {
   const [aiEnabled, setAiEnabled] = useState(false);
   const [revision, setRevision] = useState(0);
   const [justUpdated, setJustUpdated] = useState(false);
+  const [scopes, setScopes] = useState<ScopeInfo[]>([]);
+  const [scopeId, setScopeId] = useState('');
   const { fitView } = useReactFlow();
   const nodesInitialized = useNodesInitialized();
+
+  // --- which apps there are, in a monorepo ---
+  // Asked once, before anything else, because every other request is about one of them.
+  useEffect(() => {
+    fetchScopes()
+      .then((list) => {
+        setScopes(list);
+        // The server already defaults to the first app, so naming it here costs no
+        // extra request — it just stops the switcher showing one app while the page
+        // is quietly displaying it under a different name.
+        if (list.length > 0) {
+          setScope(list[0].id);
+          setScopeId(list[0].id);
+        }
+      })
+      .catch(() => setScopes([]));
+  }, []);
+
+  /**
+   * Switching app is closer to opening a different project than to changing a filter,
+   * so everything loaded for the last one is dropped and the map starts at its top
+   * level again. Keeping the old breadcrumb would point at folders that do not exist.
+   */
+  const chooseScope = useCallback((id: string) => {
+    setScope(id);
+    setScopeId(id);
+    setOverview(null);
+    setBoundaries(null);
+    setInsights(null);
+    setTypes(null);
+    setLevel(null);
+    setLevelId(null);
+    setSelectedId(null);
+    setTourId(null);
+    setLoading(true);
+    setRevision((n) => n + 1);
+  }, []);
 
   // --- load the atlas ---
   useEffect(() => {
@@ -436,6 +478,24 @@ function AtlasApp() {
             </button>
           ))}
         </nav>
+
+        {scopes.length > 1 ? (
+          <label className="scope-picker">
+            <span className="scope-label">App</span>
+            <select
+              value={scopeId}
+              onChange={(event) => chooseScope(event.target.value)}
+              aria-label="Which app in this workspace"
+            >
+              {scopes.map((scope) => (
+                <option key={scope.id} value={scope.id}>
+                  {scope.name}
+                  {scope.kind === 'library' ? ' (shared)' : ''}
+                </option>
+              ))}
+            </select>
+          </label>
+        ) : null}
 
         {view === 'map' ? (
           <nav className="crumbs" aria-label="Breadcrumb">
