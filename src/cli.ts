@@ -7,6 +7,7 @@
  *   app-atlas analyze [dir]  analyze only
  *   app-atlas serve [dir]    open the map from a previous analysis
  */
+import fs from 'node:fs';
 import path from 'node:path';
 import { Command } from 'commander';
 import pc from 'picocolors';
@@ -14,7 +15,9 @@ import open from 'open';
 import { analyzeProject, computeStats, TOOL_VERSION } from './analyze/index.js';
 import { BACKEND_IDS } from './enrich/backends/index.js';
 import { describeRun, writeTheWords } from './enrich/session.js';
+import { renderAtlasMarkdown } from './export/markdown.js';
 import { initConventions } from './init.js';
+import { AtlasGraph } from './model/graph.js';
 import type { Atlas } from './model/types.js';
 import { markStaleDocs } from './model/staleness.js';
 import { atlasDbPath, atlasJsonPath, loadAtlas, persistAtlas } from './model/store.js';
@@ -105,6 +108,41 @@ program
       return;
     }
     await runServer(dir, atlas, options);
+  });
+
+program
+  .command('export')
+  .description('write ATLAS.md — a compact map of your app for coding agents')
+  .argument('[dir]', 'project directory', '.')
+  .option('--md [path]', 'where to write it (default: ATLAS.md in the project)')
+  .option('--stdout', 'print it instead of writing a file')
+  .action((dir: string, options: { md?: string | boolean; stdout?: boolean }) => {
+    const root = path.resolve(dir);
+    const atlas = loadAtlas(root);
+    if (!atlas) {
+      console.error(pc.red(`No atlas found in ${pc.bold(root)}.`));
+      console.error(`Run ${pc.cyan('app-atlas analyze')} there first.`);
+      process.exitCode = 1;
+      return;
+    }
+
+    const markdown = renderAtlasMarkdown(new AtlasGraph(atlas), { toolVersion: TOOL_VERSION });
+    if (options.stdout) {
+      process.stdout.write(markdown);
+      return;
+    }
+
+    const target = path.resolve(root, typeof options.md === 'string' ? options.md : 'ATLAS.md');
+    fs.writeFileSync(target, markdown, 'utf8');
+
+    const relative = path.relative(process.cwd(), target) || target;
+    const size = Math.round(Buffer.byteLength(markdown) / 102.4) / 10;
+    console.log('');
+    console.log(`  ${pc.green('wrote')}  ${relative} ${pc.dim(`(${size} KB)`)}`);
+    console.log('');
+    console.log(pc.dim('  Point your coding agent at it — one line in CLAUDE.md or AGENTS.md:'));
+    console.log(pc.dim(`    Read ${path.basename(target)} before changing code. It is the map of this app.`));
+    console.log('');
   });
 
 program
