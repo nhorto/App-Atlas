@@ -1,0 +1,52 @@
+# Checks every push and every pull request.
+#
+# The matrix is deliberately two-dimensional. Node matters because App Atlas uses
+# `node:sqlite`, which arrived recently and settled at different times in different
+# release lines. The operating system matters because finding a working Python
+# interpreter is genuinely different on Windows, where a bare `python3` is usually a
+# Microsoft Store stub — and that path has no way of being exercised locally by
+# someone who only owns one of the two.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    name: ${{ matrix.os }} · Node ${{ matrix.node }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      # One red cell should not hide the others; knowing whether a break is
+      # OS-specific or version-specific is most of the diagnosis.
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        node: ['22.x', '24.x']
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+
+      # The Python analyzer shells out to whatever interpreter it can find. Pinning one
+      # here means the Python tests actually run rather than quietly skipping.
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+
+      - run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Test
+        run: npm test
+
+      # The CLI serves this; a build that fails is a broken `app-atlas serve`.
+      - name: Build the web app
+        run: npm run build:web

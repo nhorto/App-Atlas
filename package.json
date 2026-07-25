@@ -3,6 +3,13 @@
   "version": "0.5.0",
   "description": "Understand any app - including the one your AI built. An interactive, always-accurate atlas of your application.",
   "license": "MIT",
+  "author": "nhorto",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/nhorto/App-Atlas.git"
+  },
+  "homepage": "https://github.com/nhorto/App-Atlas#readme",
+  "bugs": "https://github.com/nhorto/App-Atlas/issues",
   "type": "module",
   "bin": {
     "app-atlas": "dist/node/cli.js"

@@ -350,4 +350,4 @@ Decisions made during the build, worth carrying forward:
 
 Measured: App Atlas itself (92 files) analyzes cold in 4.1s and warm in 0.3s, producing a byte-identical atlas. A watch-mode rebuild after adding one route is 0.3s. The Python fixture (5 files) is read, linked and badged in under a second.
 
-**Still open before a public launch:** two screenshots — the Data view and a walkthrough step — are missing from the README. Every other view has one.
+The last two screenshots — the Data view and a walkthrough step — landed on 2026-07-25, so every view in the README now has a picture.
