@@ -56,6 +56,14 @@ export interface PrismaSignal {
 export interface ProjectSignals {
   /** Every declared dependency, dev included — used to gate framework detectors. */
   packages: Set<string>;
+  /**
+   * Python dependencies, lowercased, kept separate from the npm ones. Merging them
+   * would let `redis` in a requirements file switch on a JavaScript detector, and an
+   * invented box on the map is worse than a missing one.
+   */
+  pythonPackages: Set<string>;
+  /** Which file the Python dependencies came from, if any. */
+  pythonManifest: string | null;
   /** Repo-relative directory of the Next.js App Router, if there is one. */
   nextAppDir: string | null;
   /** Repo-relative directory of the Next.js Pages Router, if there is one. */
@@ -75,8 +83,65 @@ export function readSignals(root: string, packageJson: Record<string, unknown> |
     nextPagesDir: packages.has('next') ? firstExistingDir(root, ['pages', 'src/pages']) : null,
     crons: readVercelCrons(root),
     prisma: readPrismaSchema(root),
+    ...readPythonPackages(root),
     ...readEnvExample(root),
   };
+}
+
+/**
+ * Python dependencies, from whichever manifest the project uses.
+ *
+ * Deliberately a lexer rather than a parser: `requirements.txt` has no grammar worth
+ * the name, and pyproject.toml would cost a TOML dependency to read three lines out of.
+ * All that is needed is the set of distribution names, and a line-by-line read of
+ * either file gets that right.
+ */
+function readPythonPackages(root: string): { pythonPackages: Set<string>; pythonManifest: string | null } {
+  const packages = new Set<string>();
+  let manifest: string | null = null;
+
+  for (const name of ['requirements.txt', 'requirements-dev.txt', 'requirements/base.txt']) {
+    const file = path.join(root, name);
+    if (!fs.existsSync(file)) continue;
+    manifest ??= name;
+    for (const line of splitLines(readText(file))) {
+      const stripped = line.split('#')[0].trim();
+      if (!stripped || stripped.startsWith('-')) continue;
+      const match = /^([A-Za-z0-9._-]+)/.exec(stripped);
+      if (match) packages.add(normalizeDistribution(match[1]));
+    }
+  }
+
+  const pyproject = path.join(root, 'pyproject.toml');
+  if (fs.existsSync(pyproject)) {
+    manifest ??= 'pyproject.toml';
+    // Covers both spellings: PEP 621 `dependencies = ["fastapi>=0.1"]` and Poetry's
+    // `[tool.poetry.dependencies]` table of `fastapi = "^0.1"`.
+    for (const line of splitLines(readText(pyproject))) {
+      const quoted = /^\s*["']([A-Za-z0-9._-]+)\s*[<>=!~\[;]/.exec(line);
+      if (quoted) packages.add(normalizeDistribution(quoted[1]));
+      const bare = /^\s*["']?([A-Za-z0-9._-]+)["']?\s*=\s*["{]/.exec(line);
+      if (bare && bare[1].toLowerCase() !== 'python') packages.add(normalizeDistribution(bare[1]));
+      const plain = /^\s*["']([A-Za-z0-9._-]+)["']\s*,?\s*$/.exec(line);
+      if (plain) packages.add(normalizeDistribution(plain[1]));
+    }
+  }
+
+  const pipfile = path.join(root, 'Pipfile');
+  if (fs.existsSync(pipfile)) {
+    manifest ??= 'Pipfile';
+    for (const line of splitLines(readText(pipfile))) {
+      const match = /^\s*["']?([A-Za-z0-9._-]+)["']?\s*=\s*/.exec(line);
+      if (match && match[1].toLowerCase() !== 'python_version') packages.add(normalizeDistribution(match[1]));
+    }
+  }
+
+  return { pythonPackages: packages, pythonManifest: manifest };
+}
+
+/** PyPI treats `-`, `_` and `.` as the same character, and so does everyone else. */
+function normalizeDistribution(name: string): string {
+  return name.toLowerCase().replace(/[-_.]+/g, '-');
 }
 
 function readPackages(pkg: Record<string, unknown> | null): Set<string> {
@@ -179,6 +244,15 @@ const PRISMA_SCALARS = new Set([
  */
 function splitLines(text: string): string[] {
   return text.split(/\r?\n/);
+}
+
+/** A config file that will not open tells us nothing, which is not an error. */
+function readText(file: string): string {
+  try {
+    return fs.readFileSync(file, 'utf8');
+  } catch {
+    return '';
+  }
 }
 
 function readPrismaModels(text: string): SchemaModel[] {

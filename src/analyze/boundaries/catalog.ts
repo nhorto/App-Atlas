@@ -106,6 +106,62 @@ const PACKAGE_SERVICES: Record<string, ServiceDef> = {
   '@upstash/qstash': { name: 'Upstash QStash', category: 'queue' },
 };
 
+/**
+ * The same idea for Python, where the import name is the thing to look up.
+ *
+ * Kept separate rather than merged, because the two ecosystems disagree: `redis` is a
+ * database client in both, but `openai` is a package name in one and an import name in
+ * the other, and a shared table would quietly claim a Node app uses `boto3`.
+ */
+const PYTHON_SERVICES: Record<string, ServiceDef> = {
+  stripe: { name: 'Stripe', category: 'payments' },
+  openai: { name: 'OpenAI', category: 'ai' },
+  anthropic: { name: 'Anthropic', category: 'ai' },
+  cohere: { name: 'Cohere', category: 'ai' },
+  replicate: { name: 'Replicate', category: 'ai' },
+  together: { name: 'Together AI', category: 'ai' },
+  google: { name: 'Google APIs', category: 'other' },
+  resend: { name: 'Resend', category: 'email' },
+  sendgrid: { name: 'SendGrid', category: 'email' },
+  postmarker: { name: 'Postmark', category: 'email' },
+  smtplib: { name: 'Email (SMTP)', category: 'email' },
+  twilio: { name: 'Twilio', category: 'sms' },
+  slack_sdk: { name: 'Slack', category: 'other' },
+  slack: { name: 'Slack', category: 'other' },
+  discord: { name: 'Discord', category: 'other' },
+  github: { name: 'GitHub', category: 'other' },
+  boto3: { name: 'Amazon Web Services', category: 'storage' },
+  cloudinary: { name: 'Cloudinary', category: 'storage' },
+  sentry_sdk: { name: 'Sentry', category: 'monitoring' },
+  posthog: { name: 'PostHog', category: 'analytics' },
+  segment: { name: 'Segment', category: 'analytics' },
+  algoliasearch: { name: 'Algolia', category: 'search' },
+  elasticsearch: { name: 'Elasticsearch', category: 'search' },
+  pinecone: { name: 'Pinecone', category: 'search' },
+  qdrant_client: { name: 'Qdrant', category: 'search' },
+  supabase: { name: 'Supabase', category: 'other' },
+  clerk_backend_api: { name: 'Clerk', category: 'auth' },
+};
+
+/** Python import name → the database client it is. */
+const PYTHON_STORES: Record<string, StoreDef> = {
+  sqlalchemy: { client: 'SQLAlchemy', storeKind: 'sql', fallbackName: 'Database' },
+  sqlmodel: { client: 'SQLModel', storeKind: 'sql', fallbackName: 'Database' },
+  django: { client: 'Django ORM', storeKind: 'sql', fallbackName: 'Database' },
+  psycopg: { client: 'psycopg', storeKind: 'sql', fallbackName: 'PostgreSQL' },
+  psycopg2: { client: 'psycopg2', storeKind: 'sql', fallbackName: 'PostgreSQL' },
+  asyncpg: { client: 'asyncpg', storeKind: 'sql', fallbackName: 'PostgreSQL' },
+  sqlite3: { client: 'sqlite3', storeKind: 'sql', fallbackName: 'SQLite' },
+  aiosqlite: { client: 'aiosqlite', storeKind: 'sql', fallbackName: 'SQLite' },
+  pymysql: { client: 'PyMySQL', storeKind: 'sql', fallbackName: 'MySQL' },
+  peewee: { client: 'Peewee', storeKind: 'sql', fallbackName: 'Database' },
+  tortoise: { client: 'Tortoise ORM', storeKind: 'sql', fallbackName: 'Database' },
+  pymongo: { client: 'PyMongo', storeKind: 'nosql', fallbackName: 'MongoDB' },
+  motor: { client: 'Motor', storeKind: 'nosql', fallbackName: 'MongoDB' },
+  redis: { client: 'redis-py', storeKind: 'kv', fallbackName: 'Redis' },
+  firebase_admin: { client: 'Firebase', storeKind: 'nosql', fallbackName: 'Firestore' },
+};
+
 /** Hostname → the company on the other end. Matched against literal URLs in `fetch`. */
 const HOST_SERVICES: { pattern: RegExp; def: ServiceDef }[] = [
   { pattern: /(^|\.)stripe\.com$/, def: { name: 'Stripe', category: 'payments' } },
@@ -183,6 +239,15 @@ export function serviceForHost(host: string): ServiceDef | null {
 
 export function storeForPackage(pkg: string): StoreDef | null {
   return STORE_CLIENTS[pkg] ?? null;
+}
+
+/** The top-level import name, so `sqlalchemy.orm` is still SQLAlchemy. */
+export function serviceForPythonModule(module: string): ServiceDef | null {
+  return PYTHON_SERVICES[module.split('.')[0]] ?? null;
+}
+
+export function storeForPythonModule(module: string): StoreDef | null {
+  return PYTHON_STORES[module.split('.')[0]] ?? null;
 }
 
 export function authProviderForPackage(pkg: string): string | null {

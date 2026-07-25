@@ -40,6 +40,34 @@ const LOGIC_HINTS = [
 ];
 
 /**
+ * Python says the same things with different words, so it gets its own table.
+ *
+ * Sharing the JavaScript one would be actively wrong: `app/` is a Next.js router in one
+ * ecosystem and simply the name of the package in the other, and colouring a Django
+ * project's entire backend as "UI" is the kind of mistake that makes a reader stop
+ * trusting every other colour on the map.
+ */
+const PY_TEST = [/(^|\/)tests?\//, /(^|\/)test_[^/]+\.py$/, /_test\.py$/, /(^|\/)conftest\.py$/];
+const PY_CONFIG = new Set(['settings.py', 'conf.py', 'config.py', 'setup.py', 'asgi.py', 'wsgi.py', 'manage.py', '__init__.py']);
+const PY_DATA = new Set(['models.py', 'model.py', 'schema.py', 'schemas.py', 'database.py', 'db.py', 'crud.py', 'repository.py', 'entities.py']);
+const PY_DATA_DIRS = [/(^|\/)migrations?\//, /(^|\/)alembic\//, /(^|\/)models?\//, /(^|\/)schemas?\//, /(^|\/)db\//];
+const PY_API = new Set(['views.py', 'urls.py', 'routes.py', 'router.py', 'routers.py', 'api.py', 'main.py', 'app.py', 'server.py', 'serializers.py', 'endpoints.py', 'handlers.py']);
+const PY_API_DIRS = [/(^|\/)api\//, /(^|\/)routers?\//, /(^|\/)views?\//, /(^|\/)endpoints?\//];
+const PY_UI_DIRS = [/(^|\/)templates?\//, /(^|\/)static\//];
+
+function classifyPythonZone(lower: string, base: string): Zone {
+  if (PY_TEST.some((r) => r.test(lower))) return 'test';
+  if (PY_DATA.has(base) || PY_DATA_DIRS.some((r) => r.test(lower))) return 'data';
+  if (PY_API.has(base) || PY_API_DIRS.some((r) => r.test(lower))) return 'api';
+  if (PY_UI_DIRS.some((r) => r.test(lower))) return 'ui';
+  // `__init__.py` is usually empty plumbing, and `settings.py` is configuration —
+  // both are checked after the roles above so a real `models/__init__.py` still reads
+  // as data rather than as config.
+  if (PY_CONFIG.has(base)) return 'config';
+  return 'logic';
+}
+
+/**
  * Classifies a repo-relative file path into a zone. Order matters: the most specific
  * signals (tests, config, data) win over the broadest ones (a file under `app/`).
  */
@@ -47,6 +75,8 @@ export function classifyZone(relPath: string): Zone {
   const lower = relPath.toLowerCase();
   const base = baseNameOf(lower);
   const ext = extOf(lower);
+
+  if (ext === '.py' || ext === '.pyi') return classifyPythonZone(lower, base);
 
   if (TEST_HINTS.some((r) => r.test(lower))) return 'test';
   if (CONFIG_NAMES.has(base) || /\.config\.[cm]?[jt]s$/.test(base)) return 'config';

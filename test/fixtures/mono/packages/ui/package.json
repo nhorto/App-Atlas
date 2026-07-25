@@ -1,0 +1,5 @@
+{
+  "name": "@mono/ui",
+  "main": "src/index.ts",
+  "dependencies": { "react": "^19.0.0" }
+}

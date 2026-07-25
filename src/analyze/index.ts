@@ -1,9 +1,10 @@
 /**
  * @fileoverview Analysis orchestrator.
  *
- * Discovers the project, hands its files to the language plugins, wraps the results
- * in the containment tree (app → modules → files → functions/types), and produces a
- * complete Atlas. This is the only place that knows the whole pipeline.
+ * Discovers the project, works out which files still need reading, hands those to the
+ * language plugins, wraps the results in the containment tree (app → modules → files →
+ * functions/types), and produces a complete Atlas. This is the only place that knows
+ * the whole pipeline.
  */
 import type { Atlas, AtlasEdge, AtlasNode, AtlasStats, EndpointMeta, Zone } from '../model/types.js';
 import { countStaleDocs } from '../model/staleness.js';
@@ -11,21 +12,37 @@ import { FORMAT_VERSION, makeAppId, makeEdgeId } from '../model/types.js';
 import { hashParts } from '../util/hash.js';
 import { buildBoundaryGraph } from './boundaries/build.js';
 import type { BoundaryFinding } from './boundaries/types.js';
+import { AnalysisCache, fingerprintProject } from './cache.js';
 import { buildModuleTree } from './modules.js';
 import { buildSchemaNodes } from './schema.js';
-import type { LanguagePlugin } from './plugin.js';
+import type { FileSlice, LanguagePlugin } from './plugin.js';
 import { discoverProject } from './project.js';
 import type { ProjectInfo } from './project.js';
+import { pythonPlugin } from './py/index.js';
 import { typescriptPlugin } from './ts/index.js';
 import { dominantZone } from './zones.js';
 
-export const TOOL_VERSION = '0.4.0';
+export const TOOL_VERSION = '0.5.0';
 
 export interface AnalyzeOptions {
   maxFiles?: number;
+  /**
+   * Extra glob patterns to leave out, on top of the usual build output and
+   * dependencies. Example apps and vendored code belong here: they are real files, but
+   * they are not *this* app, and counting their routes in this app's auth coverage
+   * makes the one number that matters wrong.
+   */
+  ignore?: string[];
   followReferences?: boolean;
   /** Run the boundary detectors (SPEC.md 5.3). On by default. */
   detectBoundaries?: boolean;
+  /**
+   * What to do with the per-file cache in `.app-atlas`:
+   *   `use`     — reuse unchanged files, then record this run (the default)
+   *   `refresh` — read everything again, then record this run
+   *   `off`     — do not read it and do not write it, leaving the project untouched
+   */
+  cache?: 'use' | 'refresh' | 'off';
   onProgress?: (stage: string, done: number, total: number) => void;
 }
 
@@ -34,17 +51,31 @@ export interface AnalyzeResult {
   project: ProjectInfo;
 }
 
-const PLUGINS: LanguagePlugin[] = [typescriptPlugin];
+const PLUGINS: LanguagePlugin[] = [typescriptPlugin, pythonPlugin];
 
 export async function analyzeProject(rootDir: string, options: AnalyzeOptions = {}): Promise<AnalyzeResult> {
   const started = Date.now();
   const maxFiles = options.maxFiles ?? 5000;
   const followReferences = options.followReferences ?? true;
   const detectBoundaries = options.detectBoundaries ?? true;
+  const pluginOptions = { followReferences, detectBoundaries };
 
   options.onProgress?.('Finding source files', 0, 1);
-  const project = await discoverProject(rootDir, { maxFiles });
+  const project = await discoverProject(rootDir, { maxFiles, extraIgnores: options.ignore });
   options.onProgress?.('Finding source files', 1, 1);
+
+  // --- what can be skipped ---
+  // Opened before any parsing so the plugins can be handed their reusable results.
+  // A cache that cannot be opened or read is simply an empty one: worst case is a full
+  // analysis, which is what every first run does anyway. `off` writes nothing at all,
+  // so calling this as a library never leaves a directory behind in someone's project.
+  const caching = options.cache ?? 'use';
+  const cache =
+    caching === 'off'
+      ? null
+      : AnalysisCache.open(rootDir, fingerprintProject(project, TOOL_VERSION, pluginOptions));
+  if (cache && caching === 'refresh') cache.clear();
+  const plan = cache?.plan(project.files) ?? null;
 
   const warnings = [...project.warnings];
   const nodes: AtlasNode[] = [];
@@ -79,6 +110,9 @@ export async function analyzeProject(rootDir: string, options: AnalyzeOptions = 
 
   // --- language plugins ---
   const findings: BoundaryFinding[] = [];
+  const slices: FileSlice[] = [];
+  let reused = 0;
+  let analyzed = 0;
   for (const plugin of PLUGINS) {
     const claimed = project.files.filter((file) => plugin.claims(file));
     if (claimed.length === 0) continue;
@@ -86,13 +120,28 @@ export async function analyzeProject(rootDir: string, options: AnalyzeOptions = 
     const result = await plugin.analyze({
       project,
       files: claimed,
-      options: { followReferences, detectBoundaries },
+      options: pluginOptions,
+      reuse: plan?.reusable,
+      hashes: plan?.hashes,
       onProgress: options.onProgress,
     });
     nodes.push(...result.nodes);
     edges.push(...result.edges);
     findings.push(...result.boundaries);
     warnings.push(...result.warnings);
+    slices.push(...(result.slices ?? []));
+    reused += result.reused ?? 0;
+    analyzed += claimed.length - (result.reused ?? 0);
+  }
+
+  if (cache) {
+    try {
+      cache.save(slices, new Set(project.files.map((file) => file.relPath)));
+    } catch (err) {
+      warnings.push(`Could not save the analysis cache: ${(err as Error).message}`);
+    } finally {
+      cache.close();
+    }
   }
 
   // --- the database schema ---
@@ -160,6 +209,7 @@ export async function analyzeProject(rootDir: string, options: AnalyzeOptions = 
       languages: [...languages],
       frameworks: project.frameworks,
       stats: computeStats(nodes, liveEdges),
+      incremental: { reused, analyzed },
       warnings,
     },
     nodes: nodes.sort((a, b) => a.id.localeCompare(b.id)),

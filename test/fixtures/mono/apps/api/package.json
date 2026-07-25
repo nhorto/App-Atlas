@@ -1,0 +1,5 @@
+{
+  "name": "@mono/api",
+  "dependencies": { "express": "^5.0.0", "@mono/ui": "*" },
+  "scripts": { "start": "node dist/index.js" }
+}

@@ -1,6 +1,6 @@
 {
   "name": "app-atlas",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "Understand any app - including the one your AI built. An interactive, always-accurate atlas of your application.",
   "license": "MIT",
   "type": "module",
@@ -25,7 +25,7 @@
   ],
   "scripts": {
     "build": "npm run build:node && npm run build:web",
-    "build:node": "tsc -p tsconfig.json",
+    "build:node": "tsc -p tsconfig.json && node scripts/copy-assets.mjs",
     "build:web": "vite build",
     "dev:web": "vite",
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p web/tsconfig.json --noEmit",

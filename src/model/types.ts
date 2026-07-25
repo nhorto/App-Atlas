@@ -316,6 +316,11 @@ export interface AtlasMeta {
   languages: string[];
   frameworks: string[];
   stats: AtlasStats;
+  /**
+   * How the run divided its work: files restored from the cache versus files actually
+   * read. Absent on atlases written before M5.
+   */
+  incremental?: { reused: number; analyzed: number };
   /** Non-fatal problems worth surfacing in the UI. */
   warnings: string[];
 }

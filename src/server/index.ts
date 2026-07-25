@@ -12,6 +12,7 @@ import http from 'node:http';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { Atlas } from '../model/types.js';
+import type { ScopeRecord } from '../model/store.js';
 import { buildBoundaryView } from '../model/boundary.js';
 import { AtlasGraph } from '../model/graph.js';
 import { buildInsights } from '../model/insights.js';
@@ -25,17 +26,35 @@ export interface ServerHandle {
   url: string;
   port: number;
   close(): Promise<void>;
-  /** Swap in a freshly analyzed atlas (used by --watch in M5). */
-  update(atlas: Atlas): void;
+  /**
+   * Swap in a freshly analyzed atlas and tell every open page about it (`--watch`).
+   * `scopeId` names which app changed in a monorepo; omit it when there is only one.
+   */
+  update(atlas: Atlas, scopeId?: string): void;
+}
+
+/** One app inside a workspace, and the atlas of it. */
+export interface ScopeAtlas {
+  scope: ScopeRecord;
+  atlas: Atlas;
 }
 
 export interface ServeOptions {
+  /** The atlas shown when nobody has picked a scope. */
   atlas: Atlas;
+  /**
+   * Every app in the workspace, when this is a monorepo. Empty for an ordinary repo,
+   * which is also what makes the switcher disappear rather than showing one option.
+   */
+  scopes?: ScopeAtlas[];
   port?: number;
   host?: string;
   /** Settings for explain-on-click. Defaults to on, using whatever backend is found. */
   ai?: AiServerOptions;
 }
+
+/** The id the default scope answers to. Empty because a single-app repo has no name for it. */
+const DEFAULT_SCOPE = '';
 
 const MIME: Record<string, string> = {
   '.html': 'text/html; charset=utf-8',
@@ -60,13 +79,21 @@ export function webRootPath(): string {
 export async function startServer(options: ServeOptions): Promise<ServerHandle> {
   const host = options.host ?? '127.0.0.1';
   const webRoot = webRootPath();
-  let graph = new AtlasGraph(options.atlas);
+  const listeners = new Listeners();
 
-  const explainer = new Explainer(options.ai ?? { enabled: true }, () => graph);
+  const graphs = new Map<string, AtlasGraph>();
+  graphs.set(DEFAULT_SCOPE, new AtlasGraph(options.atlas));
+  for (const entry of options.scopes ?? []) graphs.set(entry.scope.id, new AtlasGraph(entry.atlas));
+  const scopeList = (options.scopes ?? []).map((entry) => entry.scope);
+
+  // An unknown scope falls back to the default rather than erroring: a bookmarked URL
+  // for an app that has since been deleted should still show something.
+  const graphFor = (id: string | null) => graphs.get(id ?? DEFAULT_SCOPE) ?? graphs.get(DEFAULT_SCOPE)!;
+  const explainer = new Explainer(options.ai ?? { enabled: true });
 
   const server = http.createServer((req, res) => {
     try {
-      handleRequest(req, res, () => graph, webRoot, explainer);
+      handleRequest(req, res, graphFor, scopeList, webRoot, explainer, listeners);
     } catch (err) {
       sendJson(res, 500, { error: (err as Error).message });
     }
@@ -79,12 +106,71 @@ export async function startServer(options: ServeOptions): Promise<ServerHandle> 
     port,
     close: () =>
       new Promise<void>((resolve, reject) => {
+        // An open event stream never ends on its own, so the server would wait forever
+        // for it. Hang them up first, then close.
+        listeners.closeAll();
         server.close((err) => (err ? reject(err) : resolve()));
       }),
-    update: (atlas: Atlas) => {
-      graph = new AtlasGraph(atlas);
+    update: (atlas: Atlas, scopeId = DEFAULT_SCOPE) => {
+      const graph = new AtlasGraph(atlas);
+      graphs.set(scopeId, graph);
+      listeners.broadcast({
+        scope: scopeId,
+        name: graph.meta.name,
+        generatedAt: graph.meta.generatedAt,
+        stats: graph.meta.stats,
+      });
     },
   };
+}
+
+/**
+ * The open pages, waiting to be told the code changed.
+ *
+ * Server-sent events rather than a websocket: the traffic only goes one way, it is a
+ * dozen lines over the http server we already have, and the browser reconnects by
+ * itself when the CLI is restarted.
+ */
+class Listeners {
+  private readonly open = new Set<http.ServerResponse>();
+  private heartbeat: NodeJS.Timeout | null = null;
+
+  add(res: http.ServerResponse): void {
+    res.writeHead(200, {
+      'content-type': 'text/event-stream; charset=utf-8',
+      'cache-control': 'no-cache, no-transform',
+      connection: 'keep-alive',
+    });
+    res.write('retry: 2000\n\n');
+    this.open.add(res);
+    res.on('close', () => {
+      this.open.delete(res);
+      if (this.open.size === 0 && this.heartbeat) {
+        clearInterval(this.heartbeat);
+        this.heartbeat = null;
+      }
+    });
+    // A silent connection gets closed by whatever sits in the middle; a comment every
+    // twenty seconds costs nothing and keeps it up. `unref` so it never holds the CLI open.
+    if (!this.heartbeat) {
+      this.heartbeat = setInterval(() => {
+        for (const client of this.open) client.write(': ping\n\n');
+      }, 20_000);
+      this.heartbeat.unref();
+    }
+  }
+
+  broadcast(payload: unknown): void {
+    const data = JSON.stringify(payload);
+    for (const client of this.open) client.write(`event: atlas\ndata: ${data}\n\n`);
+  }
+
+  closeAll(): void {
+    if (this.heartbeat) clearInterval(this.heartbeat);
+    this.heartbeat = null;
+    for (const client of this.open) client.end();
+    this.open.clear();
+  }
 }
 
 /** Binds to the requested port, walking forward if it is taken. */
@@ -114,18 +200,30 @@ function listen(server: http.Server, host: string, preferred: number): Promise<n
 function handleRequest(
   req: http.IncomingMessage,
   res: http.ServerResponse,
-  getGraph: () => AtlasGraph,
+  graphFor: (id: string | null) => AtlasGraph,
+  scopes: ScopeRecord[],
   webRoot: string,
   explainer: Explainer,
+  listeners: Listeners,
 ): void {
   const url = new URL(req.url ?? '/', 'http://localhost');
   const pathname = decodeURIComponent(url.pathname);
 
   if (pathname.startsWith('/api/')) {
-    const graph = getGraph();
+    // Every view answers for one app. In an ordinary repo there is only one, and the
+    // parameter is never sent.
+    const graph = graphFor(url.searchParams.get('scope'));
     switch (pathname) {
       case '/api/health':
         return sendJson(res, 200, { ok: true, name: graph.meta.name });
+
+      /** The apps in a workspace. Empty for an ordinary repo, which hides the switcher. */
+      case '/api/scopes':
+        return sendJson(res, 200, { scopes });
+
+      /** Stays open for as long as the page does; used by `--watch`. */
+      case '/api/events':
+        return listeners.add(res);
 
       case '/api/ai':
         return sendJson(res, 200, explainer.status());
@@ -137,7 +235,7 @@ function handleRequest(
        */
       case '/api/explain': {
         const id = url.searchParams.get('id') ?? '';
-        void explainer.explain(id).then(
+        void explainer.explain(id, graph).then(
           (result) => sendJson(res, 'error' in result ? 400 : 200, result),
           (err: Error) => sendJson(res, 500, { error: err.message }),
         );

@@ -32,6 +32,8 @@ export interface ProjectInfo {
   signals: ProjectSignals;
   /** Workspace globs, if this looks like a monorepo. Informational in M1. */
   workspaces: string[];
+  /** Extra patterns the caller asked to leave out. Part of the cache fingerprint. */
+  ignored: string[];
   warnings: string[];
 }
 
@@ -40,7 +42,7 @@ export interface DiscoverOptions {
   extraIgnores?: string[];
 }
 
-const SOURCE_GLOB = '**/*.{ts,tsx,mts,cts,js,jsx,mjs,cjs}';
+const SOURCE_GLOB = '**/*.{ts,tsx,mts,cts,js,jsx,mjs,cjs,py,pyi}';
 
 const DEFAULT_IGNORES = [
   '**/node_modules/**',
@@ -89,6 +91,22 @@ const FRAMEWORK_SIGNALS: Record<string, string> = {
   resend: 'Resend',
   electron: 'Electron',
   vite: 'Vite',
+};
+
+/** Distribution name (as written in requirements.txt) → friendly framework label. */
+const PYTHON_FRAMEWORKS: Record<string, string> = {
+  fastapi: 'FastAPI',
+  flask: 'Flask',
+  django: 'Django',
+  quart: 'Quart',
+  sanic: 'Sanic',
+  starlette: 'Starlette',
+  celery: 'Celery',
+  sqlalchemy: 'SQLAlchemy',
+  sqlmodel: 'SQLModel',
+  pydantic: 'Pydantic',
+  streamlit: 'Streamlit',
+  'djangorestframework': 'Django REST Framework',
 };
 
 export async function discoverProject(rootInput: string, options: DiscoverOptions): Promise<ProjectInfo> {
@@ -146,6 +164,7 @@ export async function discoverProject(rootInput: string, options: DiscoverOption
     frameworks: detectFrameworks(packageJson, signals),
     signals,
     workspaces,
+    ignored: options.extraIgnores ?? [],
     warnings,
   };
 }
@@ -201,6 +220,9 @@ function detectFrameworks(pkg: Record<string, unknown> | null, signals: ProjectS
   if (signals.nextAppDir) out.add('Next.js App Router');
   if (signals.nextPagesDir && !signals.nextAppDir) out.add('Next.js Pages Router');
   if (signals.crons.length > 0) out.add('Vercel Cron');
+  for (const [dep, label] of Object.entries(PYTHON_FRAMEWORKS)) {
+    if (signals.pythonPackages.has(dep)) out.add(label);
+  }
   return [...out].sort();
 }
 

@@ -27,9 +27,9 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 const BOUNDARY = path.join(here, 'fixtures', 'boundary');
 const SAMPLE = path.join(here, 'fixtures', 'sample');
 
-const boundaryAtlas = (await analyzeProject(BOUNDARY, { followReferences: true })).atlas;
+const boundaryAtlas = (await analyzeProject(BOUNDARY, { followReferences: true, cache: 'off' })).atlas;
 const boundary = new AtlasGraph(boundaryAtlas);
-const sample = new AtlasGraph((await analyzeProject(SAMPLE, { followReferences: true })).atlas);
+const sample = new AtlasGraph((await analyzeProject(SAMPLE, { followReferences: true, cache: 'off' })).atlas);
 
 /** A private copy, for the tests that need to change a description and re-render. */
 const copyOfBoundary = () => new AtlasGraph(structuredClone(boundaryAtlas));

@@ -13,7 +13,7 @@ import { analyzeProject, AtlasGraph } from '../dist/node/index.js';
 const here = path.dirname(fileURLToPath(import.meta.url));
 const FIXTURE = path.join(here, 'fixtures', 'sample');
 
-const { atlas } = await analyzeProject(FIXTURE, { followReferences: true });
+const { atlas } = await analyzeProject(FIXTURE, { followReferences: true, cache: 'off' });
 const graph = new AtlasGraph(atlas);
 
 const byId = new Map(atlas.nodes.map((n) => [n.id, n]));

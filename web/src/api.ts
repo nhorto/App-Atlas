@@ -10,18 +10,39 @@ import type {
   LevelView,
   NodeView,
   OverviewView,
+  ScopeInfo,
   SourceSlice,
   Tour,
   TypeView,
 } from './types';
 
+/**
+ * Which app in a workspace every request is about.
+ *
+ * A module-level value rather than a parameter threaded through twelve call sites: the
+ * scope is a property of the whole screen, and every request that crossed while it was
+ * changing would be answering the wrong question anyway.
+ */
+let currentScope = '';
+
+export function setScope(id: string): void {
+  currentScope = id;
+}
+
 async function get<T>(path: string): Promise<T> {
-  const res = await fetch(path, { headers: { accept: 'application/json' } });
+  const url = currentScope ? `${path}${path.includes('?') ? '&' : '?'}scope=${encodeURIComponent(currentScope)}` : path;
+  const res = await fetch(url, { headers: { accept: 'application/json' } });
   if (!res.ok) {
     const body = (await res.json().catch(() => ({}))) as { error?: string };
     throw new Error(body.error ?? `Request failed: ${res.status}`);
   }
   return (await res.json()) as T;
+}
+
+/** The apps in this workspace. Empty for an ordinary repo, which hides the switcher. */
+export async function fetchScopes(): Promise<ScopeInfo[]> {
+  const { scopes } = await get<{ scopes: ScopeInfo[] }>('/api/scopes');
+  return scopes;
 }
 
 export function fetchOverview(): Promise<OverviewView> {
@@ -74,4 +95,16 @@ export function explainNode(id: string): Promise<ExplainResult> {
 export async function search(query: string): Promise<AtlasNode[]> {
   const { results } = await get<{ results: AtlasNode[] }>(`/api/search?q=${encodeURIComponent(query)}`);
   return results;
+}
+
+/**
+ * Listens for "the code changed" while `--watch` is running.
+ *
+ * EventSource reconnects on its own, so restarting the CLI reconnects the page without
+ * anyone reloading it. When nothing is watching, the stream simply stays quiet.
+ */
+export function onAtlasUpdated(handler: () => void): () => void {
+  const source = new EventSource('/api/events');
+  source.addEventListener('atlas', handler);
+  return () => source.close();
 }

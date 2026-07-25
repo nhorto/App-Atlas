@@ -5,12 +5,14 @@
  * never has to compile anything on a user's machine. The database is the source of
  * truth; the JSON export beside it is what agents and the web app read.
  *
- * M1 writes a full snapshot on every run. The per-node hashes are already stored so
- * that M5 can switch to incremental writes without a format change.
+ * The atlas itself is rewritten whole on every run. Two tables deliberately outlive
+ * that snapshot — the generated explanations and the per-file analysis cache — because
+ * both are keyed by the content they describe rather than by the run that wrote them.
  */
 import fs from 'node:fs';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
+import { gunzipSync, gzipSync } from 'node:zlib';
 import type { CachedExplanation } from '../enrich/types.js';
 import type { Atlas, AtlasEdge, AtlasMeta, AtlasNode } from './types.js';
 
@@ -72,7 +74,36 @@ CREATE TABLE IF NOT EXISTS explanations (
   backend    TEXT NOT NULL,
   created_at TEXT NOT NULL
 );
+
+-- One row per source file: everything that file contributed to the last atlas, stored
+-- under a hash of its text so an unedited file is never parsed again. The hash and the
+-- import list sit in their own columns because deciding what to re-analyze must not
+-- cost a decompression of every payload in the project.
+CREATE TABLE IF NOT EXISTS file_cache (
+  rel_path    TEXT PRIMARY KEY,
+  hash        TEXT NOT NULL,
+  fingerprint TEXT NOT NULL,
+  imports     TEXT NOT NULL,
+  payload     BLOB NOT NULL
+);
 `;
+
+/** One file's cached analysis, as the store sees it: an opaque payload plus its keys. */
+export interface SliceRow {
+  relPath: string;
+  /** Hash of the file's text when this was written. */
+  hash: string;
+  /** Repo-relative paths this file imports — the invalidation graph. */
+  imports: string[];
+  /** The slice itself, already serialized. The store never looks inside. */
+  json: string;
+}
+
+/** What the store can answer without decompressing anything. */
+export interface SliceIndexEntry {
+  hash: string;
+  imports: string[];
+}
 
 /** Where an analyzed project keeps its atlas. */
 export function atlasDir(root: string): string {
@@ -85,6 +116,40 @@ export function atlasDbPath(root: string): string {
 
 export function atlasJsonPath(root: string): string {
   return path.join(atlasDir(root), 'atlas.json');
+}
+
+/**
+ * The list of apps in a monorepo, written at the workspace root.
+ *
+ * Only the list lives here. Each scope keeps its own atlas and its own cache inside its
+ * own directory, so analyzing one package on its own is the same operation as analyzing
+ * a single-app repo — the manifest is the only thing that knows they are related.
+ */
+export function scopesPath(root: string): string {
+  return path.join(atlasDir(root), 'scopes.json');
+}
+
+export interface ScopeRecord {
+  id: string;
+  name: string;
+  /** Repo-relative directory, POSIX. */
+  dir: string;
+  kind: 'app' | 'library';
+}
+
+export function writeScopes(root: string, scopes: ScopeRecord[]): void {
+  const file = scopesPath(root);
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, JSON.stringify({ scopes }, null, 2), 'utf8');
+}
+
+export function readScopes(root: string): ScopeRecord[] {
+  try {
+    const parsed = JSON.parse(fs.readFileSync(scopesPath(root), 'utf8')) as { scopes?: ScopeRecord[] };
+    return Array.isArray(parsed.scopes) ? parsed.scopes : [];
+  } catch {
+    return [];
+  }
 }
 
 export class AtlasStore {
@@ -194,6 +259,73 @@ export class AtlasStore {
   /** Throws away every generated explanation. Behind `--refresh-ai`. */
   clearExplanations(): void {
     this.db.exec('DELETE FROM explanations');
+  }
+
+  /**
+   * The cheap half of the cache: which files were analyzed, under what hash, and what
+   * they import. Rows written under a different fingerprint are ignored rather than
+   * deleted — the next write prunes them, and a run that crashes leaves nothing broken.
+   */
+  readSliceIndex(fingerprint: string): Map<string, SliceIndexEntry> {
+    const rows = this.db
+      .prepare('SELECT rel_path, hash, imports FROM file_cache WHERE fingerprint = ?')
+      .all(fingerprint) as unknown as { rel_path: string; hash: string; imports: string }[];
+    const out = new Map<string, SliceIndexEntry>();
+    for (const row of rows) {
+      out.set(row.rel_path, { hash: row.hash, imports: safeParseArray(row.imports) });
+    }
+    return out;
+  }
+
+  /** The expensive half: the payloads themselves, for the files we decided to reuse. */
+  readSlicePayloads(relPaths: string[]): Map<string, string> {
+    const out = new Map<string, string>();
+    if (relPaths.length === 0) return out;
+    const select = this.db.prepare('SELECT payload FROM file_cache WHERE rel_path = ?');
+    for (const relPath of relPaths) {
+      const row = select.get(relPath) as unknown as { payload: Uint8Array } | undefined;
+      if (!row) continue;
+      try {
+        out.set(relPath, gunzipSync(row.payload).toString('utf8'));
+      } catch {
+        /* a corrupt row is a cache miss, not a failure */
+      }
+    }
+    return out;
+  }
+
+  /**
+   * Replaces the cache with exactly what this run knows about. `keep` is every file
+   * still in the project, so deleted files drop out rather than lingering forever.
+   */
+  writeSlices(fingerprint: string, rows: SliceRow[], keep: Set<string>): void {
+    const insert = this.db.prepare(
+      `INSERT OR REPLACE INTO file_cache (rel_path, hash, fingerprint, imports, payload)
+       VALUES (?, ?, ?, ?, ?)`,
+    );
+    const existing = this.db.prepare('SELECT rel_path FROM file_cache').all() as unknown as {
+      rel_path: string;
+    }[];
+    const remove = this.db.prepare('DELETE FROM file_cache WHERE rel_path = ?');
+
+    this.db.exec('BEGIN');
+    try {
+      for (const row of rows) {
+        insert.run(row.relPath, row.hash, fingerprint, JSON.stringify(row.imports), gzipSync(row.json));
+      }
+      for (const row of existing) {
+        if (!keep.has(row.rel_path)) remove.run(row.rel_path);
+      }
+      this.db.exec('COMMIT');
+    } catch (err) {
+      this.db.exec('ROLLBACK');
+      throw err;
+    }
+  }
+
+  /** Throws away the per-file cache. Behind `--fresh`. */
+  clearSlices(): void {
+    this.db.exec('DELETE FROM file_cache');
   }
 
   read(): Atlas | null {
@@ -337,5 +469,14 @@ function safeParse(text: string): Record<string, unknown> {
     return JSON.parse(text) as Record<string, unknown>;
   } catch {
     return {};
+  }
+}
+
+function safeParseArray(text: string): string[] {
+  try {
+    const parsed: unknown = JSON.parse(text);
+    return Array.isArray(parsed) ? (parsed.filter((v) => typeof v === 'string') as string[]) : [];
+  } catch {
+    return [];
   }
 }

@@ -69,7 +69,7 @@ function stubBackend(overrides = {}) {
 }
 
 async function freshAtlas() {
-  const { atlas } = await analyzeProject(FIXTURE, { followReferences: true });
+  const { atlas } = await analyzeProject(FIXTURE, { followReferences: true, cache: 'off' });
   return atlas;
 }
 
