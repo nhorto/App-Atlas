@@ -11,11 +11,15 @@
  */
 import { useMemo, useState } from 'react';
 import type { CSSProperties } from 'react';
-import type { BoundaryView } from '../types';
+import type { BoundaryView, SummarySource } from '../types';
+import { TrustLabel } from './Trust';
 
 interface Props {
   view: BoundaryView;
   selectedId: string | null;
+  /** The app's one-paragraph description, when there is one. */
+  summary: string | null;
+  summarySource: SummarySource;
   onSelect: (id: string) => void;
   onOpenInsights: () => void;
 }
@@ -41,7 +45,7 @@ interface Box {
   h: number;
 }
 
-export function BoundaryScreen({ view, selectedId, onSelect, onOpenInsights }: Props) {
+export function BoundaryScreen({ view, selectedId, summary, summarySource, onSelect, onOpenInsights }: Props) {
   const [hovered, setHovered] = useState<string | null>(null);
   const layout = useMemo(() => computeLayout(view), [view]);
 
@@ -114,6 +118,15 @@ export function BoundaryScreen({ view, selectedId, onSelect, onOpenInsights }: P
           })}
         </div>
       </div>
+
+      {/* The paragraph SPEC.md 6.1 asks for: what goes in, what happens, what comes
+          out, in prose, directly under the picture that shows the same thing. */}
+      {summary ? (
+        <section className="boundary-prose">
+          <TrustLabel kind={summarySource === 'docs' ? 'docs' : 'ai'} />
+          <p>{summary}</p>
+        </section>
+      ) : null}
 
       <p className="boundary-foot">
         Band thickness is the number of code paths. Everything here comes from the compiler — click any card to see

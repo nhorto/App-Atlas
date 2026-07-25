@@ -36,51 +36,76 @@ export function AtlasNodeCard({ data, selected }: NodeProps) {
     .join(' ');
 
   return (
-    <div className={classes} title={node.path ?? node.name}>
-      <Handle type="target" position={Position.Left} className="handle" />
+    <>
+      {/* Rendered as a sibling rather than a child: the card clips its own overflow,
+          and a tooltip that gets cut off at the card edge is worse than none. */}
+      {node.summary ? <HoverCard node={node} /> : null}
 
-      <div className="card-head">
-        <span className="card-kind">{kindGlyph(node)}</span>
-        <span className="card-name">{node.label ?? node.name}</span>
-        {node.drillable ? (
-          // A visible way in. Double-click works too, but a button beats a gesture
-          // nobody told you about.
-          <button
-            className="card-open"
-            title={`Look inside ${node.name}`}
-            aria-label={`Look inside ${node.name}`}
-            onClick={(event) => {
-              event.stopPropagation();
-              onDrill(node.id);
-            }}
-          >
-            ›
-          </button>
-        ) : null}
-      </div>
+      <div className={classes} title={node.path ?? node.name}>
+        <Handle type="target" position={Position.Left} className="handle" />
 
-      <div className="card-sub">{subtitle(node)}</div>
-
-      {node.kind === 'endpoint' ? <EndpointBadge node={node} /> : null}
-
-      {node.kind === 'module' && node.preview.length > 0 ? (
-        <ul className="card-preview">
-          {node.preview.slice(0, 4).map((name) => (
-            <li key={name}>{name}</li>
-          ))}
-        </ul>
-      ) : null}
-
-      {node.kind === 'type' ? <FieldRows node={node} /> : null}
-
-      {node.outsideIn + node.outsideOut > 0 ? (
-        <div className="card-outside">
-          {node.outsideIn > 0 ? <span title="used by things outside this box">← {node.outsideIn}</span> : null}
-          {node.outsideOut > 0 ? <span title="uses things outside this box">{node.outsideOut} →</span> : null}
+        <div className="card-head">
+          <span className="card-kind">{kindGlyph(node)}</span>
+          <span className="card-name">{node.label ?? node.name}</span>
+          {node.drillable ? (
+            // A visible way in. Double-click works too, but a button beats a gesture
+            // nobody told you about.
+            <button
+              className="card-open"
+              title={`Look inside ${node.name}`}
+              aria-label={`Look inside ${node.name}`}
+              onClick={(event) => {
+                event.stopPropagation();
+                onDrill(node.id);
+              }}
+            >
+              ›
+            </button>
+          ) : null}
         </div>
-      ) : null}
 
-      <Handle type="source" position={Position.Right} className="handle" />
+        <div className="card-sub">{subtitle(node)}</div>
+
+        {node.kind === 'endpoint' ? <EndpointBadge node={node} /> : null}
+
+        {node.kind === 'module' && node.preview.length > 0 ? (
+          <ul className="card-preview">
+            {node.preview.slice(0, 4).map((name) => (
+              <li key={name}>{name}</li>
+            ))}
+          </ul>
+        ) : null}
+
+        {node.kind === 'type' ? <FieldRows node={node} /> : null}
+
+        {node.outsideIn + node.outsideOut > 0 ? (
+          <div className="card-outside">
+            {node.outsideIn > 0 ? <span title="used by things outside this box">← {node.outsideIn}</span> : null}
+            {node.outsideOut > 0 ? <span title="uses things outside this box">{node.outsideOut} →</span> : null}
+          </div>
+        ) : null}
+
+        <Handle type="source" position={Position.Right} className="handle" />
+      </div>
+    </>
+  );
+}
+
+/**
+ * The one-line answer, on hover (SPEC.md 6.2). This is the payoff of the words layer
+ * on the map: you can sweep a folder full of files and read what each one is for
+ * without clicking anything, and the small coloured dot says whether the sentence came
+ * from the code's own docs or from a model.
+ */
+function HoverCard({ node }: { node: LevelNode }) {
+  const stale = node.meta?.docsStale === true;
+  return (
+    <div className="node-hover" aria-hidden>
+      <span className="node-hover-name">{node.label ?? node.name}</span>
+      <span className="node-hover-text">{node.summary}</span>
+      <span className={`node-hover-source source-${node.summarySource ?? 'none'}${stale ? ' is-stale' : ''}`}>
+        {node.summarySource === 'docs' ? (stale ? 'your docs · may be outdated' : "your code's docs") : 'AI explanation'}
+      </span>
     </div>
   );
 }

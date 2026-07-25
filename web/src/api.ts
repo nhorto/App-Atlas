@@ -1,7 +1,16 @@
 /**
  * @fileoverview Tiny API client for the local atlas server.
  */
-import type { AtlasNode, BoundaryView, InsightsView, LevelView, NodeView, OverviewView } from './types';
+import type {
+  AiStatus,
+  AtlasNode,
+  BoundaryView,
+  ExplainResult,
+  InsightsView,
+  LevelView,
+  NodeView,
+  OverviewView,
+} from './types';
 
 async function get<T>(path: string): Promise<T> {
   const res = await fetch(path, { headers: { accept: 'application/json' } });
@@ -30,6 +39,19 @@ export function fetchLevel(id?: string): Promise<LevelView> {
 
 export function fetchNode(id: string): Promise<NodeView> {
   return get<NodeView>(`/api/node?id=${encodeURIComponent(id)}`);
+}
+
+export function fetchAiStatus(): Promise<AiStatus> {
+  return get<AiStatus>('/api/ai');
+}
+
+/**
+ * Generates a description for one thing, on demand. Slow by web standards — it may
+ * start an agent CLI — so callers show a pending state rather than a spinner blocking
+ * the panel.
+ */
+export function explainNode(id: string): Promise<ExplainResult> {
+  return get<ExplainResult>(`/api/explain?id=${encodeURIComponent(id)}`);
 }
 
 export async function search(query: string): Promise<AtlasNode[]> {

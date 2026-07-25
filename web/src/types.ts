@@ -206,6 +206,9 @@ export interface AtlasStats {
   linesOfCode: number;
   documentedFiles: number;
   documentedFunctions: number;
+  staleDocs: number;
+  aiSummaries: number;
+  aiFiles: number;
   endpoints: number;
   routes: number;
   unprotectedRoutes: number;
@@ -231,9 +234,24 @@ export interface AtlasMeta {
 export interface OverviewView {
   meta: AtlasMeta;
   rootId: string;
+  app: AtlasNode | null;
   topLevel: LevelNode[];
   busiestFiles: { node: AtlasNode; connections: number }[];
   zoneCounts: Record<string, number>;
+}
+
+// --- the words layer (SPEC.md 5.5) ---
+
+/** Whether explain-on-click is available at all; `--no-ai` turns it off. */
+export interface AiStatus {
+  enabled: boolean;
+}
+
+export interface ExplainResult {
+  text: string;
+  /** Which backend wrote it. Absent when the answer came from the cache. */
+  backend?: string;
+  cached: boolean;
 }
 
 // --- boundary view (SPEC.md 6.1) ---
