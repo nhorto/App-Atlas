@@ -69,6 +69,20 @@ export function Summary({ node, children }: { node: AtlasNode; children?: ReactN
     );
   }
 
+  // "Write a comment above it" is impossible advice for a table that exists only in
+  // the database — its name appears in queries, and nowhere else.
+  if (node.meta?.observed === true) {
+    return (
+      <section className="panel-section">
+        <p className="summary-empty">
+          This table is named in the code's queries, but no schema file in this repo declares it — so its
+          columns live only in the database.
+        </p>
+        {children}
+      </section>
+    );
+  }
+
   return (
     <section className="panel-section">
       <p className="summary-empty">
