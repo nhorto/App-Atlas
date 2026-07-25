@@ -299,6 +299,38 @@ export interface TypeView {
   tables: number;
 }
 
+// --- guided tours (SPEC.md 6.4) ---
+
+export interface TourStep {
+  id: string;
+  title: string;
+  /** Compiler facts in plain English. Never generated. */
+  body: string;
+  /** The node's own description, when it has one. */
+  quote: string | null;
+  quoteSource: SummarySource;
+  focusIds: string[];
+  levelId: string | null;
+  codeId: string | null;
+  tone?: 'warn';
+}
+
+export interface Tour {
+  id: string;
+  title: string;
+  subtitle: string;
+  kind: 'welcome' | 'flow';
+  steps: TourStep[];
+}
+
+export interface SourceSlice {
+  path: string;
+  startLine: number;
+  endLine: number;
+  code: string;
+  truncated: boolean;
+}
+
 // --- boundary view (SPEC.md 6.1) ---
 
 export interface BoundaryCard {

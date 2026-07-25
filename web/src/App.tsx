@@ -25,7 +25,16 @@ import {
   type Node,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
-import { fetchAiStatus, fetchBoundaries, fetchInsights, fetchLevel, fetchNode, fetchOverview, fetchTypes } from './api';
+import {
+  fetchAiStatus,
+  fetchBoundaries,
+  fetchInsights,
+  fetchLevel,
+  fetchNode,
+  fetchOverview,
+  fetchTours,
+  fetchTypes,
+} from './api';
 import { layoutLevel, sizeOf, type Positioned } from './layout';
 import type {
   AtlasNode,
@@ -34,6 +43,7 @@ import type {
   LevelView,
   NodeView,
   OverviewView,
+  Tour,
   TypeView,
   Zone,
 } from './types';
@@ -44,6 +54,7 @@ import { InsightsScreen } from './components/InsightsScreen';
 import { OverviewScreen } from './components/OverviewScreen';
 import { SearchPalette } from './components/SearchPalette';
 import { TypeScreen } from './components/TypeScreen';
+import { Walkthrough } from './components/Walkthrough';
 
 const nodeTypes = { atlas: AtlasNodeCard };
 
@@ -76,6 +87,9 @@ function AtlasApp() {
   const [boundaries, setBoundaries] = useState<BoundaryView | null>(null);
   const [insights, setInsights] = useState<InsightsView | null>(null);
   const [types, setTypes] = useState<TypeView | null>(null);
+  const [tours, setTours] = useState<Tour[]>([]);
+  const [tourId, setTourId] = useState<string | null>(null);
+  const [stepIndex, setStepIndex] = useState(0);
   const [levelId, setLevelId] = useState<string | null>(initial.levelId);
   const [level, setLevel] = useState<LevelView | null>(null);
   const [positions, setPositions] = useState<Map<string, Positioned>>(new Map());
@@ -106,6 +120,12 @@ function AtlasApp() {
     fetchAiStatus()
       .then((status) => setAiEnabled(status.enabled))
       .catch(() => setAiEnabled(false));
+
+    // Tours are pure graph traversal — no model, no cost — so they load with everything
+    // else and the offer to walk someone through the app is there from the first screen.
+    fetchTours()
+      .then(setTours)
+      .catch(() => setTours([]));
   }, []);
 
   // Security facts and the shape of the data are only needed once someone asks.
@@ -207,6 +227,48 @@ function AtlasApp() {
     if (id) setSelectedId(id);
   }, []);
 
+  // --- guided tours (SPEC.md 6.4) ---
+
+  const tour = useMemo(() => tours.find((one) => one.id === tourId) ?? null, [tours, tourId]);
+  const step = tour?.steps[stepIndex] ?? null;
+
+  /** Put the map where the current step is talking about. */
+  const showStep = useCallback(
+    (target: Tour, next: number) => {
+      const at = target.steps[next];
+      if (!at) return;
+      setView('map');
+      if (at.levelId) setLevelId(at.levelId);
+      // The panel would cover the drawer and answer a question nobody asked yet.
+      setSelectedId(null);
+      writeHash('map', at.levelId ?? null);
+    },
+    [],
+  );
+
+  const startTour = useCallback(
+    (id: string) => {
+      const target = tours.find((one) => one.id === id);
+      if (!target) return;
+      setTourId(id);
+      setStepIndex(0);
+      showStep(target, 0);
+    },
+    [tours, showStep],
+  );
+
+  const goToStep = useCallback(
+    (next: number) => {
+      if (!tour || next < 0 || next >= tour.steps.length) return;
+      setStepIndex(next);
+      showStep(tour, next);
+    },
+    [tour, showStep],
+  );
+
+  /** Everything the current step wants lit. Overrides the click-neighbours highlight. */
+  const tourFocus = useMemo(() => (step ? new Set(step.focusIds) : null), [step]);
+
   /** Bring a node into view on the map, changing level first if it lives elsewhere. */
   const reveal = useCallback(
     async (id: string) => {
@@ -236,7 +298,10 @@ function AtlasApp() {
       }
       if (event.key === 'Escape') {
         if (searchOpen) setSearchOpen(false);
-        else setSelectedId(null);
+        else if (selectedId) setSelectedId(null);
+        // Ending the tour is the last thing Escape does, so a detour mid-tour costs
+        // one press and not the whole walkthrough.
+        else if (tourId) setTourId(null);
         return;
       }
       const typing = (event.target as HTMLElement | null)?.tagName === 'INPUT';
@@ -247,7 +312,7 @@ function AtlasApp() {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [goUp, searchOpen, view]);
+  }, [goUp, searchOpen, selectedId, tourId, view]);
 
   /** The selection plus everything one hop away from it. */
   const neighborIds = useMemo(() => {
@@ -260,6 +325,10 @@ function AtlasApp() {
     return ids;
   }, [level, selectedId]);
 
+  // A click during a tour wins: following your own thread is the point of being
+  // allowed to detour, and "Show me again" puts the step's highlight back.
+  const litIds = neighborIds ?? tourFocus;
+
   const rfNodes: Node[] = useMemo(() => {
     if (!level) return [];
     return level.nodes.map((node) => {
@@ -271,7 +340,7 @@ function AtlasApp() {
         position: { x: placed?.x ?? 0, y: placed?.y ?? 0 },
         data: {
           node,
-          dim: neighborIds ? !neighborIds.has(node.id) : false,
+          dim: litIds ? !litIds.has(node.id) : false,
           focus: node.id === selectedId,
           onDrill: drill,
         },
@@ -283,7 +352,7 @@ function AtlasApp() {
         height: placed?.height ?? fallback.height,
       } satisfies Node;
     });
-  }, [level, positions, neighborIds, selectedId, drill]);
+  }, [level, positions, litIds, selectedId, drill]);
 
   const rfEdges: Edge[] = useMemo(() => {
     if (!level) return [];
@@ -396,8 +465,10 @@ function AtlasApp() {
           overview ? (
             <OverviewScreen
               view={overview}
+              tours={tours}
               onDrill={drill}
               onReveal={reveal}
+              onStartTour={startTour}
               onOpenBoundaries={() => go('boundaries')}
             />
           ) : (
@@ -474,6 +545,18 @@ function AtlasApp() {
             </div>
           </>
         ) : null}
+
+        {/* Anchored inside the canvas, not the window: the drawer belongs to the map it
+            is narrating and must never lie across the detail panel. */}
+        {tour ? (
+          <Walkthrough
+            tour={tour}
+            index={stepIndex}
+            onStep={goToStep}
+            onShowAgain={() => showStep(tour, stepIndex)}
+            onClose={() => setTourId(null)}
+          />
+        ) : null}
       </main>
 
       {showPanel ? (
@@ -481,8 +564,10 @@ function AtlasApp() {
           detail={detail}
           overview={overview}
           aiEnabled={aiEnabled}
+          tour={detail ? (tours.find((one) => one.id === `tour:${detail.node.id}`) ?? null) : null}
           onReveal={reveal}
           onDrill={drill}
+          onStartTour={startTour}
           onClose={() => setSelectedId(null)}
         />
       ) : null}
