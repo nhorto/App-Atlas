@@ -1,0 +1,100 @@
+/**
+ * @fileoverview What `extract.py` sends back.
+ *
+ * These mirror the JSON the extractor prints, one interface per shape, so that the
+ * only place the two languages have to agree is right here. Nothing in this file
+ * interprets anything: every field is what the source literally said.
+ */
+
+/** One argument or annotation, tagged with what kind of thing it was. */
+export type PyValue =
+  | { t: 'str'; v: string; partial?: boolean }
+  | { t: 'num'; v: string }
+  | { t: 'name'; v: string }
+  | { t: 'list'; items: PyValue[] }
+  | { t: 'other' };
+
+export interface PyCall {
+  /** Dotted callee: `app.get`, `os.getenv`, `requests.post`. */
+  callee: string;
+  args: PyValue[];
+  kwargs: Record<string, PyValue>;
+  line: number;
+  /** The top-level function or method this sits inside, if any. */
+  scope?: string | null;
+  /** Only on decorators: the decorator exactly as written. */
+  text?: string;
+}
+
+export interface PyParam {
+  name: string;
+  type: string;
+  /** The default as written. `Depends(get_current_user)` lives here, not in `type`. */
+  default?: string;
+  optional: boolean;
+  rest: boolean;
+}
+
+export interface PyField {
+  name: string;
+  type: string;
+  optional: boolean;
+}
+
+export interface PyDef {
+  kind: 'function' | 'class';
+  name: string;
+  /** The class a method belongs to. */
+  owner?: string | null;
+  line: number;
+  endLine: number;
+  doc: string | null;
+  isAsync?: boolean;
+  params?: PyParam[];
+  returns?: string;
+  bases?: string[];
+  fields?: PyField[];
+  methods?: PyDef[];
+  decorators: PyCall[];
+  /** Every identifier mentioned inside, for the reference pass to resolve. */
+  uses: string[];
+}
+
+export interface PyImport {
+  /** The module as written: `app.db`, or `db` for `from .db import x`. */
+  module: string;
+  /** Leading dots on a relative import. 0 for an absolute one. */
+  level: number;
+  /** `[exported name, local name]` pairs from `from x import a as b`. */
+  names: [string, string][];
+  alias: string | null;
+  line: number;
+}
+
+/** `os.environ["KEY"]` and friends — a read that is a subscript, not a call. */
+export interface PySubscript {
+  base: string;
+  key: string;
+  line: number;
+  scope: string | null;
+}
+
+export interface PyFile {
+  path: string;
+  ok: boolean;
+  error: string | null;
+  doc?: string | null;
+  loc?: number;
+  imports?: PyImport[];
+  defs?: PyDef[];
+  calls?: PyCall[];
+  subscripts?: PySubscript[];
+  uses?: string[];
+}
+
+export interface PyPayload {
+  version: number;
+  python?: string;
+  error?: string;
+  files: PyFile[];
+}

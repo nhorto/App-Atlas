@@ -25,7 +25,7 @@
   ],
   "scripts": {
     "build": "npm run build:node && npm run build:web",
-    "build:node": "tsc -p tsconfig.json",
+    "build:node": "tsc -p tsconfig.json && node scripts/copy-assets.mjs",
     "build:web": "vite build",
     "dev:web": "vite",
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p web/tsconfig.json --noEmit",
