@@ -43,6 +43,35 @@ export type Confidence = 'certain' | 'likely' | 'possible';
 /** Coarse architectural role, derived from path and file conventions. */
 export type Zone = 'ui' | 'api' | 'logic' | 'data' | 'config' | 'test' | 'unknown';
 
+/** The kinds of door data can come in through. See SPEC.md section 5.3. */
+export type EndpointKind =
+  | 'http-route'
+  | 'server-action'
+  | 'webhook'
+  | 'cron'
+  | 'queue'
+  | 'realtime'
+  | 'cli'
+  | 'env'
+  | 'file-read';
+
+/** What a third party does for you — drives the grouping in the boundary view. */
+export type ServiceCategory =
+  | 'payments'
+  | 'ai'
+  | 'email'
+  | 'sms'
+  | 'auth'
+  | 'storage'
+  | 'analytics'
+  | 'search'
+  | 'monitoring'
+  | 'queue'
+  | 'other';
+
+/** What sort of thing the data is being kept in. */
+export type StoreKind = 'sql' | 'nosql' | 'kv' | 'blob' | 'filesystem' | 'unknown';
+
 /** Which rung of the explanation ladder produced `summary`. */
 export type SummarySource = 'docs' | 'ai' | null;
 
@@ -100,6 +129,95 @@ export interface ModuleMeta {
   collapsedFrom?: string[];
 }
 
+/** One place in the code where a boundary was observed. */
+export interface CodeSite {
+  path: string;
+  line: number;
+  /** The atlas node (usually a function) the site sits inside. */
+  nodeId: string | null;
+  /** The expression as written, trimmed — the evidence for the finding. */
+  snippet?: string;
+}
+
+/** Something that stands between the outside world and a handler. */
+export interface GuardInfo {
+  /** What was found, as written: `clerkMiddleware`, `getServerSession`, `requireUser`. */
+  name: string;
+  how: 'middleware' | 'call' | 'decorator' | 'procedure' | 'config';
+  /** Clerk, NextAuth, Supabase, Auth0, Lucia, Better Auth — or `custom`. */
+  provider: string;
+  path: string | null;
+  line: number | null;
+  /**
+   * `certain` when the check sits in the handler itself; `likely` when it was found
+   * in the same file, or via a middleware matcher we had to approximate. Claiming a
+   * route is protected when it is not would be the worst thing this tool could do,
+   * so the difference is carried all the way to the badge.
+   */
+  confidence: Confidence;
+}
+
+/** One environment variable and everywhere it is read. */
+export interface EnvVarInfo {
+  name: string;
+  sites: CodeSite[];
+  /** Present in `.env.example` (or `.env.sample`/`.env.template`). */
+  documented: boolean;
+  /** The name looks like a credential rather than a setting. */
+  secret: boolean;
+}
+
+/** meta for kind === 'endpoint' */
+export interface EndpointMeta {
+  endpointKind: EndpointKind;
+  /** GET/POST/… where the boundary has a verb. */
+  method: string | null;
+  /** URL path, cron expression, queue name — whatever names this door. */
+  route: string | null;
+  /** Which framework's convention found it. */
+  framework: string;
+  /** What protects it. Empty means nothing was found — that is the badge. */
+  guards: GuardInfo[];
+  /** This door leads to code that writes data, so leaving it open matters more. */
+  writes: boolean;
+  sites: CodeSite[];
+  /** Cron expression, when a scheduler is what knocks. */
+  schedule?: string;
+  /** Only on the single `env` endpoint. */
+  vars?: EnvVarInfo[];
+  /** Which example file the variables were checked against, if any. */
+  envExample?: string | null;
+}
+
+/** meta for kind === 'service' */
+export interface ServiceMeta {
+  category: ServiceCategory;
+  /** Packages imported and hostnames called — why we believe this is in use. */
+  packages: string[];
+  hosts: string[];
+  sites: CodeSite[];
+  /** False for services that never leave the machine. */
+  external: boolean;
+}
+
+/** meta for kind === 'store' */
+export interface StoreMeta {
+  storeKind: StoreKind;
+  /** Prisma, Drizzle, Supabase, pg, the filesystem… */
+  client: string;
+  /** Tables/collections/buckets touched, where they could be read statically. */
+  tables: string[];
+  reads: number;
+  writes: number;
+  sites: CodeSite[];
+}
+
+/** meta for kind === 'zone' (the two boundary containers) */
+export interface BoundaryGroupMeta {
+  direction: 'in' | 'out';
+  endpointCount: number;
+}
+
 export interface AtlasNode {
   /** Stable, human-readable id, e.g. `file:src/auth/login.ts`. */
   id: string;
@@ -150,6 +268,15 @@ export interface AtlasStats {
   linesOfCode: number;
   documentedFiles: number;
   documentedFunctions: number;
+  /** Every inbound door, of every kind. */
+  endpoints: number;
+  /** The subset that answers a URL — the ones auth coverage is measured over. */
+  routes: number;
+  unprotectedRoutes: number;
+  services: number;
+  externalServices: number;
+  stores: number;
+  envVars: number;
 }
 
 export interface AtlasMeta {
@@ -175,10 +302,20 @@ export interface Atlas {
   edges: AtlasEdge[];
 }
 
-export const FORMAT_VERSION = 1;
+export const FORMAT_VERSION = 2;
 
 /** Node kinds a user can drill into on the canvas. */
-export const CONTAINER_KINDS: ReadonlySet<NodeKind> = new Set<NodeKind>(['app', 'module', 'file', 'type']);
+export const CONTAINER_KINDS: ReadonlySet<NodeKind> = new Set<NodeKind>([
+  'app',
+  'zone',
+  'module',
+  'file',
+  'type',
+]);
+
+/** The two containers every boundary node hangs off. */
+export const INBOUND_ID = 'zone:inbound';
+export const OUTBOUND_ID = 'zone:outbound';
 
 export function makeAppId(name: string): string {
   return `app:${name}`;
@@ -202,4 +339,17 @@ export function makeTypeId(relPath: string, name: string, disambiguator = ''): s
 
 export function makeEdgeId(kind: EdgeKind, fromId: string, toId: string): string {
   return `${kind}|${fromId}|${toId}`;
+}
+
+/** `key` must already identify the door uniquely (e.g. `POST /api/users`). */
+export function makeEndpointId(kind: EndpointKind, key: string): string {
+  return `endpoint:${kind}:${key}`;
+}
+
+export function makeServiceId(name: string): string {
+  return `service:${name.toLowerCase()}`;
+}
+
+export function makeStoreId(key: string): string {
+  return `store:${key.toLowerCase()}`;
 }
