@@ -19,7 +19,7 @@ import type { ProjectInfo } from './project.js';
 import { typescriptPlugin } from './ts/index.js';
 import { dominantZone } from './zones.js';
 
-export const TOOL_VERSION = '0.3.0';
+export const TOOL_VERSION = '0.4.0';
 
 export interface AnalyzeOptions {
   maxFiles?: number;

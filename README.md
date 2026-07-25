@@ -32,10 +32,11 @@ Two rules keep it trustworthy:
 
 ## Status
 
-**Early development.** Milestones M1–M3 are complete: the CLI, the
+**Early development.** Milestones M1–M4 are complete: the CLI, the
 TypeScript/JavaScript analyzer, the atlas data model, the drill-down architecture map,
-the boundary view, the security badges and the plain-English explanations all work on
-real repositories. See [the roadmap](#roadmap) and [SPEC.md](SPEC.md) for the full design.
+the boundary view, the security badges, the plain-English explanations, the type
+explorer, guided walkthroughs and the `ATLAS.md` export all work on real repositories.
+See [the roadmap](#roadmap) and [SPEC.md](SPEC.md) for the full design.
 
 ## Quick start
 
@@ -65,6 +66,7 @@ the map in your browser.
 | `app-atlas [dir]` | Analyze, then open the map |
 | `app-atlas analyze [dir]` | Analyze only, write the atlas to disk |
 | `app-atlas serve [dir]` | Serve an atlas that was already analyzed |
+| `app-atlas export [dir]` | Write `ATLAS.md` — the map, for your coding agent |
 | `app-atlas init [dir]` | Teach your coding agent to write docstrings as it builds |
 
 ### Options
@@ -83,8 +85,10 @@ the map in your browser.
 | `--ai-max-files <n>` | Cap on files described in one pass (default 400) |
 | `--ai-yes` | Approve metered API spending in advance, for scripts |
 | `--refresh-ai` | Throw away cached descriptions and write them again |
+| `--md <path>` | `export` only: where to write the file (default `ATLAS.md`) |
+| `--stdout` | `export` only: print it instead of writing a file |
 
-## The four views
+## The five views
 
 ### Boundaries — the home screen
 
@@ -132,6 +136,24 @@ and a ranked list of the files everything else leans on — each with a sentence
 what it is for. At the bottom, an honest accounting of how much of the page was read
 from your own docstrings and how much was generated.
 
+This page is also where the **tours** live — see [Guided tours](#guided-tours).
+
+### Data — dbdiagram for your code
+
+Every shape your app moves around, on one canvas: interfaces, types, classes and enums
+from your code, **and your database tables** read straight out of `schema.prisma`, in
+the same picture. A line leaves the row that actually holds the reference, the way a
+database diagram draws a foreign key — so you can see that `Order.user` points at
+`User` rather than just that the two are somehow related.
+
+- Each card lists its fields, marks the primary key, and says where the shape is used
+  and in which parts of the app: *used in 95 places · 51 Data, 40 Logic, 4 API*.
+- **Solid lines are declared** — a field's type, or a relation the schema states.
+  **Dashed violet lines are only a shared name**: a `User` table and a `User` type are
+  usually the same idea, but nothing in the code says so, and App Atlas will not
+  pretend otherwise.
+- Big codebases show the most-used shapes first and say how many were left out.
+
 ### Map — the drill-down
 
 ![The architecture map, drilled into a folder](docs/architecture-map.png)
@@ -151,6 +173,51 @@ Drill all the way into a file and you get its types laid out with their fields, 
 to whatever uses them:
 
 ![Types inside a file, with their fields and connections](docs/type-view.png)
+
+## Guided tours
+
+Instead of reading the map, have it read itself to you. The overview page offers a
+short list of walkthroughs, and any door in your app has a **Walk me through what
+happens** button:
+
+- **Welcome to your codebase** — five steps: what this is, how the outside gets in,
+  the parts it is made of, where your data ends up, and where to start reading.
+- **What happens when…** — one per major entry point, traced through the code:
+  *what happens when something sends POST to /api/users*, *when an outside service
+  calls your webhook at /api/webhooks/stripe*, *when the schedule fires (0 8 \* \* \*)*.
+
+Each step moves the map to the level being discussed, lights up what it is talking
+about, and offers the code underneath. You can click away mid-tour to follow your own
+thread — **Show me again** puts the step back.
+
+Tours are **derived, not written**. Every step is a traversal of the graph, so they
+cost nothing, work with `--no-ai`, and cannot go stale: change the code, re-analyze,
+and the tour describes the new code. Where a step quotes a description, it says whether
+that came from your docstring or from a model — the paragraph itself is always
+compiler fact.
+
+## For your coding agent
+
+The tool exists because agents write code faster than people can read it. The same map
+is worth more if the agent reads it too:
+
+```bash
+app-atlas export
+```
+
+That writes `ATLAS.md` — about 5 KB for a 75-file project — with what the app is, every
+door and what guards it, where data goes, the folder map, the database tables and key
+types, and where to look first. Then add one line to `CLAUDE.md`, `AGENTS.md` or your
+Cursor rules:
+
+```
+Read ATLAS.md before changing code. It is the map of this app.
+```
+
+Sentences in it that a model wrote are marked `(ai)`; everything else is compiler fact.
+Re-run the export after a session and the map is current again. (The full atlas is
+plain SQLite and JSON in `.app-atlas/`, so an agent that wants more can query it
+directly. An MCP server is planned for v1.1.)
 
 ## Where the words come from
 
@@ -204,7 +271,8 @@ zero. Your codebase ends up documented as a side effect of being mapped.
 ```
 CLI ──▶ Analyzer ──▶ Atlas model ──▶ Enricher ──▶ Local web app
         (ts-morph)   (SQLite + JSON)  (your CLI    (React Flow + elkjs)
-                                       or any API)
+                                       or any API)      │
+                                              ATLAS.md ─┘
 ```
 
 - **Analyzer** — [ts-morph](https://ts-morph.com) over the real TypeScript compiler.
@@ -226,6 +294,10 @@ CLI ──▶ Analyzer ──▶ Atlas model ──▶ Enricher ──▶ Local 
   by [elkjs](https://github.com/kieler/elkjs) so the same code always produces the
   same picture. There is no force-directed hairball anywhere in this project, by
   design.
+- **Tours and the export** — both are pure functions of the graph. A walkthrough step
+  is a traversal (door → handler → what it calls → where it lands) and `ATLAS.md` is a
+  rendering, which is why neither needs a model, a network, or an update when the code
+  changes.
 
 ## Roadmap
 
@@ -234,8 +306,8 @@ CLI ──▶ Analyzer ──▶ Atlas model ──▶ Enricher ──▶ Local 
 | **M1** | CLI, TypeScript analyzer, atlas model, drill-down architecture map | ✅ done |
 | **M2** | Framework plugins, boundary detectors, the boundary view, security badges | ✅ done |
 | **M3** | Explanations — docstrings first, provider-agnostic AI for the gaps | ✅ done |
-| **M4** | Type explorer, guided walkthroughs, `ATLAS.md` export for coding agents | next |
-| **M5** | Incremental re-analysis, `--watch`, Python, monorepo scopes, launch | |
+| **M4** | Type explorer, guided walkthroughs, `ATLAS.md` export for coding agents | ✅ done |
+| **M5** | Incremental re-analysis, `--watch`, Python, monorepo scopes, launch | next |
 
 ## Development
 
@@ -247,6 +319,10 @@ npm run dev:web     # Vite dev server (expects `app-atlas serve` running on 4477
 ```
 
 Tests run against `dist/`, not `src/`, so they cover what actually ships.
+
+App Atlas maps itself: [`ATLAS.md`](ATLAS.md) in this repo is its own export, and
+[`AGENTS.md`](AGENTS.md) was written by `app-atlas init`. Regenerate both after a
+change with `node dist/node/cli.js analyze . -q && node dist/node/cli.js export .`.
 
 ## Contributing
 
