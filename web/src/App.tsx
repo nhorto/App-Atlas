@@ -431,10 +431,10 @@ function AtlasApp() {
         source: edge.fromId,
         target: edge.toId,
         label: touchesSelection && edge.weight > 1 ? String(edge.weight) : undefined,
-        labelBgStyle: { fill: '#ffffff' },
-        labelStyle: { fontSize: 11, fill: '#475569' },
+        labelBgStyle: { fill: '#f4f1e9' },
+        labelStyle: { fontSize: 11, fill: '#5f594b' },
         style: {
-          stroke: touchesSelection ? '#334155' : '#94a3b8',
+          stroke: touchesSelection ? '#4a4436' : '#a89f8b',
           strokeWidth: touchesSelection ? Math.max(1.6, width) : width,
           opacity,
         },
@@ -442,7 +442,7 @@ function AtlasApp() {
           type: MarkerType.ArrowClosed,
           width: 14,
           height: 14,
-          color: touchesSelection ? '#334155' : '#94a3b8',
+          color: touchesSelection ? '#4a4436' : '#a89f8b',
         },
       } satisfies Edge;
     });
@@ -467,6 +467,10 @@ function AtlasApp() {
   return (
     <div className={showPanel ? 'app' : 'app is-wide'}>
       <header className="topbar">
+        <span className="brand">
+          <span className="brand-mark" aria-hidden="true">✦</span>
+          App Atlas
+        </span>
         <nav className="tabs" aria-label="Views">
           {TABS.map((tab) => (
             <button
@@ -604,7 +608,7 @@ function AtlasApp() {
               }}
               onPaneClick={() => setSelectedId(null)}
             >
-              <Background variant={BackgroundVariant.Dots} gap={22} size={1} color="#dbe1ea" />
+              <Background variant={BackgroundVariant.Dots} gap={22} size={1} color="#d9d2bf" />
               <Controls showInteractive={false} />
               <MiniMap
                 pannable
@@ -612,7 +616,7 @@ function AtlasApp() {
                 nodeColor={(node) =>
                   zoneColor(((node.data as { node?: { zone?: Zone } }).node?.zone ?? 'unknown') as Zone)
                 }
-                maskColor="rgba(241,245,249,0.75)"
+                maskColor="rgba(244,241,233,0.78)"
               />
             </ReactFlow>
 
@@ -686,18 +690,18 @@ function writeHash(view: ViewName, levelId: string | null): void {
 function zoneColor(zone: Zone): string {
   switch (zone) {
     case 'ui':
-      return '#7c5cff';
+      return '#6a55c4';
     case 'api':
-      return '#0ea5e9';
+      return '#2d7ea3';
     case 'logic':
-      return '#f59e0b';
+      return '#c4881c';
     case 'data':
-      return '#10b981';
+      return '#37845a';
     case 'config':
-      return '#64748b';
+      return '#857c68';
     case 'test':
-      return '#ec4899';
+      return '#b04f7c';
     default:
-      return '#94a3b8';
+      return '#a49c8a';
   }
 }
