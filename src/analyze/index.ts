@@ -1,9 +1,10 @@
 /**
  * @fileoverview Analysis orchestrator.
  *
- * Discovers the project, hands its files to the language plugins, wraps the results
- * in the containment tree (app → modules → files → functions/types), and produces a
- * complete Atlas. This is the only place that knows the whole pipeline.
+ * Discovers the project, works out which files still need reading, hands those to the
+ * language plugins, wraps the results in the containment tree (app → modules → files →
+ * functions/types), and produces a complete Atlas. This is the only place that knows
+ * the whole pipeline.
  */
 import type { Atlas, AtlasEdge, AtlasNode, AtlasStats, EndpointMeta, Zone } from '../model/types.js';
 import { countStaleDocs } from '../model/staleness.js';
@@ -21,10 +22,17 @@ import { pythonPlugin } from './py/index.js';
 import { typescriptPlugin } from './ts/index.js';
 import { dominantZone } from './zones.js';
 
-export const TOOL_VERSION = '0.4.0';
+export const TOOL_VERSION = '0.5.0';
 
 export interface AnalyzeOptions {
   maxFiles?: number;
+  /**
+   * Extra glob patterns to leave out, on top of the usual build output and
+   * dependencies. Example apps and vendored code belong here: they are real files, but
+   * they are not *this* app, and counting their routes in this app's auth coverage
+   * makes the one number that matters wrong.
+   */
+  ignore?: string[];
   followReferences?: boolean;
   /** Run the boundary detectors (SPEC.md 5.3). On by default. */
   detectBoundaries?: boolean;
@@ -53,7 +61,7 @@ export async function analyzeProject(rootDir: string, options: AnalyzeOptions = 
   const pluginOptions = { followReferences, detectBoundaries };
 
   options.onProgress?.('Finding source files', 0, 1);
-  const project = await discoverProject(rootDir, { maxFiles });
+  const project = await discoverProject(rootDir, { maxFiles, extraIgnores: options.ignore });
   options.onProgress?.('Finding source files', 1, 1);
 
   // --- what can be skipped ---

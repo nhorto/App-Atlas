@@ -2,10 +2,16 @@
 /**
  * @fileoverview The `app-atlas` command line.
  *
- * Three ways in, all doing the least surprising thing:
+ * Five ways in, all doing the least surprising thing:
  *   app-atlas [dir]          analyze, then open the map
  *   app-atlas analyze [dir]  analyze only
  *   app-atlas serve [dir]    open the map from a previous analysis
+ *   app-atlas export [dir]   write ATLAS.md for a coding agent
+ *   app-atlas init [dir]     teach the user's agent to write docstrings
+ *
+ * A monorepo runs the same pipeline once per app; `--watch` runs it again on every
+ * save. Both go through `produceAtlas`, so a rebuild can never disagree with a first
+ * run about what the code says.
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -35,6 +41,7 @@ interface SharedOptions {
   maxFiles: string;
   json?: string;
   quiet: boolean;
+  ignore?: string[];
   fresh?: boolean;
   watch?: boolean;
   scope?: string;
@@ -76,6 +83,7 @@ withAiOptions(
     .option('--no-open', "don't open a browser")
     .option('--no-refs', 'skip the symbol-reference pass (faster on very large repos)')
     .option('--max-files <number>', 'maximum number of source files to analyze', '5000')
+    .option('--ignore <glob...>', 'leave these paths out — example apps, vendored code')
     .option('--fresh', 're-read every file instead of reusing the last run')
     .option('--scope <name>', 'in a monorepo, analyze only this app')
     .option('--watch', 'keep watching, and update the map when the code changes')
@@ -94,6 +102,7 @@ withAiOptions(
     .argument('[dir]', 'project directory to analyze', '.')
     .option('--no-refs', 'skip the symbol-reference pass (faster on very large repos)')
     .option('--max-files <number>', 'maximum number of source files to analyze', '5000')
+    .option('--ignore <glob...>', 'leave these paths out — example apps, vendored code')
     .option('--fresh', 're-read every file instead of reusing the last run')
     .option('--scope <name>', 'in a monorepo, analyze only this app')
     .option('--json <path>', 'also write the JSON export to this path')
@@ -212,6 +221,7 @@ async function produceAtlas(
 ): Promise<{ atlas: Atlas; words: EnrichReport | null; dbPath: string; jsonPath: string }> {
   const { atlas } = await analyzeProject(root, {
     maxFiles: Number(options.maxFiles ?? 5000) || 5000,
+    ignore: options.ignore,
     followReferences: options.refs !== false,
     cache: options.fresh ? 'refresh' : 'use',
     onProgress: run.onProgress,

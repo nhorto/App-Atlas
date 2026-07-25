@@ -53,6 +53,9 @@ export function fingerprintProject(project: ProjectInfo, toolVersion: string, op
     toolVersion,
     String(options.followReferences),
     String(options.detectBoundaries),
+    // Excluding a file this run does not just remove it — it can silently remove an
+    // import edge from a file that stayed. Cheaper to start over than to reason about.
+    JSON.stringify([...project.ignored].sort()),
     JSON.stringify(Object.keys(deps).sort()),
     JSON.stringify(project.signals),
     project.tsConfigPath ? readIfPresent(project.tsConfigPath) : '',

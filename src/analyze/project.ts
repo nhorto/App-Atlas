@@ -32,6 +32,8 @@ export interface ProjectInfo {
   signals: ProjectSignals;
   /** Workspace globs, if this looks like a monorepo. Informational in M1. */
   workspaces: string[];
+  /** Extra patterns the caller asked to leave out. Part of the cache fingerprint. */
+  ignored: string[];
   warnings: string[];
 }
 
@@ -162,6 +164,7 @@ export async function discoverProject(rootInput: string, options: DiscoverOption
     frameworks: detectFrameworks(packageJson, signals),
     signals,
     workspaces,
+    ignored: options.extraIgnores ?? [],
     warnings,
   };
 }
