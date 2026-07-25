@@ -1,0 +1,55 @@
+{
+  "name": "app-atlas",
+  "version": "0.1.0",
+  "description": "Understand any app - including the one your AI built. An interactive, always-accurate atlas of your application.",
+  "license": "MIT",
+  "type": "module",
+  "bin": {
+    "app-atlas": "dist/node/cli.js"
+  },
+  "main": "dist/node/index.js",
+  "engines": {
+    "node": ">=22.5.0"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "keywords": [
+    "codebase",
+    "visualization",
+    "architecture",
+    "static-analysis",
+    "typescript",
+    "ai-agents"
+  ],
+  "scripts": {
+    "build": "npm run build:node && npm run build:web",
+    "build:node": "tsc -p tsconfig.json",
+    "build:web": "vite build",
+    "dev:web": "vite",
+    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p web/tsconfig.json --noEmit",
+    "test": "npm run build:node && node --test test/*.test.js",
+    "atlas": "node dist/node/cli.js"
+  },
+  "dependencies": {
+    "commander": "^15.0.0",
+    "fast-glob": "^3.3.3",
+    "ignore": "^7.0.6",
+    "open": "^11.0.0",
+    "picocolors": "^1.1.1",
+    "ts-morph": "^28.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^26.1.1",
+    "@types/react": "^19.2.17",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^6.0.4",
+    "@xyflow/react": "^12.11.2",
+    "elkjs": "^0.12.0",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8",
+    "typescript": "^7.0.2",
+    "vite": "^8.1.5"
+  }
+}

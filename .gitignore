@@ -1,0 +1,6 @@
+node_modules/
+dist/
+.app-atlas/
+*.log
+.DS_Store
+.vite/
