@@ -1,7 +1,7 @@
 /**
  * @fileoverview Tiny API client for the local atlas server.
  */
-import type { LevelView, NodeView, OverviewView, AtlasNode } from './types';
+import type { AtlasNode, BoundaryView, InsightsView, LevelView, NodeView, OverviewView } from './types';
 
 async function get<T>(path: string): Promise<T> {
   const res = await fetch(path, { headers: { accept: 'application/json' } });
@@ -14,6 +14,14 @@ async function get<T>(path: string): Promise<T> {
 
 export function fetchOverview(): Promise<OverviewView> {
   return get<OverviewView>('/api/overview');
+}
+
+export function fetchBoundaries(): Promise<BoundaryView> {
+  return get<BoundaryView>('/api/boundaries');
+}
+
+export function fetchInsights(): Promise<InsightsView> {
+  return get<InsightsView>('/api/insights');
 }
 
 export function fetchLevel(id?: string): Promise<LevelView> {

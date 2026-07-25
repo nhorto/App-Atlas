@@ -49,6 +49,14 @@ export function sizeOf(node: LevelNode): { width: number; height: number } {
     }
     case 'function':
       return { width: Math.max(nameWidth, 240), height: 66 };
+    case 'endpoint':
+      // Routes carry a method chip and a protection badge, so they need the room.
+      return { width: Math.max(nameWidth, 250), height: 76 };
+    case 'service':
+    case 'store':
+      return { width: Math.max(nameWidth, 220), height: 74 };
+    case 'zone':
+      return { width: Math.max(nameWidth, 230), height: 76 };
     default:
       return { width: nameWidth, height: 70 };
   }

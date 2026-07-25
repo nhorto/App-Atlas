@@ -31,6 +31,85 @@ export type Confidence = 'certain' | 'likely' | 'possible';
 export type Zone = 'ui' | 'api' | 'logic' | 'data' | 'config' | 'test' | 'unknown';
 export type SummarySource = 'docs' | 'ai' | null;
 
+export type EndpointKind =
+  | 'http-route'
+  | 'server-action'
+  | 'webhook'
+  | 'cron'
+  | 'queue'
+  | 'realtime'
+  | 'cli'
+  | 'env'
+  | 'file-read';
+
+export type ServiceCategory =
+  | 'payments'
+  | 'ai'
+  | 'email'
+  | 'sms'
+  | 'auth'
+  | 'storage'
+  | 'analytics'
+  | 'search'
+  | 'monitoring'
+  | 'queue'
+  | 'other';
+
+export type StoreKind = 'sql' | 'nosql' | 'kv' | 'blob' | 'filesystem' | 'unknown';
+
+export interface CodeSite {
+  path: string;
+  line: number;
+  nodeId: string | null;
+  snippet?: string;
+}
+
+export interface GuardInfo {
+  name: string;
+  how: 'middleware' | 'call' | 'decorator' | 'procedure' | 'config';
+  provider: string;
+  path: string | null;
+  line: number | null;
+  confidence: Confidence;
+}
+
+export interface EnvVarInfo {
+  name: string;
+  sites: CodeSite[];
+  documented: boolean;
+  secret: boolean;
+}
+
+export interface EndpointMeta {
+  endpointKind: EndpointKind;
+  method: string | null;
+  route: string | null;
+  framework: string;
+  guards: GuardInfo[];
+  writes: boolean;
+  sites: CodeSite[];
+  schedule?: string;
+  vars?: EnvVarInfo[];
+  envExample?: string | null;
+}
+
+export interface ServiceMeta {
+  category: ServiceCategory;
+  packages: string[];
+  hosts: string[];
+  sites: CodeSite[];
+  external: boolean;
+}
+
+export interface StoreMeta {
+  storeKind: StoreKind;
+  client: string;
+  tables: string[];
+  reads: number;
+  writes: number;
+  sites: CodeSite[];
+}
+
 export interface ParamInfo {
   name: string;
   type: string;
@@ -127,6 +206,13 @@ export interface AtlasStats {
   linesOfCode: number;
   documentedFiles: number;
   documentedFunctions: number;
+  endpoints: number;
+  routes: number;
+  unprotectedRoutes: number;
+  services: number;
+  externalServices: number;
+  stores: number;
+  envVars: number;
 }
 
 export interface AtlasMeta {
@@ -148,4 +234,99 @@ export interface OverviewView {
   topLevel: LevelNode[];
   busiestFiles: { node: AtlasNode; connections: number }[];
   zoneCounts: Record<string, number>;
+}
+
+// --- boundary view (SPEC.md 6.1) ---
+
+export interface BoundaryCard {
+  id: string;
+  name: string;
+  detail: string;
+  count: number;
+  memberIds: string[];
+  nodeId: string | null;
+  family: string;
+  openCount?: number;
+}
+
+export interface BoundaryZone {
+  zone: Zone;
+  label: string;
+  files: number;
+}
+
+export interface BoundaryFlow {
+  fromId: string;
+  toId: string;
+  weight: number;
+}
+
+export interface BoundaryView {
+  appName: string;
+  inputs: BoundaryCard[];
+  zones: BoundaryZone[];
+  outputs: BoundaryCard[];
+  flows: BoundaryFlow[];
+  summary: {
+    endpoints: number;
+    openRoutes: number;
+    externalServices: number;
+    stores: number;
+    envVars: number;
+  };
+}
+
+// --- security badges (SPEC.md 6.6) ---
+
+export type Protection = 'protected' | 'likely' | 'open';
+
+export interface RouteInsight {
+  id: string;
+  name: string;
+  method: string | null;
+  route: string | null;
+  endpointKind: EndpointKind;
+  framework: string;
+  writes: boolean;
+  protection: Protection;
+  guards: GuardInfo[];
+  sites: CodeSite[];
+}
+
+export interface ServiceInsight {
+  id: string;
+  name: string;
+  category: string;
+  evidence: string[];
+  callSites: number;
+  sends: boolean;
+  sites: CodeSite[];
+}
+
+export interface StoreInsight {
+  id: string;
+  name: string;
+  client: string;
+  storeKind: string;
+  tables: string[];
+  reads: number;
+  writes: number;
+}
+
+export interface InsightsView {
+  auth: {
+    total: number;
+    protectedCount: number;
+    likelyCount: number;
+    openCount: number;
+    routes: RouteInsight[];
+  };
+  services: ServiceInsight[];
+  stores: StoreInsight[];
+  env: {
+    exampleFile: string | null;
+    total: number;
+    undocumented: EnvVarInfo[];
+    vars: EnvVarInfo[];
+  };
 }

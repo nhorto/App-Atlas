@@ -7,7 +7,17 @@
  * whether they are looking at a compiler fact or a human-written note.
  */
 import type { ReactNode } from 'react';
-import type { AtlasNode, FieldInfo, NodeView, OverviewView, ParamInfo } from '../types';
+import type {
+  AtlasNode,
+  CodeSite,
+  EndpointMeta,
+  FieldInfo,
+  NodeView,
+  OverviewView,
+  ParamInfo,
+  ServiceMeta,
+  StoreMeta,
+} from '../types';
 import { zoneLabel } from './AtlasNodeCard';
 
 interface Props {
@@ -22,7 +32,9 @@ export function DetailPanel({ detail, overview, onReveal, onDrill, onClose }: Pr
   if (!detail) return <OverviewPanel overview={overview} onReveal={onReveal} />;
 
   const { node } = detail;
-  const isContainer = node.kind === 'module' || node.kind === 'file' || node.kind === 'app';
+  const isContainer =
+    node.kind === 'module' || node.kind === 'file' || node.kind === 'app' || node.kind === 'zone';
+  const isBoundary = node.kind === 'endpoint' || node.kind === 'service' || node.kind === 'store';
 
   return (
     <aside className="panel">
@@ -43,8 +55,10 @@ export function DetailPanel({ detail, overview, onReveal, onDrill, onClose }: Pr
         ) : null}
       </header>
 
-      <Summary node={node} />
+      {isBoundary ? null : <Summary node={node} />}
       <Facts node={node} />
+      {isBoundary ? <Sites node={node} onReveal={onReveal} /> : null}
+      {node.kind === 'endpoint' ? <EnvVars node={node} /> : null}
 
       {detail.children.length > 0 ? (
         <Section title={`Inside (${detail.children.length})`}>
@@ -184,6 +198,82 @@ function Fields({ node }: { node: AtlasNode }) {
   );
 }
 
+/**
+ * Every line of code behind a boundary. This is the evidence for the claim on the
+ * card, and it is the difference between "your app talks to Stripe" and "your app
+ * talks to Stripe — here, here, and here".
+ */
+function Sites({ node, onReveal }: { node: AtlasNode; onReveal: (id: string) => void }) {
+  const sites = sitesOf(node);
+  if (sites.length === 0) return null;
+
+  return (
+    <Section title={`Where in the code (${sites.length})`}>
+      <ul className="site-list">
+        {sites.slice(0, 30).map((site, index) => (
+          <li key={`${site.path}:${site.line}:${index}`}>
+            <button
+              onClick={() => (site.nodeId ? onReveal(site.nodeId) : undefined)}
+              disabled={!site.nodeId}
+              className="site"
+            >
+              <span className="site-path">
+                {site.path}:{site.line}
+              </span>
+              {site.snippet ? <code className="site-snippet">{site.snippet}</code> : null}
+            </button>
+          </li>
+        ))}
+      </ul>
+      {sites.length > 30 ? <p className="muted">+{sites.length - 30} more</p> : null}
+    </Section>
+  );
+}
+
+function sitesOf(node: AtlasNode): CodeSite[] {
+  const sites = node.meta.sites as CodeSite[] | undefined;
+  return Array.isArray(sites) ? sites : [];
+}
+
+/** The env endpoint carries the whole configuration inventory (SPEC.md 6.6). */
+function EnvVars({ node }: { node: AtlasNode }) {
+  const meta = node.meta as unknown as EndpointMeta;
+  const vars = meta.vars ?? [];
+  if (vars.length === 0) return null;
+  const undocumented = vars.filter((entry) => !entry.documented).length;
+
+  return (
+    <Section
+      title={`Variables (${vars.length})`}
+      hint={
+        meta.envExample
+          ? `${undocumented} missing from ${meta.envExample}`
+          : 'No .env.example to check these against'
+      }
+    >
+      <table className="mini-table">
+        <tbody>
+          {vars.map((entry) => (
+            <tr key={entry.name}>
+              <td className="mono">{entry.name}</td>
+              <td className="muted">
+                {entry.sites.length} {entry.sites.length === 1 ? 'read' : 'reads'}
+              </td>
+              <td>
+                {meta.envExample ? (
+                  <span className={`badge badge-${entry.documented ? 'protected' : 'open'}`}>
+                    {entry.documented ? 'documented' : 'missing'}
+                  </span>
+                ) : null}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </Section>
+  );
+}
+
 function NeighborList({ links, onReveal }: { links: NodeView['outgoing']; onReveal: (id: string) => void }) {
   return (
     <ul className="link-list">
@@ -193,7 +283,7 @@ function NeighborList({ links, onReveal }: { links: NodeView['outgoing']; onReve
             <span className={`dot zone-${link.other.zone}`} />
             <span className="link-name">{link.other.name}</span>
             <span className="link-note">
-              {link.edge.kind === 'imports' ? 'imports' : 'uses'}
+              {edgeWord(link.edge.kind)}
               {link.edge.weight > 1 ? ` ×${link.edge.weight}` : ''}
             </span>
           </button>
@@ -262,6 +352,14 @@ function OverviewPanel({ overview, onReveal }: { overview: OverviewView | null; 
             <dd>{(meta.stats.imports + meta.stats.references).toLocaleString()}</dd>
           </div>
           <div className="fact-row">
+            <dt>Ways in</dt>
+            <dd>{meta.stats.endpoints.toLocaleString()}</dd>
+          </div>
+          <div className="fact-row">
+            <dt>Services & stores</dt>
+            <dd>{(meta.stats.services + meta.stats.stores).toLocaleString()}</dd>
+          </div>
+          <div className="fact-row">
             <dt>Documented</dt>
             <dd>{documented}% of files</dd>
           </div>
@@ -298,6 +396,23 @@ function OverviewPanel({ overview, onReveal }: { overview: OverviewView | null; 
   );
 }
 
+function edgeWord(kind: string): string {
+  switch (kind) {
+    case 'imports':
+      return 'imports';
+    case 'reads-from':
+      return 'reads from';
+    case 'writes-to':
+      return 'writes to';
+    case 'exposed-by':
+      return 'answered by';
+    case 'protected-by':
+      return 'protected by';
+    default:
+      return 'uses';
+  }
+}
+
 function kindWord(node: AtlasNode): string {
   switch (node.kind) {
     case 'module':
@@ -310,8 +425,41 @@ function kindWord(node: AtlasNode): string {
       return String(node.meta.typeKind ?? 'Type');
     case 'app':
       return 'App';
+    case 'zone':
+      return node.meta.direction === 'in' ? 'Ways in' : 'Ways out';
+    case 'endpoint':
+      return endpointWord((node.meta as unknown as EndpointMeta).endpointKind);
+    case 'service':
+      return 'External service';
+    case 'store':
+      return 'Data store';
     default:
       return node.kind;
+  }
+}
+
+function endpointWord(kind: string): string {
+  switch (kind) {
+    case 'http-route':
+      return 'Route';
+    case 'server-action':
+      return 'Server action';
+    case 'webhook':
+      return 'Webhook';
+    case 'cron':
+      return 'Scheduled job';
+    case 'queue':
+      return 'Background job';
+    case 'realtime':
+      return 'Realtime';
+    case 'cli':
+      return 'Command line';
+    case 'env':
+      return 'Configuration';
+    case 'file-read':
+      return 'File read';
+    default:
+      return 'Endpoint';
   }
 }
 
@@ -344,6 +492,46 @@ function factRows(node: AtlasNode): [string, string][] {
     case 'module':
       rows.push(['Files inside', String(node.meta.descendantFileCount ?? node.meta.fileCount ?? 0)]);
       rows.push(['Folder', String(node.meta.dirPath ?? node.path ?? '')]);
+      break;
+    case 'endpoint': {
+      const meta = node.meta as unknown as EndpointMeta;
+      if (meta.method) rows.push(['Kind', meta.method]);
+      if (meta.route) rows.push([meta.endpointKind === 'cron' ? 'Runs' : 'Path', meta.route]);
+      if (meta.schedule) rows.push(['Schedule', meta.schedule]);
+      rows.push(['Found by', meta.framework]);
+      if (meta.endpointKind !== 'env') {
+        rows.push([
+          'Protected by',
+          meta.guards.length === 0
+            ? 'nothing found'
+            : meta.guards
+                .map((g) => `${g.name}${g.confidence === 'likely' ? ' (likely)' : ''}`)
+                .join(', '),
+        ]);
+        rows.push(['Writes data', meta.writes ? 'yes' : 'no']);
+      }
+      break;
+    }
+    case 'service': {
+      const meta = node.meta as unknown as ServiceMeta;
+      rows.push(['Kind', meta.category]);
+      if (meta.packages.length > 0) rows.push(['Package', meta.packages.join(', ')]);
+      if (meta.hosts.length > 0) rows.push(['Hostname', meta.hosts.join(', ')]);
+      rows.push(['Called from', `${meta.sites.length} ${meta.sites.length === 1 ? 'place' : 'places'}`]);
+      break;
+    }
+    case 'store': {
+      const meta = node.meta as unknown as StoreMeta;
+      rows.push(['Client', meta.client]);
+      rows.push(['Kind', meta.storeKind]);
+      rows.push(['Reads', String(meta.reads)]);
+      rows.push(['Writes', String(meta.writes)]);
+      if (meta.tables.length > 0) rows.push(['Tables', meta.tables.join(', ')]);
+      break;
+    }
+    case 'zone':
+      rows.push(['Direction', node.meta.direction === 'in' ? 'into the app' : 'out of the app']);
+      rows.push(['Count', String(node.meta.endpointCount ?? 0)]);
       break;
     default:
       break;

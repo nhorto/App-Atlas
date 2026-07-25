@@ -1,12 +1,14 @@
 /**
- * @fileoverview The architecture map (SPEC.md 6.2).
+ * @fileoverview The app shell and its three lenses.
  *
- * One level of the atlas is on screen at a time: the children of the current
- * container, laid out deterministically, with the connections between them rolled up
- * into single arrows. Click selects and lights up the neighbourhood; double-click
- * goes inside; the breadcrumb goes back out.
+ * The boundary view is the home screen (SPEC.md 6.1): what comes in, what your app is
+ * made of, where data goes. The architecture map (6.2) is the drill-down, and the
+ * security page (6.6) is the list of answers the map implies. All three share one
+ * detail panel, because whatever you click the question is the same: what is this?
  *
- * The rule this file exists to enforce: the canvas never receives the whole graph.
+ * The rule this file exists to enforce: the canvas never receives the whole graph —
+ * one level of the atlas is on screen at a time, with the connections between the
+ * things on screen rolled up into single arrows.
  */
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
@@ -23,16 +25,34 @@ import {
   type Node,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
-import { fetchLevel, fetchNode, fetchOverview } from './api';
+import { fetchBoundaries, fetchInsights, fetchLevel, fetchNode, fetchOverview } from './api';
 import { layoutLevel, sizeOf, type Positioned } from './layout';
-import type { AtlasNode, LevelView, NodeView, OverviewView, Zone } from './types';
+import type {
+  AtlasNode,
+  BoundaryView,
+  InsightsView,
+  LevelView,
+  NodeView,
+  OverviewView,
+  Zone,
+} from './types';
 import { AtlasNodeCard, zoneLabel } from './components/AtlasNodeCard';
+import { BoundaryScreen } from './components/BoundaryScreen';
 import { DetailPanel } from './components/DetailPanel';
+import { InsightsScreen } from './components/InsightsScreen';
 import { SearchPalette } from './components/SearchPalette';
 
 const nodeTypes = { atlas: AtlasNodeCard };
 
 const ZONES: Zone[] = ['ui', 'api', 'logic', 'data', 'config', 'test'];
+
+type ViewName = 'boundaries' | 'map' | 'insights';
+
+const TABS: { view: ViewName; label: string }[] = [
+  { view: 'boundaries', label: 'Boundaries' },
+  { view: 'map', label: 'Map' },
+  { view: 'insights', label: 'Security' },
+];
 
 export function App() {
   return (
@@ -43,8 +63,12 @@ export function App() {
 }
 
 function AtlasApp() {
+  const initial = useMemo(readHash, []);
+  const [view, setView] = useState<ViewName>(initial.view);
   const [overview, setOverview] = useState<OverviewView | null>(null);
-  const [levelId, setLevelId] = useState<string | null>(null);
+  const [boundaries, setBoundaries] = useState<BoundaryView | null>(null);
+  const [insights, setInsights] = useState<InsightsView | null>(null);
+  const [levelId, setLevelId] = useState<string | null>(initial.levelId);
   const [level, setLevel] = useState<LevelView | null>(null);
   const [positions, setPositions] = useState<Map<string, Positioned>>(new Map());
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -57,12 +81,12 @@ function AtlasApp() {
 
   // --- load the atlas ---
   useEffect(() => {
-    fetchOverview()
-      .then((data) => {
-        setOverview(data);
-        // The URL hash names the level, so a spot in the map can be linked to.
-        const fromUrl = decodeURIComponent(window.location.hash.replace(/^#/, ''));
-        setLevelId(fromUrl || data.rootId);
+    Promise.all([fetchOverview(), fetchBoundaries()])
+      .then(([overviewData, boundaryData]) => {
+        setOverview(overviewData);
+        setBoundaries(boundaryData);
+        setLevelId((current) => current ?? overviewData.rootId);
+        setLoading(false);
       })
       .catch((err: Error) => {
         setError(err.message);
@@ -70,16 +94,24 @@ function AtlasApp() {
       });
   }, []);
 
+  // Security facts are only needed once someone asks for them.
+  useEffect(() => {
+    if (view !== 'insights' || insights) return;
+    fetchInsights()
+      .then(setInsights)
+      .catch((err: Error) => setError(err.message));
+  }, [view, insights]);
+
   // --- load and lay out the current level ---
   useEffect(() => {
-    if (!levelId) return;
+    if (view !== 'map' || !levelId) return;
     let cancelled = false;
     setLoading(true);
     fetchLevel(levelId)
-      .then(async (view) => {
-        const laid = await layoutLevel(view.nodes, view.edges);
+      .then(async (data) => {
+        const laid = await layoutLevel(data.nodes, data.edges);
         if (cancelled) return;
-        setLevel(view);
+        setLevel(data);
         setPositions(laid);
         setLoading(false);
       })
@@ -96,7 +128,7 @@ function AtlasApp() {
     return () => {
       cancelled = true;
     };
-  }, [levelId, overview]);
+  }, [view, levelId, overview]);
 
   // --- load detail for the selection ---
   useEffect(() => {
@@ -106,8 +138,8 @@ function AtlasApp() {
     }
     let cancelled = false;
     fetchNode(selectedId)
-      .then((view) => {
-        if (!cancelled) setDetail(view);
+      .then((data) => {
+        if (!cancelled) setDetail(data);
       })
       .catch(() => undefined);
     return () => {
@@ -120,18 +152,28 @@ function AtlasApp() {
   // report the current ones as measured. The delayed second call covers the frame
   // where measurement finishes just after this effect runs.
   useEffect(() => {
-    if (!nodesInitialized || !level) return;
+    if (view !== 'map' || !nodesInitialized || !level) return;
     const options = { padding: 0.2, maxZoom: 1 };
     void fitView(options);
     const timer = window.setTimeout(() => void fitView({ ...options, duration: 250 }), 120);
     return () => window.clearTimeout(timer);
-  }, [nodesInitialized, level, fitView]);
+  }, [view, nodesInitialized, level, fitView]);
 
-  const drill = useCallback((id: string) => {
-    setLevelId(id);
-    setSelectedId(null);
-    window.history.replaceState(null, '', `#${encodeURIComponent(id)}`);
+  const go = useCallback((next: ViewName, id?: string | null) => {
+    setView(next);
+    if (next === 'map' && id) setLevelId(id);
+    writeHash(next, next === 'map' ? (id ?? null) : null);
   }, []);
+
+  const drill = useCallback(
+    (id: string) => {
+      setLevelId(id);
+      setSelectedId(null);
+      setView('map');
+      writeHash('map', id);
+    },
+    [],
+  );
 
   const goUp = useCallback(() => {
     const crumbs = level?.breadcrumb ?? [];
@@ -139,19 +181,28 @@ function AtlasApp() {
     if (parent) drill(parent.id);
   }, [level, drill]);
 
-  /** Bring any node into view, changing level first if it lives somewhere else. */
+  /** Select without moving: what the boundary and security screens want. */
+  const select = useCallback((id: string) => {
+    if (id) setSelectedId(id);
+  }, []);
+
+  /** Bring a node into view on the map, changing level first if it lives elsewhere. */
   const reveal = useCallback(
     async (id: string) => {
       try {
-        const view = await fetchNode(id);
-        const parent = view.breadcrumb[view.breadcrumb.length - 2];
-        if (parent && parent.id !== levelId) setLevelId(parent.id);
+        const data = await fetchNode(id);
+        const parent = data.breadcrumb[data.breadcrumb.length - 2];
+        setView('map');
+        if (parent) {
+          setLevelId(parent.id);
+          writeHash('map', parent.id);
+        }
         setSelectedId(id);
       } catch {
         /* the node may have vanished between analyses */
       }
     },
-    [levelId],
+    [],
   );
 
   // --- keyboard ---
@@ -168,14 +219,14 @@ function AtlasApp() {
         return;
       }
       const typing = (event.target as HTMLElement | null)?.tagName === 'INPUT';
-      if (!typing && (event.key === 'Backspace' || (event.altKey && event.key === 'ArrowLeft'))) {
+      if (!typing && view === 'map' && (event.key === 'Backspace' || (event.altKey && event.key === 'ArrowLeft'))) {
         event.preventDefault();
         goUp();
       }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [goUp, searchOpen]);
+  }, [goUp, searchOpen, view]);
 
   /** The selection plus everything one hop away from it. */
   const neighborIds = useMemo(() => {
@@ -256,22 +307,38 @@ function AtlasApp() {
   return (
     <div className="app">
       <header className="topbar">
-        <nav className="crumbs" aria-label="Breadcrumb">
-          {crumbs.map((crumb: AtlasNode, index) => (
-            <span key={crumb.id}>
-              {index > 0 ? <span className="crumb-sep">›</span> : null}
-              <button
-                className={index === crumbs.length - 1 ? 'crumb is-current' : 'crumb'}
-                onClick={() => drill(crumb.id)}
-              >
-                {crumb.label ?? crumb.name}
-              </button>
-            </span>
+        <nav className="tabs" aria-label="Views">
+          {TABS.map((tab) => (
+            <button
+              key={tab.view}
+              className={tab.view === view ? 'tab is-current' : 'tab'}
+              onClick={() => go(tab.view, levelId)}
+            >
+              {tab.label}
+            </button>
           ))}
         </nav>
 
+        {view === 'map' ? (
+          <nav className="crumbs" aria-label="Breadcrumb">
+            {crumbs.map((crumb: AtlasNode, index) => (
+              <span key={crumb.id}>
+                {index > 0 ? <span className="crumb-sep">›</span> : null}
+                <button
+                  className={index === crumbs.length - 1 ? 'crumb is-current' : 'crumb'}
+                  onClick={() => drill(crumb.id)}
+                >
+                  {crumb.label ?? crumb.name}
+                </button>
+              </span>
+            ))}
+          </nav>
+        ) : (
+          <span className="topbar-title">{overview?.meta.name ?? ''}</span>
+        )}
+
         <div className="topbar-right">
-          {level && level.totalChildren > 0 ? (
+          {view === 'map' && level && level.totalChildren > 0 ? (
             <span className="topbar-count">
               {level.totalChildren} {level.totalChildren === 1 ? 'item' : 'items'}
               {level.truncated ? ' (showing first 400)' : ''}
@@ -284,52 +351,81 @@ function AtlasApp() {
         </div>
       </header>
 
-      <main className="canvas">
-        {loading ? <div className="loading">Drawing the map…</div> : null}
-        {!loading && level && level.nodes.length === 0 ? (
-          <div className="loading">Nothing inside this one.</div>
+      <main className={view === 'map' ? 'canvas' : 'canvas canvas-page'}>
+        {view === 'boundaries' ? (
+          boundaries ? (
+            <BoundaryScreen
+              view={boundaries}
+              selectedId={selectedId}
+              onSelect={select}
+              onOpenInsights={() => go('insights')}
+            />
+          ) : (
+            <div className="loading">Reading the boundaries…</div>
+          )
         ) : null}
 
-        <ReactFlow
-          nodes={rfNodes}
-          edges={rfEdges}
-          nodeTypes={nodeTypes}
-          nodesDraggable={false}
-          nodesConnectable={false}
-          elementsSelectable
-          // In this app a double-click means "go inside", so it must not also zoom —
-          // and d3-zoom's own dblclick handler would otherwise swallow the event.
-          zoomOnDoubleClick={false}
-          proOptions={{ hideAttribution: false }}
-          minZoom={0.05}
-          maxZoom={2.5}
-          onNodeClick={(_, node) => setSelectedId(node.id)}
-          onNodeDoubleClick={(_, node) => {
-            const data = node.data as { node: { drillable: boolean } };
-            if (data.node.drillable) drill(node.id);
-          }}
-          onPaneClick={() => setSelectedId(null)}
-        >
-          <Background variant={BackgroundVariant.Dots} gap={22} size={1} color="#dbe1ea" />
-          <Controls showInteractive={false} />
-          <MiniMap
-            pannable
-            zoomable
-            nodeColor={(node) => zoneColor(((node.data as { node?: { zone?: Zone } }).node?.zone ?? 'unknown') as Zone)}
-            maskColor="rgba(241,245,249,0.75)"
-          />
-        </ReactFlow>
+        {view === 'insights' ? (
+          insights ? (
+            <InsightsScreen insights={insights} onReveal={select} />
+          ) : (
+            <div className="loading">Checking every door…</div>
+          )
+        ) : null}
 
-        <div className="legend">
-          {ZONES.map((zone) => (
-            <span key={zone} className="legend-item">
-              <span className={`dot zone-${zone}`} />
-              {zoneLabel(zone)}
-            </span>
-          ))}
-        </div>
+        {view === 'map' ? (
+          <>
+            {loading ? <div className="loading">Drawing the map…</div> : null}
+            {!loading && level && level.nodes.length === 0 ? (
+              <div className="loading">Nothing inside this one.</div>
+            ) : null}
 
-        <div className="hint">Click to inspect · Press › or double-click to look inside · Backspace to go back</div>
+            <ReactFlow
+              nodes={rfNodes}
+              edges={rfEdges}
+              nodeTypes={nodeTypes}
+              nodesDraggable={false}
+              nodesConnectable={false}
+              elementsSelectable
+              // In this app a double-click means "go inside", so it must not also zoom —
+              // and d3-zoom's own dblclick handler would otherwise swallow the event.
+              zoomOnDoubleClick={false}
+              proOptions={{ hideAttribution: false }}
+              minZoom={0.05}
+              maxZoom={2.5}
+              onNodeClick={(_, node) => setSelectedId(node.id)}
+              onNodeDoubleClick={(_, node) => {
+                const data = node.data as { node: { drillable: boolean } };
+                if (data.node.drillable) drill(node.id);
+              }}
+              onPaneClick={() => setSelectedId(null)}
+            >
+              <Background variant={BackgroundVariant.Dots} gap={22} size={1} color="#dbe1ea" />
+              <Controls showInteractive={false} />
+              <MiniMap
+                pannable
+                zoomable
+                nodeColor={(node) =>
+                  zoneColor(((node.data as { node?: { zone?: Zone } }).node?.zone ?? 'unknown') as Zone)
+                }
+                maskColor="rgba(241,245,249,0.75)"
+              />
+            </ReactFlow>
+
+            <div className="legend">
+              {ZONES.map((zone) => (
+                <span key={zone} className="legend-item">
+                  <span className={`dot zone-${zone}`} />
+                  {zoneLabel(zone)}
+                </span>
+              ))}
+            </div>
+
+            <div className="hint">
+              Click to inspect · Press › or double-click to look inside · Backspace to go back
+            </div>
+          </>
+        ) : null}
       </main>
 
       <DetailPanel
@@ -343,6 +439,25 @@ function AtlasApp() {
       <SearchPalette open={searchOpen} onClose={() => setSearchOpen(false)} onPick={reveal} />
     </div>
   );
+}
+
+// ---------------------------------------------------------------------------
+// The URL is the address of a place in the atlas, so links to one keep working.
+// ---------------------------------------------------------------------------
+
+function readHash(): { view: ViewName; levelId: string | null } {
+  const raw = decodeURIComponent(window.location.hash.replace(/^#/, ''));
+  if (!raw || raw === 'boundaries') return { view: 'boundaries', levelId: null };
+  if (raw === 'insights') return { view: 'insights', levelId: null };
+  if (raw === 'map') return { view: 'map', levelId: null };
+  if (raw.startsWith('map/')) return { view: 'map', levelId: raw.slice(4) };
+  // Links made by M1 were a bare node id and still mean "show me this on the map".
+  return { view: 'map', levelId: raw };
+}
+
+function writeHash(view: ViewName, levelId: string | null): void {
+  const hash = view === 'map' && levelId ? `map/${encodeURIComponent(levelId)}` : view;
+  window.history.replaceState(null, '', `#${hash}`);
 }
 
 function zoneColor(zone: Zone): string {
