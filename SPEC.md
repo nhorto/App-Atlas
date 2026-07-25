@@ -2,7 +2,7 @@
 
 > **One-liner:** Understand any app — including the one your AI built. Run one command in any project and get an interactive, always-accurate atlas of your application — where data enters, what happens to it inside, and where it goes.
 
-**Status:** ✅ Approved by Nick (2026-07-25) — ready for implementation, starting with Milestone M1 (section 10). Incorporates feedback rounds 1–2: name locked, open source, provider-agnostic AI with agent-CLI passthrough, dual audience, security badges in v1.0, agent/MCP integration, explanation-source ladder (docstrings first).
+**Status:** ✅ Approved by Nick (2026-07-25). M1 and M2 shipped; M3 (the words layer) is next. See section 13 for the build log. Incorporates feedback rounds 1–2: name locked, open source, provider-agnostic AI with agent-CLI passthrough, dual audience, security badges in v1.0, agent/MCP integration, explanation-source ladder (docstrings first).
 
 ---
 
@@ -241,7 +241,7 @@ Two directions, deliberately staged:
 ## 10. Build milestones
 
 1. **M1 — Skeleton: ✅ done.** CLI + TS analyzer (files/functions/types/imports) + atlas model + architecture map with drill-down (no AI). *Proves the core interaction on real repos.* See section 13.
-2. **M2 — Boundaries & badges:** framework plugins + boundary detectors + boundary view with Sankey bands + security insight badges (auth coverage, external services, env inventory). *Proves the differentiator.*
+2. **M2 — Boundaries & badges: ✅ done.** Framework plugins + boundary detectors + boundary view with Sankey bands + security insight badges (auth coverage, external services, env inventory). *Proves the differentiator.* See section 13.
 3. **M3 — Words:** provider-agnostic AI enricher (agent-CLI passthrough first, then API keys) + overview page + hover cards + detail panels + trust labels.
 4. **M4 — Types & tours:** type explorer + walkthrough primitive + auto-generated "what happens when…" tours + `export --md` for agents.
 5. **M5 — Freshness & Python:** incremental re-analysis, `--watch`, Python analyzer, monorepo scope switcher, polish, docs, open-source launch.
@@ -279,3 +279,20 @@ Decisions made during the build, worth carrying forward:
 - **Zones are computed in M1** (from path/extension conventions) and drive the map's colour language, one milestone earlier than planned. They become real container nodes in the boundary view (M2).
 
 Measured on real repos: a 23-file project in 1.5s; an 80-file Next.js app in 0.9s; a 1,874-file / 6,606-function project in 37s (2,568 imports, 19,805 reference edges).
+
+**M2 — Boundaries & badges: ✅ complete (2026-07-25).** Boundary detectors for both directions, the left→right boundary view as the home screen, and the security badges. Ten detectors covering Next.js (both routers, server actions, middleware), Express/Fastify/Hono/Koa, NestJS, tRPC, crons and queues, webhooks, CLI, realtime, env, file reads, Prisma/Drizzle/Kysely/Knex/pg/Mongoose/Supabase, browser storage, blob storage, outbound HTTP with literal-URL resolution, and an SDK/hostname service catalog.
+
+Decisions made during the build, worth carrying forward:
+
+- **Detectors report findings; a separate pass builds nodes.** No detector may create an atlas node. Forty Stripe call sites in twelve files have to become one Stripe box, and only a project-wide merge can do that — the same reason a middleware matcher in `middleware.ts` can lock a route declared elsewhere. Language plugins return raw findings; `boundaries/build.ts` merges them once for every language.
+- **Guard confidence is carried to the badge.** A check found *inside* the handler is `certain`; one found elsewhere in the file, or matched through an approximated Next.js middleware pattern, is `likely`. The UI says "likely · Clerk" rather than rounding up to "protected". Telling someone a route is safe when it is not is the worst failure mode this product has, so under-claiming is the default everywhere.
+- **A function-scoped guard never covers its neighbour.** A `route.ts` exporting a public `GET` and an authenticated `POST` is the common case; attributing the `POST`'s `auth()` call to the `GET` would be exactly the failure above. Guards attach by exact handler id, and only fall back to file scope when no precise handler was resolvable (a page component, say).
+- **Detectors are gated on the project's own dependencies.** `db.select(...)` in an app with no `drizzle-orm` dependency is somebody's array helper, not a database call. An invented box on the map is worse than a missing one.
+- **Auth coverage is measured over reachable doors only.** Crons, queue workers, the CLI and config reads are excluded — counting them as "unprotected" would inflate the number that matters and teach people to ignore it.
+- **Boundaries live under two real container nodes** (`zone:inbound`, `zone:outbound`) rather than in a side table, so they appear in search, the detail panel and the drill-down map for free, and M4's `ATLAS.md` export gets them without new plumbing.
+- **The Sankey is hand-rolled SVG, not d3-sankey.** The spec named d3-sankey, but d3-sankey sizes nodes by flow, which fights the fixed-size readable cards section 6.1 asks for. Ribbons are ~40 lines of geometry; cards stay ordinary HTML buttons sitting on top. One fewer dependency and exact control over the "max 8–10 per side" rule.
+- **Config files are a first-class source.** `vercel.json` crons, the engine and table list in `schema.prisma`, and `.env.example` say things no AST walk would. A cron whose path matches a route folds into that route rather than appearing twice.
+- **Browser storage counts as a data store.** An app whose only store is `localStorage` keeps its data on one device and loses it when the cache is cleared. Found this on a real dogfood project that otherwise reported no storage at all.
+- **Fixed an M1 CLI bug:** the default command and the subcommands share flag names, and commander treated the shared ones as global, so `app-atlas serve . --port 5000` and `analyze . -q` silently used defaults. `enablePositionalOptions()` fixes it.
+
+Measured: the boundary pass adds roughly 10% to analysis time. The M2 fixture (9 files) in 0.5s; an 80-file Next.js app in 1.5s, finding 39 doors, 36 unprotected routes, 1 external service and 2 stores.
