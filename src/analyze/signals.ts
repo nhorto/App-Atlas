@@ -149,7 +149,7 @@ function readPrismaSchema(root: string): PrismaSignal | null {
         models: tables.map((table) => table.name).sort(),
         tables,
         path: candidate,
-        lineCount: text.split('\n').length,
+        lineCount: splitLines(text).length,
       };
     } catch {
       return null;
@@ -172,8 +172,17 @@ const PRISMA_SCALARS = new Set([
   'Unsupported',
 ]);
 
+/**
+ * Splits on either line ending. A checkout on Windows leaves `\r` at the end of every
+ * line, and a `$`-anchored pattern silently matches nothing against it — which reads
+ * as "this schema has no documentation" rather than as the bug it is.
+ */
+function splitLines(text: string): string[] {
+  return text.split(/\r?\n/);
+}
+
 function readPrismaModels(text: string): SchemaModel[] {
-  const lines = text.split('\n');
+  const lines = splitLines(text);
   const models: SchemaModel[] = [];
   let current: SchemaModel | null = null;
   let pendingDoc: string[] = [];
@@ -242,7 +251,7 @@ function readEnvExample(root: string): { envExample: Set<string>; envExamplePath
     const file = path.join(root, candidate);
     if (!fs.existsSync(file)) continue;
     try {
-      for (const line of fs.readFileSync(file, 'utf8').split('\n')) {
+      for (const line of splitLines(fs.readFileSync(file, 'utf8'))) {
         const match = /^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=/.exec(line);
         if (match) names.add(match[1]);
       }

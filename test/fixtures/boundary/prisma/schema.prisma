@@ -20,6 +20,7 @@ model Order {
   user   User   @relation(fields: [userId], references: [id])
 }
 
+/// Every change worth keeping a record of.
 model AuditLog {
   id      String @id @default(cuid())
   message String
