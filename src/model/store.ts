@@ -118,6 +118,40 @@ export function atlasJsonPath(root: string): string {
   return path.join(atlasDir(root), 'atlas.json');
 }
 
+/**
+ * The list of apps in a monorepo, written at the workspace root.
+ *
+ * Only the list lives here. Each scope keeps its own atlas and its own cache inside its
+ * own directory, so analyzing one package on its own is the same operation as analyzing
+ * a single-app repo — the manifest is the only thing that knows they are related.
+ */
+export function scopesPath(root: string): string {
+  return path.join(atlasDir(root), 'scopes.json');
+}
+
+export interface ScopeRecord {
+  id: string;
+  name: string;
+  /** Repo-relative directory, POSIX. */
+  dir: string;
+  kind: 'app' | 'library';
+}
+
+export function writeScopes(root: string, scopes: ScopeRecord[]): void {
+  const file = scopesPath(root);
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, JSON.stringify({ scopes }, null, 2), 'utf8');
+}
+
+export function readScopes(root: string): ScopeRecord[] {
+  try {
+    const parsed = JSON.parse(fs.readFileSync(scopesPath(root), 'utf8')) as { scopes?: ScopeRecord[] };
+    return Array.isArray(parsed.scopes) ? parsed.scopes : [];
+  } catch {
+    return [];
+  }
+}
+
 export class AtlasStore {
   private constructor(private readonly db: DatabaseSync) {}
 

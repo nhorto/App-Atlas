@@ -21,6 +21,8 @@ export { buildBoundaryView } from './model/boundary.js';
 export type { BoundaryCard, BoundaryFlow, BoundaryView, BoundaryZone } from './model/boundary.js';
 export { buildSchemaNodes } from './analyze/schema.js';
 export { classifyZone, dominantZone } from './analyze/zones.js';
+export { findScopes } from './analyze/workspace.js';
+export type { Scope } from './analyze/workspace.js';
 export { renderAtlasMarkdown } from './export/markdown.js';
 export { buildTours } from './model/tours.js';
 export type { Tour, TourStep } from './model/tours.js';
@@ -28,7 +30,17 @@ export { buildTypeView } from './model/typeview.js';
 export type { TypeCard, TypeField, TypeLink, TypeView } from './model/typeview.js';
 export { buildInsights } from './model/insights.js';
 export type { InsightsView, Protection, RouteInsight, ServiceInsight, StoreInsight } from './model/insights.js';
-export { AtlasStore, atlasDbPath, atlasJsonPath, loadAtlas, persistAtlas } from './model/store.js';
+export {
+  AtlasStore,
+  atlasDbPath,
+  atlasJsonPath,
+  loadAtlas,
+  persistAtlas,
+  readScopes,
+  scopesPath,
+  writeScopes,
+} from './model/store.js';
+export type { ScopeRecord } from './model/store.js';
 export { startServer } from './server/index.js';
 export type { ServerHandle } from './server/index.js';
 export { isInteresting, watchProject } from './watch.js';
