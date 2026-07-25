@@ -25,7 +25,7 @@ export interface ServerHandle {
   url: string;
   port: number;
   close(): Promise<void>;
-  /** Swap in a freshly analyzed atlas (used by --watch in M5). */
+  /** Swap in a freshly analyzed atlas and tell every open page about it (`--watch`). */
   update(atlas: Atlas): void;
 }
 
@@ -61,12 +61,13 @@ export async function startServer(options: ServeOptions): Promise<ServerHandle> 
   const host = options.host ?? '127.0.0.1';
   const webRoot = webRootPath();
   let graph = new AtlasGraph(options.atlas);
+  const listeners = new Listeners();
 
   const explainer = new Explainer(options.ai ?? { enabled: true }, () => graph);
 
   const server = http.createServer((req, res) => {
     try {
-      handleRequest(req, res, () => graph, webRoot, explainer);
+      handleRequest(req, res, () => graph, webRoot, explainer, listeners);
     } catch (err) {
       sendJson(res, 500, { error: (err as Error).message });
     }
@@ -79,12 +80,69 @@ export async function startServer(options: ServeOptions): Promise<ServerHandle> 
     port,
     close: () =>
       new Promise<void>((resolve, reject) => {
+        // An open event stream never ends on its own, so the server would wait forever
+        // for it. Hang them up first, then close.
+        listeners.closeAll();
         server.close((err) => (err ? reject(err) : resolve()));
       }),
     update: (atlas: Atlas) => {
       graph = new AtlasGraph(atlas);
+      listeners.broadcast({
+        name: graph.meta.name,
+        generatedAt: graph.meta.generatedAt,
+        stats: graph.meta.stats,
+      });
     },
   };
+}
+
+/**
+ * The open pages, waiting to be told the code changed.
+ *
+ * Server-sent events rather than a websocket: the traffic only goes one way, it is a
+ * dozen lines over the http server we already have, and the browser reconnects by
+ * itself when the CLI is restarted.
+ */
+class Listeners {
+  private readonly open = new Set<http.ServerResponse>();
+  private heartbeat: NodeJS.Timeout | null = null;
+
+  add(res: http.ServerResponse): void {
+    res.writeHead(200, {
+      'content-type': 'text/event-stream; charset=utf-8',
+      'cache-control': 'no-cache, no-transform',
+      connection: 'keep-alive',
+    });
+    res.write('retry: 2000\n\n');
+    this.open.add(res);
+    res.on('close', () => {
+      this.open.delete(res);
+      if (this.open.size === 0 && this.heartbeat) {
+        clearInterval(this.heartbeat);
+        this.heartbeat = null;
+      }
+    });
+    // A silent connection gets closed by whatever sits in the middle; a comment every
+    // twenty seconds costs nothing and keeps it up. `unref` so it never holds the CLI open.
+    if (!this.heartbeat) {
+      this.heartbeat = setInterval(() => {
+        for (const client of this.open) client.write(': ping\n\n');
+      }, 20_000);
+      this.heartbeat.unref();
+    }
+  }
+
+  broadcast(payload: unknown): void {
+    const data = JSON.stringify(payload);
+    for (const client of this.open) client.write(`event: atlas\ndata: ${data}\n\n`);
+  }
+
+  closeAll(): void {
+    if (this.heartbeat) clearInterval(this.heartbeat);
+    this.heartbeat = null;
+    for (const client of this.open) client.end();
+    this.open.clear();
+  }
 }
 
 /** Binds to the requested port, walking forward if it is taken. */
@@ -117,6 +175,7 @@ function handleRequest(
   getGraph: () => AtlasGraph,
   webRoot: string,
   explainer: Explainer,
+  listeners: Listeners,
 ): void {
   const url = new URL(req.url ?? '/', 'http://localhost');
   const pathname = decodeURIComponent(url.pathname);
@@ -126,6 +185,10 @@ function handleRequest(
     switch (pathname) {
       case '/api/health':
         return sendJson(res, 200, { ok: true, name: graph.meta.name });
+
+      /** Stays open for as long as the page does; used by `--watch`. */
+      case '/api/events':
+        return listeners.add(res);
 
       case '/api/ai':
         return sendJson(res, 200, explainer.status());

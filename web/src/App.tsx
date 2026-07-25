@@ -34,6 +34,7 @@ import {
   fetchOverview,
   fetchTours,
   fetchTypes,
+  onAtlasUpdated,
 } from './api';
 import { layoutLevel, sizeOf, type Positioned } from './layout';
 import type {
@@ -99,6 +100,8 @@ function AtlasApp() {
   const [error, setError] = useState<string | null>(null);
   const [searchOpen, setSearchOpen] = useState(false);
   const [aiEnabled, setAiEnabled] = useState(false);
+  const [revision, setRevision] = useState(0);
+  const [justUpdated, setJustUpdated] = useState(false);
   const { fitView } = useReactFlow();
   const nodesInitialized = useNodesInitialized();
 
@@ -126,7 +129,28 @@ function AtlasApp() {
     fetchTours()
       .then(setTours)
       .catch(() => setTours([]));
-  }, []);
+  }, [revision]);
+
+  // --- follow the code while --watch is running ---
+  // Everything already loaded is thrown away rather than merged: the atlas on the
+  // server is the truth, and a half-refreshed screen is worse than a second of
+  // loading. The view someone is on, and where they had drilled to, are kept.
+  useEffect(
+    () =>
+      onAtlasUpdated(() => {
+        setInsights(null);
+        setTypes(null);
+        setRevision((n) => n + 1);
+        setJustUpdated(true);
+      }),
+    [],
+  );
+
+  useEffect(() => {
+    if (!justUpdated) return;
+    const timer = window.setTimeout(() => setJustUpdated(false), 2600);
+    return () => window.clearTimeout(timer);
+  }, [justUpdated]);
 
   // Security facts and the shape of the data are only needed once someone asks.
   useEffect(() => {
@@ -169,7 +193,7 @@ function AtlasApp() {
     return () => {
       cancelled = true;
     };
-  }, [view, levelId, overview]);
+  }, [view, levelId, overview, revision]);
 
   // --- load detail for the selection ---
   useEffect(() => {
@@ -186,7 +210,7 @@ function AtlasApp() {
     return () => {
       cancelled = true;
     };
-  }, [selectedId]);
+  }, [selectedId, revision]);
 
   // --- frame each level once React Flow has measured it ---
   // Fitting too early frames the *previous* level's nodes, so wait for React Flow to
@@ -432,6 +456,7 @@ function AtlasApp() {
         )}
 
         <div className="topbar-right">
+          {justUpdated ? <span className="live-badge">code changed · updated</span> : null}
           {view === 'map' && level && level.totalChildren > 0 ? (
             <span className="topbar-count">
               {level.totalChildren} {level.totalChildren === 1 ? 'item' : 'items'}

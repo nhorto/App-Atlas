@@ -75,3 +75,15 @@ export async function search(query: string): Promise<AtlasNode[]> {
   const { results } = await get<{ results: AtlasNode[] }>(`/api/search?q=${encodeURIComponent(query)}`);
   return results;
 }
+
+/**
+ * Listens for "the code changed" while `--watch` is running.
+ *
+ * EventSource reconnects on its own, so restarting the CLI reconnects the page without
+ * anyone reloading it. When nothing is watching, the stream simply stays quiet.
+ */
+export function onAtlasUpdated(handler: () => void): () => void {
+  const source = new EventSource('/api/events');
+  source.addEventListener('atlas', handler);
+  return () => source.close();
+}

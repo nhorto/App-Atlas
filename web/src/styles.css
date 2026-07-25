@@ -145,6 +145,26 @@ code {
   color: var(--ink-faint);
 }
 
+/* Shown for a couple of seconds after --watch rebuilds, then it gets out of the way. */
+.live-badge {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: #047857;
+  background: rgba(16, 185, 129, 0.14);
+  border-radius: 999px;
+  padding: 3px 9px;
+  white-space: nowrap;
+  animation: live-badge-in 180ms ease-out;
+}
+
+@keyframes live-badge-in {
+  from {
+    opacity: 0;
+    transform: translateY(-3px);
+  }
+}
+
 kbd {
   font-family: var(--font);
   font-size: 10px;
