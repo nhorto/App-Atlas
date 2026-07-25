@@ -11,6 +11,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
+import type { CachedExplanation } from '../enrich/types.js';
 import type { Atlas, AtlasEdge, AtlasMeta, AtlasNode } from './types.js';
 
 const SCHEMA = `
@@ -57,6 +58,20 @@ CREATE TABLE IF NOT EXISTS edges (
 CREATE INDEX IF NOT EXISTS idx_edges_from ON edges(from_id);
 CREATE INDEX IF NOT EXISTS idx_edges_to   ON edges(to_id);
 CREATE INDEX IF NOT EXISTS idx_edges_kind ON edges(kind);
+
+-- Generated explanations, keyed by the content they describe rather than by node id.
+-- This table deliberately outlives the snapshot above: nodes and edges are rewritten
+-- on every analysis, but an explanation of code that has not changed is still true,
+-- and re-generating it would charge the user twice for the same sentence.
+CREATE TABLE IF NOT EXISTS explanations (
+  key        TEXT PRIMARY KEY,
+  node_id    TEXT NOT NULL,
+  tier       TEXT NOT NULL,
+  hash       TEXT NOT NULL,
+  text       TEXT NOT NULL,
+  backend    TEXT NOT NULL,
+  created_at TEXT NOT NULL
+);
 `;
 
 /** Where an analyzed project keeps its atlas. */
@@ -141,6 +156,46 @@ export class AtlasStore {
     }
   }
 
+  /** Every cached explanation, by cache key. */
+  readExplanations(): Map<string, CachedExplanation> {
+    const rows = this.db.prepare('SELECT * FROM explanations').all() as unknown as ExplanationRow[];
+    const out = new Map<string, CachedExplanation>();
+    for (const row of rows) {
+      out.set(row.key, {
+        nodeId: row.node_id,
+        tier: row.tier as CachedExplanation['tier'],
+        hash: row.hash,
+        text: row.text,
+        backend: row.backend,
+        createdAt: row.created_at,
+      });
+    }
+    return out;
+  }
+
+  writeExplanations(entries: Map<string, CachedExplanation>): void {
+    if (entries.size === 0) return;
+    const insert = this.db.prepare(
+      `INSERT OR REPLACE INTO explanations (key, node_id, tier, hash, text, backend, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    );
+    this.db.exec('BEGIN');
+    try {
+      for (const [key, entry] of entries) {
+        insert.run(key, entry.nodeId, entry.tier, entry.hash, entry.text, entry.backend, entry.createdAt);
+      }
+      this.db.exec('COMMIT');
+    } catch (err) {
+      this.db.exec('ROLLBACK');
+      throw err;
+    }
+  }
+
+  /** Throws away every generated explanation. Behind `--refresh-ai`. */
+  clearExplanations(): void {
+    this.db.exec('DELETE FROM explanations');
+  }
+
   read(): Atlas | null {
     const metaRow = this.db.prepare('SELECT value FROM meta WHERE key = ?').get('atlas') as unknown as
       | { value: string }
@@ -219,6 +274,16 @@ interface NodeRow {
   hash: string;
   provenance: string;
   meta: string;
+}
+
+interface ExplanationRow {
+  key: string;
+  node_id: string;
+  tier: string;
+  hash: string;
+  text: string;
+  backend: string;
+  created_at: string;
 }
 
 interface EdgeRow {
