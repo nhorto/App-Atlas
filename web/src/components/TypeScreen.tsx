@@ -141,7 +141,7 @@ export function TypeScreen({
           <div className="overview-lede is-empty">
             <p>
               No types or database tables were found. This view fills up on its own as your code declares
-              interfaces and types — or the moment a <code>schema.prisma</code> appears.
+              interfaces and types, names database tables in its queries, or gains a <code>schema.prisma</code>.
             </p>
           </div>
         </div>
@@ -227,6 +227,13 @@ function TypeCardNode({ data, selected }: NodeProps) {
       </div>
 
       {card.aliasOf ? <div className="tcard-alias">{card.aliasOf}</div> : null}
+
+      {/* A table named in queries but declared nowhere: honest about what we can't see. */}
+      {card.typeKind === 'table' && card.fields.length === 0 ? (
+        <div className="tcard-observed" title="This table is named in the code's queries, but no schema file declares its columns.">
+          named in queries · columns unknown
+        </div>
+      ) : null}
 
       {card.fields.length > 0 ? (
         <ul className="tcard-fields">

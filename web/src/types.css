@@ -125,6 +125,17 @@
   color: #266344;
 }
 
+.tcard-observed {
+  padding: 6px 11px;
+  font-size: 10.5px;
+  font-style: italic;
+  color: var(--ink-faint);
+  border-bottom: 1px solid var(--line);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .tcard-alias {
   padding: 6px 11px;
   font-family: var(--mono);

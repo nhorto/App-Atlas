@@ -68,9 +68,10 @@ export function sizeOfTypeCard(card: TypeCard): { width: number; height: number 
     (max, field) => Math.max(max, field.name.length + Math.min(field.type.length, 22) + 3),
     card.name.length + 8,
   );
-  const rows = card.fields.length + (card.hiddenFields > 0 ? 1 : 0) + (card.aliasOf ? 1 : 0);
+  const observedNote = card.typeKind === 'table' && card.fields.length === 0;
+  const rows = card.fields.length + (card.hiddenFields > 0 ? 1 : 0) + (card.aliasOf ? 1 : 0) + (observedNote ? 1 : 0);
   return {
-    width: Math.min(340, Math.max(210, longest * 7.1 + 34)),
+    width: Math.min(340, Math.max(observedNote ? 260 : 210, longest * 7.1 + 34)),
     height: 46 + rows * 21 + (card.usage > 0 ? 22 : 8),
   };
 }
