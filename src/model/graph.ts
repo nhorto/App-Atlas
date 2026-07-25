@@ -58,6 +58,8 @@ export interface NodeView {
 export interface OverviewView {
   meta: AtlasMeta;
   rootId: string;
+  /** The app node itself — it carries the one-paragraph description of the whole app. */
+  app: AtlasNode | null;
   topLevel: LevelNode[];
   busiestFiles: { node: AtlasNode; connections: number }[];
   zoneCounts: Record<string, number>;
@@ -278,7 +280,14 @@ export class AtlasGraph {
       zoneCounts[node.zone] = (zoneCounts[node.zone] ?? 0) + 1;
     }
 
-    return { meta: this.meta, rootId: this.rootId, topLevel, busiestFiles, zoneCounts };
+    return {
+      meta: this.meta,
+      rootId: this.rootId,
+      app: this.nodes.get(this.rootId) ?? null,
+      topLevel,
+      busiestFiles,
+      zoneCounts,
+    };
   }
 
   /** Walks up from a node until it finds an ancestor of the requested kind. */
