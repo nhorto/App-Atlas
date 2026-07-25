@@ -17,6 +17,7 @@ import { buildSchemaNodes } from './schema.js';
 import type { FileSlice, LanguagePlugin } from './plugin.js';
 import { discoverProject } from './project.js';
 import type { ProjectInfo } from './project.js';
+import { pythonPlugin } from './py/index.js';
 import { typescriptPlugin } from './ts/index.js';
 import { dominantZone } from './zones.js';
 
@@ -42,7 +43,7 @@ export interface AnalyzeResult {
   project: ProjectInfo;
 }
 
-const PLUGINS: LanguagePlugin[] = [typescriptPlugin];
+const PLUGINS: LanguagePlugin[] = [typescriptPlugin, pythonPlugin];
 
 export async function analyzeProject(rootDir: string, options: AnalyzeOptions = {}): Promise<AnalyzeResult> {
   const started = Date.now();

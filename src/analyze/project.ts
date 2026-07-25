@@ -40,7 +40,7 @@ export interface DiscoverOptions {
   extraIgnores?: string[];
 }
 
-const SOURCE_GLOB = '**/*.{ts,tsx,mts,cts,js,jsx,mjs,cjs}';
+const SOURCE_GLOB = '**/*.{ts,tsx,mts,cts,js,jsx,mjs,cjs,py,pyi}';
 
 const DEFAULT_IGNORES = [
   '**/node_modules/**',
@@ -89,6 +89,22 @@ const FRAMEWORK_SIGNALS: Record<string, string> = {
   resend: 'Resend',
   electron: 'Electron',
   vite: 'Vite',
+};
+
+/** Distribution name (as written in requirements.txt) → friendly framework label. */
+const PYTHON_FRAMEWORKS: Record<string, string> = {
+  fastapi: 'FastAPI',
+  flask: 'Flask',
+  django: 'Django',
+  quart: 'Quart',
+  sanic: 'Sanic',
+  starlette: 'Starlette',
+  celery: 'Celery',
+  sqlalchemy: 'SQLAlchemy',
+  sqlmodel: 'SQLModel',
+  pydantic: 'Pydantic',
+  streamlit: 'Streamlit',
+  'djangorestframework': 'Django REST Framework',
 };
 
 export async function discoverProject(rootInput: string, options: DiscoverOptions): Promise<ProjectInfo> {
@@ -201,6 +217,9 @@ function detectFrameworks(pkg: Record<string, unknown> | null, signals: ProjectS
   if (signals.nextAppDir) out.add('Next.js App Router');
   if (signals.nextPagesDir && !signals.nextAppDir) out.add('Next.js Pages Router');
   if (signals.crons.length > 0) out.add('Vercel Cron');
+  for (const [dep, label] of Object.entries(PYTHON_FRAMEWORKS)) {
+    if (signals.pythonPackages.has(dep)) out.add(label);
+  }
   return [...out].sort();
 }
 
