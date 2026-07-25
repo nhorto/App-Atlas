@@ -1,0 +1,8 @@
+# The sample app's dependencies. Comments and version pins are here on purpose:
+# the manifest reader has to survive both.
+fastapi>=0.110
+sqlalchemy==2.0.30
+httpx
+stripe~=9.0
+celery[redis]>=5.3
+python-dotenv
