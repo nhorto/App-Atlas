@@ -113,7 +113,8 @@ test('an enum-typed column is not reported as a relation', () => {
 
 test('tables come first, and every card knows where it is used', () => {
   const view = buildTypeView(boundary);
-  assert.equal(view.tables, 3);
+  // Three from schema.prisma, one observed in Supabase queries.
+  assert.equal(view.tables, 4);
   assert.equal(view.cards[0].typeKind, 'table');
 
   const order = view.cards.find((c) => c.name === 'Order');
@@ -144,7 +145,7 @@ test('a shared name is a link of its own kind, never a declared one', () => {
 test('the card list is capped, and says so by reporting the total', () => {
   const view = buildTypeView(boundary, 2);
   assert.equal(view.cards.length, 2);
-  assert.equal(view.total, 3, 'the count is of everything, not of what fit');
+  assert.equal(view.total, 4, 'the count is of everything, not of what fit');
 });
 
 // ---------------------------------------------------------------------------
@@ -158,7 +159,7 @@ test('the welcome tour answers the questions people ask first', () => {
   assert.equal(welcome.kind, 'welcome');
   assert.ok(welcome.steps.length >= 4);
   assert.ok(
-    welcome.steps.some((step) => /8 ways in/.test(step.body)),
+    welcome.steps.some((step) => /9 ways in/.test(step.body)),
     'the doors are counted from the graph, not guessed',
   );
 });
