@@ -108,17 +108,17 @@ export function TypeScreen({
           sourceHandle: link.fields[0] ? `f:${link.fields[0]}` : 'out',
           targetHandle: 'in',
           label: touches && link.fields.length > 0 ? link.fields.join(', ') : undefined,
-          labelBgStyle: { fill: '#ffffff' },
-          labelStyle: { fontSize: 11, fill: '#475569' },
+          labelBgStyle: { fill: '#f4f1e9' },
+          labelStyle: { fontSize: 11, fill: '#5f594b' },
           style: {
-            stroke: guess ? '#a78bfa' : touches ? '#334155' : '#94a3b8',
+            stroke: guess ? '#8b74d8' : touches ? '#4a4436' : '#a89f8b',
             strokeWidth: touches ? 2 : 1.4,
             strokeDasharray: guess ? '5 4' : undefined,
             opacity: lit && !touches ? 0.12 : 0.75,
           },
           markerEnd: guess
             ? undefined
-            : { type: MarkerType.ArrowClosed, width: 13, height: 13, color: touches ? '#334155' : '#94a3b8' },
+            : { type: MarkerType.ArrowClosed, width: 13, height: 13, color: touches ? '#4a4436' : '#a89f8b' },
         } satisfies Edge;
       }),
     [view, selectedId, lit],
@@ -184,7 +184,7 @@ export function TypeScreen({
             maxZoom={2.5}
             onNodeClick={(_, node) => onSelect(node.id)}
           >
-            <Background variant={BackgroundVariant.Dots} gap={22} size={1} color="#dbe1ea" />
+            <Background variant={BackgroundVariant.Dots} gap={22} size={1} color="#d9d2bf" />
             <Controls showInteractive={false} />
           </ReactFlow>
         </ReactFlowProvider>
