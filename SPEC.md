@@ -2,7 +2,7 @@
 
 > **One-liner:** Understand any app — including the one your AI built. Run one command in any project and get an interactive, always-accurate atlas of your application — where data enters, what happens to it inside, and where it goes.
 
-**Status:** ✅ Approved by Nick (2026-07-25). M1 and M2 shipped; M3 (the words layer) is next. See section 13 for the build log. Incorporates feedback rounds 1–2: name locked, open source, provider-agnostic AI with agent-CLI passthrough, dual audience, security badges in v1.0, agent/MCP integration, explanation-source ladder (docstrings first).
+**Status:** ✅ Approved by Nick (2026-07-25). M1, M2 and M3 shipped; M4 (types & tours) is next. See section 13 for the build log. Incorporates feedback rounds 1–2: name locked, open source, provider-agnostic AI with agent-CLI passthrough, dual audience, security badges in v1.0, agent/MCP integration, explanation-source ladder (docstrings first).
 
 ---
 
@@ -242,7 +242,7 @@ Two directions, deliberately staged:
 
 1. **M1 — Skeleton: ✅ done.** CLI + TS analyzer (files/functions/types/imports) + atlas model + architecture map with drill-down (no AI). *Proves the core interaction on real repos.* See section 13.
 2. **M2 — Boundaries & badges: ✅ done.** Framework plugins + boundary detectors + boundary view with Sankey bands + security insight badges (auth coverage, external services, env inventory). *Proves the differentiator.* See section 13.
-3. **M3 — Words:** provider-agnostic AI enricher (agent-CLI passthrough first, then API keys) + overview page + hover cards + detail panels + trust labels.
+3. **M3 — Words: ✅ done.** Provider-agnostic AI enricher (agent-CLI passthrough first, then API keys) + overview page + hover cards + detail panels + trust labels + `app-atlas init`. *Proves the explanation ladder.* See section 13.
 4. **M4 — Types & tours:** type explorer + walkthrough primitive + auto-generated "what happens when…" tours + `export --md` for agents.
 5. **M5 — Freshness & Python:** incremental re-analysis, `--watch`, Python analyzer, monorepo scope switcher, polish, docs, open-source launch.
 
@@ -263,7 +263,7 @@ Each milestone is testable against real agent-built repos (dogfood on Nick's own
 ## 12. Remaining open questions
 
 1. **Distribution & repo:** GitHub org/repo name still open. License: **MIT** (chosen — ecosystem default, simplest; recorded in `package.json`).
-2. **Onboarding cost UX:** exact wording/flow for the "this AI pass will cost ~$X / use your Claude Code subscription" moment. *(Still open — needed for M3.)*
+2. ~~**Onboarding cost UX:**~~ **Resolved (M3): ask only when it costs.** A subscription the user already pays for is free at the margin, so a prompt buys them nothing and trains them to hit Enter without reading; the run says afterwards what wrote the descriptions and that there was no charge. A metered API key blocks first, with the number of items, an estimated token count, an amount in dollars rounded up, which key is in play, and a line saying names and paths are sent but file contents are not. Non-interactive runs decline rather than spend, and `--ai-yes` approves in advance.
 3. ~~**Naming the CLI:**~~ **Resolved:** `atlas` is taken on npm, `app-atlas` is available and is now the package name.
 
 ## 13. Build log
@@ -296,3 +296,20 @@ Decisions made during the build, worth carrying forward:
 - **Fixed an M1 CLI bug:** the default command and the subcommands share flag names, and commander treated the shared ones as global, so `app-atlas serve . --port 5000` and `analyze . -q` silently used defaults. `enablePositionalOptions()` fixes it.
 
 Measured: the boundary pass adds roughly 10% to analysis time. The M2 fixture (9 files) in 0.5s; an 80-file Next.js app in 1.5s, finding 39 doors, 36 unprotected routes, 1 external service and 2 stores.
+
+**M3 — Words: ✅ complete (2026-07-25).** The explanation ladder end to end: docstrings verbatim, generated text only for the gaps, three trust tiers on screen, stale-docstring detection, the overview page, hover cards on the map, explain-on-click, and `app-atlas init`. Backends: Claude Code, Codex CLI and OpenCode through their headless modes; Anthropic and any OpenAI-compatible endpoint (which covers OpenAI, OpenRouter, Ollama and LM Studio) by key. 16 new tests, 43 in total.
+
+Decisions made during the build, worth carrying forward:
+
+- **Ask only when it costs** (section 12, question 2). The prompt is triggered by `billing === 'metered'`, not by "AI is about to run". A user with a subscription is never interrupted; a user spending an API key always is.
+- **Installed is not the same as working.** Every backend answers a throwaway question before it is trusted. This is not defensive programming for its own sake: a signed-out agent CLI exits zero and prints "Not logged in · Please run /login" to stdout, and without the probe that sentence becomes the description of forty files. Found on the first real run.
+- **The spawned CLI's environment is scrubbed.** App Atlas is often run from inside an agent session — that is the audience — and a parent session exports variables that point a child CLI at a gateway holding none of the user's credentials. Session markers are always removed; redirection variables only when a parent session is detected, so a user's own proxy config survives.
+- **Requests are batched, and replies are keyed by position.** A dozen files per request is what makes agent-CLI passthrough viable at all: one process start for twelve descriptions instead of twelve. **But models key their answer by the most human-looking identifier on the line whatever the prompt says** — Codex returned `{"src/lib/db.ts": …}` when asked for `{"1": …}`. The prompt now states the key explicitly *and* the parser accepts the path as an alternate. Both were in the prompt, so neither can smuggle in a node we never sent.
+- **The cache key is a hash of the facts we send, not of the file.** Slightly stricter than "keyed by node hash": reformatting a file's internals does not change what its one-line description was derived from, so it does not re-bill either. A fully cached project never starts a backend process at all.
+- **A generated sentence never displaces a docstring**, at any tier, in any order. The ladder is enforced in one function so it cannot be forgotten in a new code path.
+- **Staleness is sticky.** It is detected by comparing consecutive runs, so a docstring that went stale three analyses ago looks unchanged now; comparing only the latest pair would quietly forgive it. The flag survives until the docstring itself is rewritten, which is the only event that can resolve it.
+- **Only the on-click tier sends source code.** Bulk passes send names, paths and exports. A function's purpose is genuinely not recoverable from its signature, so the detail panel does send the body — and the button says so before it is pressed.
+- **Sentence-splitting must not split on a dot inside a word.** "Reads config from next.config.js and applies it" was being truncated to "Reads config from next" — not a shorter description, a wrong one. Caught by a test written for something else.
+- **A pass that runs and produces nothing has to say so.** Silence reads as "there was nothing to describe", which is the opposite of what happened.
+
+Measured, against a real Codex CLI on a subscription: the 9-file M2 fixture enriched in 21s (23 descriptions, 3 requests), and a second run over unchanged code did no work at all. The app paragraph named the real routes, the real companies and the real table names.

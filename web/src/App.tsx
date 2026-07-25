@@ -25,7 +25,7 @@ import {
   type Node,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
-import { fetchBoundaries, fetchInsights, fetchLevel, fetchNode, fetchOverview } from './api';
+import { fetchAiStatus, fetchBoundaries, fetchInsights, fetchLevel, fetchNode, fetchOverview } from './api';
 import { layoutLevel, sizeOf, type Positioned } from './layout';
 import type {
   AtlasNode,
@@ -40,16 +40,20 @@ import { AtlasNodeCard, zoneLabel } from './components/AtlasNodeCard';
 import { BoundaryScreen } from './components/BoundaryScreen';
 import { DetailPanel } from './components/DetailPanel';
 import { InsightsScreen } from './components/InsightsScreen';
+import { OverviewScreen } from './components/OverviewScreen';
 import { SearchPalette } from './components/SearchPalette';
 
 const nodeTypes = { atlas: AtlasNodeCard };
 
 const ZONES: Zone[] = ['ui', 'api', 'logic', 'data', 'config', 'test'];
 
-type ViewName = 'boundaries' | 'map' | 'insights';
+type ViewName = 'boundaries' | 'overview' | 'map' | 'insights';
 
+// Boundaries stays first: it is the home screen (SPEC.md 6.1) and the thing no other
+// tool does. Overview sits beside it for the reader who wants prose before a diagram.
 const TABS: { view: ViewName; label: string }[] = [
   { view: 'boundaries', label: 'Boundaries' },
+  { view: 'overview', label: 'Overview' },
   { view: 'map', label: 'Map' },
   { view: 'insights', label: 'Security' },
 ];
@@ -76,6 +80,7 @@ function AtlasApp() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [searchOpen, setSearchOpen] = useState(false);
+  const [aiEnabled, setAiEnabled] = useState(false);
   const { fitView } = useReactFlow();
   const nodesInitialized = useNodesInitialized();
 
@@ -92,6 +97,11 @@ function AtlasApp() {
         setError(err.message);
         setLoading(false);
       });
+
+    // Whether explain-on-click is offered at all. A failure here just means no button.
+    fetchAiStatus()
+      .then((status) => setAiEnabled(status.enabled))
+      .catch(() => setAiEnabled(false));
   }, []);
 
   // Security facts are only needed once someone asks for them.
@@ -304,8 +314,12 @@ function AtlasApp() {
 
   const crumbs = level?.breadcrumb ?? [];
 
+  // The overview page already answers "what is this app?" at full width. Showing the
+  // same numbers again in the side panel is just the page twice.
+  const showPanel = Boolean(detail) || view !== 'overview';
+
   return (
-    <div className="app">
+    <div className={showPanel ? 'app' : 'app is-wide'}>
       <header className="topbar">
         <nav className="tabs" aria-label="Views">
           {TABS.map((tab) => (
@@ -357,11 +371,26 @@ function AtlasApp() {
             <BoundaryScreen
               view={boundaries}
               selectedId={selectedId}
+              summary={overview?.app?.summary ?? null}
+              summarySource={overview?.app?.summarySource ?? null}
               onSelect={select}
               onOpenInsights={() => go('insights')}
             />
           ) : (
             <div className="loading">Reading the boundaries…</div>
+          )
+        ) : null}
+
+        {view === 'overview' ? (
+          overview ? (
+            <OverviewScreen
+              view={overview}
+              onDrill={drill}
+              onReveal={reveal}
+              onOpenBoundaries={() => go('boundaries')}
+            />
+          ) : (
+            <div className="loading">Reading your app…</div>
           )
         ) : null}
 
@@ -428,13 +457,16 @@ function AtlasApp() {
         ) : null}
       </main>
 
-      <DetailPanel
-        detail={detail}
-        overview={overview}
-        onReveal={reveal}
-        onDrill={drill}
-        onClose={() => setSelectedId(null)}
-      />
+      {showPanel ? (
+        <DetailPanel
+          detail={detail}
+          overview={overview}
+          aiEnabled={aiEnabled}
+          onReveal={reveal}
+          onDrill={drill}
+          onClose={() => setSelectedId(null)}
+        />
+      ) : null}
 
       <SearchPalette open={searchOpen} onClose={() => setSearchOpen(false)} onPick={reveal} />
     </div>
@@ -448,6 +480,7 @@ function AtlasApp() {
 function readHash(): { view: ViewName; levelId: string | null } {
   const raw = decodeURIComponent(window.location.hash.replace(/^#/, ''));
   if (!raw || raw === 'boundaries') return { view: 'boundaries', levelId: null };
+  if (raw === 'overview') return { view: 'overview', levelId: null };
   if (raw === 'insights') return { view: 'insights', levelId: null };
   if (raw === 'map') return { view: 'map', levelId: null };
   if (raw.startsWith('map/')) return { view: 'map', levelId: raw.slice(4) };

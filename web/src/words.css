@@ -1,0 +1,399 @@
+/**
+ * App Atlas — the words layer (SPEC.md 5.5, 6.4).
+ *
+ * Two ideas carry all of this. First, the provenance of a sentence is shown in a
+ * consistent, quiet way everywhere it appears — green for your own docs, amber for
+ * generated — so the reader learns the code once and can then read it anywhere
+ * without being nagged. Second, the overview page is prose, not a dashboard: wide
+ * measure, real paragraphs, and numbers only where a number is the answer.
+ */
+
+/* --- hover cards on the map --------------------------------------------- */
+
+.node-hover {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 0;
+  z-index: 40;
+  width: max-content;
+  max-width: 320px;
+  padding: 9px 11px;
+  border-radius: 8px;
+  background: #0f172a;
+  color: #f8fafc;
+  box-shadow: 0 6px 22px rgba(15, 23, 42, 0.28);
+  opacity: 0;
+  transform: translateY(3px);
+  transition: opacity 120ms ease, transform 120ms ease;
+  /* Never intercepts the click that was aimed at the card underneath it. */
+  pointer-events: none;
+}
+
+.react-flow__node:hover .node-hover {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.node-hover-name {
+  display: block;
+  font-size: 11.5px;
+  font-weight: 650;
+  margin-bottom: 3px;
+}
+
+.node-hover-text {
+  display: block;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: #e2e8f0;
+  white-space: normal;
+}
+
+.node-hover-source {
+  display: block;
+  margin-top: 6px;
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #94a3b8;
+}
+
+.node-hover-source.source-docs {
+  color: #6ee7b7;
+}
+
+/* Green reads as "trustworthy", which is the wrong thing to say next to "may be
+   outdated". A doubted docstring gets the warning colour, not the reassuring one. */
+.node-hover-source.source-docs.is-stale {
+  color: #fcd34d;
+}
+
+.node-hover-source.source-ai {
+  color: #fcd34d;
+}
+
+/* --- trust labels and stale docs ---------------------------------------- */
+
+.trust-note {
+  margin-left: 6px;
+  font-weight: 500;
+  text-transform: none;
+  letter-spacing: 0;
+  opacity: 0.8;
+}
+
+.stale-warning {
+  margin: 8px 0 0;
+  padding: 7px 9px;
+  border-radius: 6px;
+  background: #fffbeb;
+  border: 1px solid #fde68a;
+  font-size: 12px;
+  line-height: 1.5;
+  color: #92400e;
+}
+
+.btn-explain {
+  margin-top: 10px;
+}
+
+.explain-note {
+  margin: 6px 0 0;
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--ink-faint);
+}
+
+.explain-error {
+  margin: 6px 0 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: #b91c1c;
+}
+
+/* --- the paragraph under the boundary diagram --------------------------- */
+
+.boundary-prose {
+  max-width: 62ch;
+  margin: 4px auto 0;
+  padding: 0 20px;
+}
+
+.boundary-prose p {
+  margin: 0;
+  font-size: 14.5px;
+  line-height: 1.65;
+  color: var(--ink);
+}
+
+/* The overview page reads at full width; there is no panel beside it to leave room for. */
+.app.is-wide {
+  grid-template-columns: 1fr;
+  grid-template-areas:
+    'top'
+    'canvas';
+}
+
+/* --- the overview page --------------------------------------------------- */
+
+.page {
+  height: 100%;
+  overflow-y: auto;
+  padding: 30px 34px 64px;
+}
+
+.overview-page {
+  max-width: 860px;
+  margin: 0 auto;
+}
+
+.page-head h1 {
+  margin: 0;
+  font-size: 27px;
+  letter-spacing: -0.02em;
+}
+
+.page-sub {
+  margin: 5px 0 0;
+  font-size: 13px;
+  color: var(--ink-soft);
+}
+
+.overview-lede {
+  margin-top: 22px;
+  padding: 16px 18px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+
+.overview-lede p {
+  margin: 0;
+  font-size: 16px;
+  line-height: 1.65;
+  color: var(--ink);
+}
+
+.overview-lede.is-empty p {
+  font-size: 13.5px;
+  color: var(--ink-soft);
+}
+
+.overview-stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(118px, 1fr));
+  gap: 10px;
+  margin-top: 18px;
+}
+
+.stat {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+  text-align: left;
+  font: inherit;
+  color: inherit;
+}
+
+.stat.is-clickable {
+  cursor: pointer;
+  transition: border-color 120ms ease, box-shadow 120ms ease;
+}
+
+.stat.is-clickable:hover {
+  border-color: var(--accent);
+  box-shadow: var(--shadow);
+}
+
+.stat-value {
+  font-size: 22px;
+  font-weight: 650;
+  letter-spacing: -0.02em;
+}
+
+.stat-label {
+  font-size: 11.5px;
+  color: var(--ink-soft);
+}
+
+.page-section {
+  margin-top: 34px;
+}
+
+.page-section h2 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 650;
+}
+
+.page-section .section-hint {
+  margin: 3px 0 12px;
+  font-size: 12.5px;
+  color: var(--ink-soft);
+}
+
+.section-note {
+  margin: 10px 0 0;
+  font-size: 12.5px;
+  line-height: 1.6;
+  color: var(--ink-soft);
+}
+
+.part-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(228px, 1fr));
+  gap: 12px;
+}
+
+.part-card {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 13px 15px;
+  border: 1px solid var(--line);
+  border-left: 4px solid var(--zone-unknown);
+  border-radius: var(--radius);
+  background: var(--surface);
+  text-align: left;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+  transition: box-shadow 120ms ease, border-color 120ms ease;
+}
+
+.part-card:hover {
+  box-shadow: var(--shadow);
+  border-color: var(--line-strong);
+}
+
+.part-card.zone-ui { border-left-color: var(--zone-ui); }
+.part-card.zone-api { border-left-color: var(--zone-api); }
+.part-card.zone-logic { border-left-color: var(--zone-logic); }
+.part-card.zone-data { border-left-color: var(--zone-data); }
+.part-card.zone-config { border-left-color: var(--zone-config); }
+.part-card.zone-test { border-left-color: var(--zone-test); }
+
+.part-name {
+  font-size: 14px;
+  font-weight: 650;
+}
+
+.part-path {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--ink-faint);
+}
+
+.part-summary {
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--ink-soft);
+}
+
+.part-meta {
+  margin-top: 2px;
+  font-size: 11px;
+  color: var(--ink-faint);
+}
+
+.start-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  counter-reset: start;
+}
+
+.start-list li {
+  border-bottom: 1px solid var(--line);
+}
+
+.start-list li:last-child {
+  border-bottom: 0;
+}
+
+.start-list button {
+  display: grid;
+  grid-template-columns: 10px minmax(120px, auto) 1fr auto;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 9px 4px;
+  border: 0;
+  background: none;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.start-list button:hover {
+  background: #f8fafc;
+}
+
+.start-name {
+  font-family: var(--mono);
+  font-size: 12.5px;
+  font-weight: 600;
+}
+
+.start-summary {
+  font-size: 12.5px;
+  color: var(--ink-soft);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.start-count {
+  font-size: 11px;
+  color: var(--ink-faint);
+  font-variant-numeric: tabular-nums;
+}
+
+.provenance-bars {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+}
+
+.prov-row {
+  display: grid;
+  grid-template-columns: minmax(150px, 220px) 1fr auto;
+  align-items: center;
+  gap: 12px;
+  font-size: 12.5px;
+}
+
+.prov-label {
+  color: var(--ink-soft);
+}
+
+.prov-track {
+  height: 7px;
+  border-radius: 4px;
+  background: var(--line);
+  overflow: hidden;
+}
+
+.prov-fill {
+  display: block;
+  height: 100%;
+  border-radius: 4px;
+}
+
+.prov-fill.prov-docs {
+  background: #10b981;
+}
+
+.prov-fill.prov-ai {
+  background: #f59e0b;
+}
+
+.prov-value {
+  color: var(--ink-faint);
+  font-variant-numeric: tabular-nums;
+}

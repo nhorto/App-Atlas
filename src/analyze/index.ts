@@ -6,6 +6,7 @@
  * complete Atlas. This is the only place that knows the whole pipeline.
  */
 import type { Atlas, AtlasEdge, AtlasNode, AtlasStats, EndpointMeta, Zone } from '../model/types.js';
+import { countStaleDocs } from '../model/staleness.js';
 import { FORMAT_VERSION, makeAppId, makeEdgeId } from '../model/types.js';
 import { hashParts } from '../util/hash.js';
 import { buildBoundaryGraph } from './boundaries/build.js';
@@ -17,7 +18,7 @@ import type { ProjectInfo } from './project.js';
 import { typescriptPlugin } from './ts/index.js';
 import { dominantZone } from './zones.js';
 
-export const TOOL_VERSION = '0.2.0';
+export const TOOL_VERSION = '0.3.0';
 
 export interface AnalyzeOptions {
   maxFiles?: number;
@@ -198,7 +199,12 @@ function assignModuleZones(nodes: AtlasNode[]): void {
   }
 }
 
-function computeStats(nodes: AtlasNode[], edges: AtlasEdge[]): AtlasStats {
+/**
+ * Exported because the words layer runs after analysis and changes some of these
+ * numbers — descriptions get written, stale docstrings get flagged — and one
+ * definition of "how many" is better than two that can disagree.
+ */
+export function computeStats(nodes: AtlasNode[], edges: AtlasEdge[]): AtlasStats {
   let files = 0;
   let functions = 0;
   let types = 0;
@@ -206,6 +212,8 @@ function computeStats(nodes: AtlasNode[], edges: AtlasEdge[]): AtlasStats {
   let linesOfCode = 0;
   let documentedFiles = 0;
   let documentedFunctions = 0;
+  let aiSummaries = 0;
+  let aiFiles = 0;
   let endpoints = 0;
   let routes = 0;
   let unprotectedRoutes = 0;
@@ -215,11 +223,13 @@ function computeStats(nodes: AtlasNode[], edges: AtlasEdge[]): AtlasStats {
   let envVars = 0;
 
   for (const node of nodes) {
+    if (node.summarySource === 'ai') aiSummaries++;
     switch (node.kind) {
       case 'file':
         files++;
         linesOfCode += Number(node.meta.loc ?? 0);
         if (node.summarySource === 'docs') documentedFiles++;
+        else if (node.summarySource === 'ai') aiFiles++;
         break;
       case 'function':
         functions++;
@@ -270,6 +280,9 @@ function computeStats(nodes: AtlasNode[], edges: AtlasEdge[]): AtlasStats {
     linesOfCode,
     documentedFiles,
     documentedFunctions,
+    staleDocs: countStaleDocs(nodes),
+    aiSummaries,
+    aiFiles,
     endpoints,
     routes,
     unprotectedRoutes,

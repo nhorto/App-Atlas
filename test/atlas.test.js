@@ -184,7 +184,7 @@ test('every node carries the metadata later milestones need', () => {
     assert.ok(['static', 'docs', 'ai'].includes(node.provenance));
     assert.ok(typeof node.zone === 'string');
   }
-  assert.equal(atlas.meta.formatVersion, 2);
+  assert.equal(atlas.meta.formatVersion, 3);
   assert.deepEqual(atlas.meta.frameworks.sort(), ['Express', 'React']);
   assert.equal(atlas.meta.stats.files, 4);
 });

@@ -15,6 +15,8 @@ import type { Atlas } from '../model/types.js';
 import { buildBoundaryView } from '../model/boundary.js';
 import { AtlasGraph } from '../model/graph.js';
 import { buildInsights } from '../model/insights.js';
+import { Explainer } from './explain.js';
+import type { AiServerOptions } from './explain.js';
 
 export interface ServerHandle {
   url: string;
@@ -28,6 +30,8 @@ export interface ServeOptions {
   atlas: Atlas;
   port?: number;
   host?: string;
+  /** Settings for explain-on-click. Defaults to on, using whatever backend is found. */
+  ai?: AiServerOptions;
 }
 
 const MIME: Record<string, string> = {
@@ -55,9 +59,11 @@ export async function startServer(options: ServeOptions): Promise<ServerHandle> 
   const webRoot = webRootPath();
   let graph = new AtlasGraph(options.atlas);
 
+  const explainer = new Explainer(options.ai ?? { enabled: true }, () => graph);
+
   const server = http.createServer((req, res) => {
     try {
-      handleRequest(req, res, () => graph, webRoot);
+      handleRequest(req, res, () => graph, webRoot, explainer);
     } catch (err) {
       sendJson(res, 500, { error: (err as Error).message });
     }
@@ -107,6 +113,7 @@ function handleRequest(
   res: http.ServerResponse,
   getGraph: () => AtlasGraph,
   webRoot: string,
+  explainer: Explainer,
 ): void {
   const url = new URL(req.url ?? '/', 'http://localhost');
   const pathname = decodeURIComponent(url.pathname);
@@ -116,6 +123,23 @@ function handleRequest(
     switch (pathname) {
       case '/api/health':
         return sendJson(res, 200, { ok: true, name: graph.meta.name });
+
+      case '/api/ai':
+        return sendJson(res, 200, explainer.status());
+
+      /**
+       * The one endpoint that does work rather than answering from memory: it may
+       * start an agent CLI and will take a few seconds. Kept a GET because it is
+       * idempotent — the second click on the same unchanged code is a cache hit.
+       */
+      case '/api/explain': {
+        const id = url.searchParams.get('id') ?? '';
+        void explainer.explain(id).then(
+          (result) => sendJson(res, 'error' in result ? 400 : 200, result),
+          (err: Error) => sendJson(res, 500, { error: err.message }),
+        );
+        return;
+      }
 
       case '/api/overview':
         return sendJson(res, 200, graph.getOverview());

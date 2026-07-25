@@ -6,7 +6,8 @@
  * to. Every claim is labelled with where it came from, so a reader always knows
  * whether they are looking at a compiler fact or a human-written note.
  */
-import type { ReactNode } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
+import { explainNode } from '../api';
 import type {
   AtlasNode,
   CodeSite,
@@ -19,19 +20,28 @@ import type {
   StoreMeta,
 } from '../types';
 import { zoneLabel } from './AtlasNodeCard';
+import { Summary, TrustLabel } from './Trust';
 
 interface Props {
   detail: NodeView | null;
   overview: OverviewView | null;
+  aiEnabled: boolean;
   onReveal: (id: string) => void;
   onDrill: (id: string) => void;
   onClose: () => void;
 }
 
-export function DetailPanel({ detail, overview, onReveal, onDrill, onClose }: Props) {
+export function DetailPanel({ detail, overview, aiEnabled, onReveal, onDrill, onClose }: Props) {
+  // A description generated from this panel has to appear in this panel, and the atlas
+  // on the server is the copy that got updated — not the one we were handed.
+  const [written, setWritten] = useState<{ id: string; text: string } | null>(null);
+
   if (!detail) return <OverviewPanel overview={overview} onReveal={onReveal} />;
 
-  const { node } = detail;
+  const node =
+    written && written.id === detail.node.id
+      ? { ...detail.node, summary: written.text, summarySource: 'ai' as const }
+      : detail.node;
   const isContainer =
     node.kind === 'module' || node.kind === 'file' || node.kind === 'app' || node.kind === 'zone';
   const isBoundary = node.kind === 'endpoint' || node.kind === 'service' || node.kind === 'store';
@@ -55,7 +65,15 @@ export function DetailPanel({ detail, overview, onReveal, onDrill, onClose }: Pr
         ) : null}
       </header>
 
-      {isBoundary ? null : <Summary node={node} />}
+      {isBoundary ? null : (
+        <Summary node={node}>
+          <ExplainButton
+            node={node}
+            aiEnabled={aiEnabled}
+            onWritten={(text) => setWritten({ id: node.id, text })}
+          />
+        </Summary>
+      )}
       <Facts node={node} />
       {isBoundary ? <Sites node={node} onReveal={onReveal} /> : null}
       {node.kind === 'endpoint' ? <EnvVars node={node} /> : null}
@@ -105,36 +123,59 @@ export function DetailPanel({ detail, overview, onReveal, onDrill, onClose }: Pr
   );
 }
 
-function Summary({ node }: { node: AtlasNode }) {
-  if (node.summary && node.summarySource === 'docs') {
-    return (
-      <section className="panel-section">
-        <TrustLabel kind="docs" />
-        <p className="summary-text">{node.summary}</p>
-      </section>
-    );
-  }
-  if (node.summary && node.summarySource === 'ai') {
-    return (
-      <section className="panel-section">
-        <TrustLabel kind="ai" />
-        <p className="summary-text">{node.summary}</p>
-      </section>
-    );
-  }
-  return (
-    <section className="panel-section">
-      <p className="summary-empty">
-        No description yet. Add a <code>/** … */</code> comment above it and App Atlas will read it verbatim —
-        plain-English summaries for everything else arrive in a later milestone.
-      </p>
-    </section>
-  );
-}
+/**
+ * "Explain this one" — the third tier of the words layer (SPEC.md 5.5), and the only
+ * place App Atlas sends real source code anywhere. The button says so before it is
+ * pressed, because consent that arrives after the fact is not consent.
+ */
+function ExplainButton({
+  node,
+  aiEnabled,
+  onWritten,
+}: {
+  node: AtlasNode;
+  aiEnabled: boolean;
+  onWritten: (text: string) => void;
+}) {
+  const [state, setState] = useState<'idle' | 'working'>('idle');
+  const [error, setError] = useState<string | null>(null);
+  const explainable = node.kind === 'function' || node.kind === 'type' || node.kind === 'file';
 
-function TrustLabel({ kind }: { kind: 'facts' | 'docs' | 'ai' }) {
-  const text = kind === 'facts' ? 'Code facts' : kind === 'docs' ? "From your code's docs" : 'AI explanation';
-  return <div className={`trust trust-${kind}`}>{text}</div>;
+  // Reset when the panel switches to a different node, so a failure on one thing
+  // does not follow the reader to the next.
+  useEffect(() => {
+    setState('idle');
+    setError(null);
+  }, [node.id]);
+
+  if (!explainable || !aiEnabled || node.summary) return null;
+
+  const ask = async () => {
+    setState('working');
+    setError(null);
+    try {
+      const result = await explainNode(node.id);
+      onWritten(result.text);
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setState('idle');
+    }
+  };
+
+  return (
+    <>
+      <button className="btn-ghost btn-explain" onClick={ask} disabled={state === 'working'}>
+        {state === 'working' ? 'Writing…' : 'Explain this'}
+      </button>
+      <p className="explain-note">
+        {state === 'working'
+          ? 'Reading the code and writing a description. This can take a few seconds.'
+          : `Sends this ${kindWord(node).toLowerCase()}'s source to your AI backend. Cached afterwards.`}
+      </p>
+      {error ? <p className="explain-error">{error}</p> : null}
+    </>
+  );
 }
 
 function Facts({ node }: { node: AtlasNode }) {
