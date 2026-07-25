@@ -89,6 +89,10 @@ export interface FieldInfo {
   name: string;
   type: string;
   optional: boolean;
+  /** Database tables only: the primary key. */
+  isId?: boolean;
+  /** Database tables only: declared unique. */
+  isUnique?: boolean;
 }
 
 /** meta for kind === 'file' */
@@ -113,12 +117,21 @@ export interface FunctionMeta {
   loc: number;
 }
 
-/** meta for kind === 'type' */
+/**
+ * meta for kind === 'type'
+ *
+ * `table` is a database table read out of a schema file rather than a shape declared
+ * in code. It is the same node kind on purpose: a table is a named thing with typed
+ * fields, which is exactly what the type explorer draws, and keeping it here means
+ * every view that already understands types understands tables for free.
+ */
 export interface TypeMeta {
-  typeKind: 'interface' | 'type-alias' | 'enum' | 'class';
+  typeKind: 'interface' | 'type-alias' | 'enum' | 'class' | 'table';
   fields: FieldInfo[];
   isExported: boolean;
   extends: string[];
+  /** Tables only: `postgresql`, `mysql`, `sqlite`… */
+  provider?: string;
 }
 
 /** meta for kind === 'module' */
