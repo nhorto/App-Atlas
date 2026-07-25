@@ -15,6 +15,7 @@ import type { Atlas } from '../model/types.js';
 import { buildBoundaryView } from '../model/boundary.js';
 import { AtlasGraph } from '../model/graph.js';
 import { buildInsights } from '../model/insights.js';
+import { buildTypeView } from '../model/typeview.js';
 import { Explainer } from './explain.js';
 import type { AiServerOptions } from './explain.js';
 
@@ -149,6 +150,9 @@ function handleRequest(
 
       case '/api/insights':
         return sendJson(res, 200, buildInsights(graph));
+
+      case '/api/types':
+        return sendJson(res, 200, buildTypeView(graph));
 
       case '/api/level': {
         const id = url.searchParams.get('id') || graph.rootId;
