@@ -1,0 +1,5 @@
+{
+  "name": "@mono/web",
+  "dependencies": { "next": "^15.0.0", "react": "^19.0.0", "react-dom": "^19.0.0", "@mono/ui": "*" },
+  "scripts": { "dev": "next dev" }
+}
