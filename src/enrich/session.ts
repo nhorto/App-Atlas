@@ -32,6 +32,12 @@ export interface WordsOptions {
   refresh?: boolean;
   /** Approve metered spending in advance, for scripts and CI. */
   assumeYes?: boolean;
+  /**
+   * Decline anything that would cost money instead of asking. `--watch` rebuilds on
+   * every save, and a question that appears mid-edit — repeatedly — is not consent.
+   * A subscription backend is unaffected, because it never reaches the question.
+   */
+  neverAsk?: boolean;
   quiet?: boolean;
   onProgress?: (stage: string, done: number, total: number) => void;
 }
@@ -109,6 +115,15 @@ async function askPermission(estimate: CostEstimate, options: WordsOptions): Pro
   const { backend } = estimate;
 
   if (options.assumeYes) return true;
+
+  if (options.neverAsk) {
+    if (!options.quiet) {
+      console.log(
+        pc.dim(`  ${estimate.items} things have no description yet — run app-atlas analyze to write them.`),
+      );
+    }
+    return false;
+  }
 
   if (!process.stdin.isTTY || !process.stdout.isTTY) {
     // No one is there to answer. Spending money on an unattended run without being

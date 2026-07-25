@@ -30,4 +30,6 @@ export type { InsightsView, Protection, RouteInsight, ServiceInsight, StoreInsig
 export { AtlasStore, atlasDbPath, atlasJsonPath, loadAtlas, persistAtlas } from './model/store.js';
 export { startServer } from './server/index.js';
 export type { ServerHandle } from './server/index.js';
+export { isInteresting, watchProject } from './watch.js';
+export type { WatchOptions, Watcher } from './watch.js';
 export * from './model/types.js';

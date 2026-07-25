@@ -12,7 +12,7 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
-import { analyzeProject } from '../dist/node/index.js';
+import { analyzeProject, isInteresting } from '../dist/node/index.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const SAMPLE = path.join(here, 'fixtures', 'sample');
@@ -135,6 +135,38 @@ test('cache: off leaves no trace in the project', async () => {
   await analyzeProject(dir, { followReferences: true, cache: 'off' });
   assert.equal(fs.existsSync(path.join(dir, '.app-atlas')), false);
   fs.rmSync(dir, { recursive: true, force: true });
+});
+
+/**
+ * The watcher's filter runs on every file-system event, including the storm a build
+ * tool makes. What it lets through is what decides whether `--watch` is usable at all.
+ */
+test('the watcher reacts to source and config, and ignores the noise', () => {
+  for (const wanted of [
+    'src/app/page.tsx',
+    'src/lib/db.ts',
+    'api/main.py',
+    'prisma/schema.prisma',
+    'package.json',
+    'vercel.json',
+    'middleware.ts',
+  ]) {
+    assert.equal(isInteresting(wanted), true, wanted);
+  }
+
+  for (const ignored of [
+    'node_modules/react/index.js',
+    '.git/HEAD',
+    '.app-atlas/atlas.db',
+    'dist/node/cli.js',
+    '.next/server/app/page.js',
+    'src/app/page.css',
+    'README.md',
+    'src/.#page.tsx',
+    'src/page.tsx~',
+  ]) {
+    assert.equal(isInteresting(ignored), false, ignored);
+  }
 });
 
 test('cache: refresh reads everything again, then leaves a usable cache', async () => {

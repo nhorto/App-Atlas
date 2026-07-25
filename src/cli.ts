@@ -14,14 +14,17 @@ import pc from 'picocolors';
 import open from 'open';
 import { analyzeProject, computeStats, TOOL_VERSION } from './analyze/index.js';
 import { BACKEND_IDS } from './enrich/backends/index.js';
+import type { EnrichReport } from './enrich/index.js';
 import { describeRun, writeTheWords } from './enrich/session.js';
 import { renderAtlasMarkdown } from './export/markdown.js';
 import { initConventions } from './init.js';
 import { AtlasGraph } from './model/graph.js';
-import type { Atlas } from './model/types.js';
+import type { Atlas, AtlasStats } from './model/types.js';
 import { markStaleDocs } from './model/staleness.js';
 import { atlasDbPath, atlasJsonPath, loadAtlas, persistAtlas } from './model/store.js';
 import { startServer } from './server/index.js';
+import type { ServerHandle } from './server/index.js';
+import { watchProject } from './watch.js';
 
 interface SharedOptions {
   port: string;
@@ -31,6 +34,7 @@ interface SharedOptions {
   json?: string;
   quiet: boolean;
   fresh?: boolean;
+  watch?: boolean;
   ai: boolean;
   aiBackend?: string;
   aiModel?: string;
@@ -70,11 +74,13 @@ withAiOptions(
     .option('--no-refs', 'skip the symbol-reference pass (faster on very large repos)')
     .option('--max-files <number>', 'maximum number of source files to analyze', '5000')
     .option('--fresh', 're-read every file instead of reusing the last run')
+    .option('--watch', 'keep watching, and update the map when the code changes')
     .option('--json <path>', 'also write the JSON export to this path')
     .option('-q, --quiet', 'less output', false),
 ).action(async (dir: string, options: SharedOptions) => {
   const atlas = await runAnalysis(dir, options);
-  await runServer(dir, atlas, options);
+  const handle = await runServer(dir, atlas, options);
+  if (options.watch) startWatching(dir, handle, options, atlas.meta.stats);
 });
 
 withAiOptions(
@@ -170,6 +176,46 @@ program
     console.log('');
   });
 
+/**
+ * Analyze, write whatever words are available, save. Shared by the first run and by
+ * every `--watch` rebuild, so the two can never drift into producing different atlases.
+ */
+async function produceAtlas(
+  root: string,
+  options: SharedOptions,
+  run: { quiet: boolean; neverAsk?: boolean; onProgress?: (stage: string, done: number, total: number) => void },
+): Promise<{ atlas: Atlas; words: EnrichReport | null; dbPath: string; jsonPath: string }> {
+  const { atlas } = await analyzeProject(root, {
+    maxFiles: Number(options.maxFiles ?? 5000) || 5000,
+    followReferences: options.refs !== false,
+    cache: options.fresh ? 'refresh' : 'use',
+    onProgress: run.onProgress,
+  });
+
+  // The docstrings the repo already has are in the atlas by now. Everything below
+  // fills the gaps they leave — and, on a repeat run, mostly just reads the cache.
+  markStaleDocs(loadAtlas(root), atlas);
+  const words = await writeTheWords({
+    root,
+    atlas,
+    enabled: options.ai !== false,
+    backendId: options.aiBackend,
+    model: options.aiModel,
+    maxFiles: Number(options.aiMaxFiles ?? 400) || 400,
+    refresh: Boolean(options.refreshAi),
+    assumeYes: Boolean(options.aiYes),
+    neverAsk: run.neverAsk,
+    quiet: run.quiet,
+    onProgress: run.onProgress,
+  });
+
+  // Descriptions were written and stale docstrings flagged after the counting was
+  // done, so the numbers are counted again rather than left subtly wrong.
+  atlas.meta.stats = computeStats(atlas.nodes, atlas.edges);
+  const { dbPath, jsonPath } = persistAtlas(root, atlas, options.json);
+  return { atlas, words, dbPath, jsonPath };
+}
+
 async function runAnalysis(dir: string, options: SharedOptions): Promise<Atlas> {
   const root = path.resolve(dir);
   const quiet = Boolean(options.quiet);
@@ -185,10 +231,8 @@ async function runAnalysis(dir: string, options: SharedOptions): Promise<Atlas> 
   const interactive = Boolean(process.stdout.isTTY);
   let lastStage = '';
   let hintShown = false;
-  const { atlas } = await analyzeProject(root, {
-    maxFiles: Number(options.maxFiles ?? 5000) || 5000,
-    followReferences: options.refs !== false,
-    cache: options.fresh ? 'refresh' : 'use',
+  const { atlas, words, dbPath, jsonPath } = await produceAtlas(root, options, {
+    quiet,
     onProgress: (stage, done, total) => {
       if (quiet) return;
       const finished = total > 0 && done >= total;
@@ -217,32 +261,6 @@ async function runAnalysis(dir: string, options: SharedOptions): Promise<Atlas> 
       }
     },
   });
-
-  // The docstrings the repo already has are in the atlas by now. Everything below
-  // fills the gaps they leave — and, on a repeat run, mostly just reads the cache.
-  markStaleDocs(loadAtlas(root), atlas);
-  const words = await writeTheWords({
-    root,
-    atlas,
-    enabled: options.ai !== false,
-    backendId: options.aiBackend,
-    model: options.aiModel,
-    maxFiles: Number(options.aiMaxFiles ?? 400) || 400,
-    refresh: Boolean(options.refreshAi),
-    assumeYes: Boolean(options.aiYes),
-    quiet,
-    onProgress: (stage, done, total) => {
-      if (quiet) return;
-      if (interactive) process.stdout.write(`\r${pc.dim('·')} ${stage} ${done}/${total}${' '.repeat(12)}`);
-      if (done >= total) process.stdout.write(interactive ? '\n' : `${pc.dim('·')} ${stage} (${total})\n`);
-    },
-  });
-
-  // Descriptions were written and stale docstrings flagged after the counting was
-  // done, so the numbers are counted again rather than left subtly wrong.
-  atlas.meta.stats = computeStats(atlas.nodes, atlas.edges);
-
-  const { dbPath, jsonPath } = persistAtlas(root, atlas, options.json);
 
   if (!quiet) {
     const s = atlas.meta.stats;
@@ -300,7 +318,7 @@ async function runAnalysis(dir: string, options: SharedOptions): Promise<Atlas> 
   return atlas;
 }
 
-async function runServer(dir: string, atlas: Atlas, options: SharedOptions): Promise<void> {
+async function runServer(dir: string, atlas: Atlas, options: SharedOptions): Promise<ServerHandle> {
   const handle = await startServer({
     atlas,
     port: Number(options.port ?? 4477) || 4477,
@@ -328,6 +346,55 @@ async function runServer(dir: string, atlas: Atlas, options: SharedOptions): Pro
   };
   process.on('SIGINT', shutdown);
   process.on('SIGTERM', shutdown);
+  return handle;
+}
+
+/**
+ * Keeps the map honest while someone — or something — is editing the code.
+ *
+ * The rebuild is the same pipeline as a normal run, so nothing can drift; the cache
+ * means it only re-reads what changed. The one difference is that it never stops to ask
+ * about spending money: a question that appears mid-edit, over and over, is not consent.
+ */
+function startWatching(dir: string, handle: ServerHandle, options: SharedOptions, from: AtlasStats): void {
+  const root = path.resolve(dir);
+  console.log(pc.dim('    Watching for changes — the map updates itself.'));
+  console.log('');
+
+  let previous = from;
+  const watcher = watchProject({
+    root,
+    onChange: async (paths) => {
+      const started = Date.now();
+      const { atlas } = await produceAtlas(root, options, { quiet: true, neverAsk: true });
+      handle.update(atlas);
+
+      const seconds = ((Date.now() - started) / 1000).toFixed(1);
+      console.log(`  ${pc.green('↻')} ${describeChange(paths)} ${pc.dim(`· ${seconds}s`)}`);
+
+      // The number this tool exists to surface. Someone watching their agent work
+      // should hear about a new open door the moment it appears, not next Tuesday.
+      const before = previous;
+      previous = atlas.meta.stats;
+      if (atlas.meta.stats.unprotectedRoutes > before.unprotectedRoutes) {
+        const added = atlas.meta.stats.unprotectedRoutes - before.unprotectedRoutes;
+        console.log(
+          pc.yellow(`    ${added} new ${plural(added, 'route has', 'routes have')} no auth check App Atlas can see.`),
+        );
+      }
+    },
+    onError: (err) => console.error(pc.yellow(`  ! Watching stopped working: ${err.message}`)),
+  });
+
+  process.on('SIGINT', () => watcher.close());
+  process.on('SIGTERM', () => watcher.close());
+}
+
+/** "src/lib/db.ts and 2 more" — the first name is the useful part, the count is context. */
+function describeChange(paths: string[]): string {
+  if (paths.length === 0) return 'something changed';
+  const [first, ...rest] = paths;
+  return rest.length === 0 ? first : `${first} and ${rest.length} more`;
 }
 
 function pad(value: number): string {
