@@ -255,6 +255,11 @@ export interface AtlasEdge {
   weight: number;
   confidence: Confidence;
   provenance: Provenance;
+  /**
+   * Per-kind detail. Two keys are load-bearing: `symbols` on an `imports` edge (what
+   * was imported) and `fields` on a `references` edge between two types (which
+   * properties made the link — the type explorer draws its lines from these).
+   */
   meta: NodeMeta;
 }
 

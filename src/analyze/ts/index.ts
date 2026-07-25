@@ -22,6 +22,8 @@ import type {
   InterfaceDeclaration,
   MethodDeclaration,
   ParameterDeclaration,
+  PropertyDeclaration,
+  PropertySignature,
   SourceFile,
   Type,
   TypeAliasDeclaration,
@@ -647,7 +649,7 @@ function extractReferences(
     }
     if (!targetId) return;
 
-    const fromId = enclosingNodeId(identifier, posKey, registered, fileId);
+    const { id: fromId, field } = enclosingNodeId(identifier, posKey, registered, fileId);
     if (fromId === targetId) return;
 
     addEdge(edges, {
@@ -656,19 +658,42 @@ function extractReferences(
       toId: targetId,
       weight: 1,
       confidence: 'certain',
-      meta: {},
+      meta: field ? { fields: [field] } : {},
     });
   });
 }
 
-function enclosingNodeId(node: Node, posKey: string, registered: Registered, fallback: string): string {
+/**
+ * Which atlas node contains this identifier — and, when the identifier is the *type
+ * of a field*, which field that is.
+ *
+ * The field name is what makes the type explorer readable: without it an edge says
+ * "Order mentions User somewhere", with it the card can draw a line out of the row
+ * that actually holds the reference, which is the whole dbdiagram trick (SPEC.md 6.3).
+ */
+function enclosingNodeId(
+  node: Node,
+  posKey: string,
+  registered: Registered,
+  fallback: string,
+): { id: string; field: string | null } {
+  let field: string | null = null;
+  let previous: Node = node;
   let current: Node | undefined = node.getParent();
   while (current) {
     const hit = registered.byPosition.get(`${posKey}|${current.getStart()}`);
-    if (hit) return hit;
+    if (hit) return { id: hit, field };
+    // Only an annotation counts. A property *initializer* that happens to call
+    // something is not that property pointing at a type.
+    if (isFieldLike(current) && current.getTypeNode() === previous) field = current.getName();
+    previous = current;
     current = current.getParent();
   }
-  return fallback;
+  return { id: fallback, field };
+}
+
+function isFieldLike(node: Node): node is PropertySignature | PropertyDeclaration {
+  return Node.isPropertySignature(node) || Node.isPropertyDeclaration(node);
 }
 
 /**
@@ -704,10 +729,13 @@ function addEdge(edges: Map<string, AtlasEdge>, input: EdgeInput): void {
   const existing = edges.get(id);
   if (existing) {
     existing.weight += input.weight;
-    const existingSymbols = (existing.meta.symbols as string[] | undefined) ?? [];
-    const newSymbols = (input.meta.symbols as string[] | undefined) ?? [];
-    if (newSymbols.length > 0) {
-      existing.meta.symbols = [...new Set([...existingSymbols, ...newSymbols])];
+    // `symbols` is what an import brought in; `fields` is which properties made a
+    // type point at another type. Both are sets that grow as the edge is seen again.
+    for (const key of ['symbols', 'fields'] as const) {
+      const added = (input.meta[key] as string[] | undefined) ?? [];
+      if (added.length === 0) continue;
+      const already = (existing.meta[key] as string[] | undefined) ?? [];
+      existing.meta[key] = [...new Set([...already, ...added])];
     }
     return;
   }
