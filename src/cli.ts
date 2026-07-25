@@ -30,6 +30,7 @@ interface SharedOptions {
   maxFiles: string;
   json?: string;
   quiet: boolean;
+  fresh?: boolean;
   ai: boolean;
   aiBackend?: string;
   aiModel?: string;
@@ -68,6 +69,7 @@ withAiOptions(
     .option('--no-open', "don't open a browser")
     .option('--no-refs', 'skip the symbol-reference pass (faster on very large repos)')
     .option('--max-files <number>', 'maximum number of source files to analyze', '5000')
+    .option('--fresh', 're-read every file instead of reusing the last run')
     .option('--json <path>', 'also write the JSON export to this path')
     .option('-q, --quiet', 'less output', false),
 ).action(async (dir: string, options: SharedOptions) => {
@@ -82,6 +84,7 @@ withAiOptions(
     .argument('[dir]', 'project directory to analyze', '.')
     .option('--no-refs', 'skip the symbol-reference pass (faster on very large repos)')
     .option('--max-files <number>', 'maximum number of source files to analyze', '5000')
+    .option('--fresh', 're-read every file instead of reusing the last run')
     .option('--json <path>', 'also write the JSON export to this path')
     .option('-q, --quiet', 'less output', false),
 ).action(async (dir: string, options: SharedOptions) => {
@@ -185,6 +188,7 @@ async function runAnalysis(dir: string, options: SharedOptions): Promise<Atlas> 
   const { atlas } = await analyzeProject(root, {
     maxFiles: Number(options.maxFiles ?? 5000) || 5000,
     followReferences: options.refs !== false,
+    cache: options.fresh ? 'refresh' : 'use',
     onProgress: (stage, done, total) => {
       if (quiet) return;
       const finished = total > 0 && done >= total;
@@ -281,7 +285,9 @@ async function runAnalysis(dir: string, options: SharedOptions): Promise<Atlas> 
     console.log('');
     console.log(pc.dim(`  atlas    ${path.relative(process.cwd(), dbPath) || dbPath}`));
     console.log(pc.dim(`  export   ${path.relative(process.cwd(), jsonPath) || jsonPath}`));
-    console.log(pc.dim(`  analyzed in ${((Date.now() - started) / 1000).toFixed(1)}s`));
+    const pace = atlas.meta.incremental;
+    const skipped = pace && pace.reused > 0 ? `, ${pace.reused} unchanged since the last run` : '';
+    console.log(pc.dim(`  analyzed in ${((Date.now() - started) / 1000).toFixed(1)}s${skipped}`));
     for (const warning of atlas.meta.warnings.slice(0, 5)) {
       console.log(pc.yellow(`  ! ${warning}`));
     }

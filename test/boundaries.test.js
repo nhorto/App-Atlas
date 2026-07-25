@@ -18,7 +18,7 @@ import { analyzeProject, AtlasGraph, buildBoundaryView, buildInsights } from '..
 const here = path.dirname(fileURLToPath(import.meta.url));
 const FIXTURE = path.join(here, 'fixtures', 'boundary');
 
-const { atlas } = await analyzeProject(FIXTURE, { followReferences: true });
+const { atlas } = await analyzeProject(FIXTURE, { followReferences: true, cache: 'off' });
 const graph = new AtlasGraph(atlas);
 const boundaries = buildBoundaryView(graph);
 const insights = buildInsights(graph);
