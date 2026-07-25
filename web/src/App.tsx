@@ -25,7 +25,7 @@ import {
   type Node,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
-import { fetchAiStatus, fetchBoundaries, fetchInsights, fetchLevel, fetchNode, fetchOverview } from './api';
+import { fetchAiStatus, fetchBoundaries, fetchInsights, fetchLevel, fetchNode, fetchOverview, fetchTypes } from './api';
 import { layoutLevel, sizeOf, type Positioned } from './layout';
 import type {
   AtlasNode,
@@ -34,6 +34,7 @@ import type {
   LevelView,
   NodeView,
   OverviewView,
+  TypeView,
   Zone,
 } from './types';
 import { AtlasNodeCard, zoneLabel } from './components/AtlasNodeCard';
@@ -42,12 +43,13 @@ import { DetailPanel } from './components/DetailPanel';
 import { InsightsScreen } from './components/InsightsScreen';
 import { OverviewScreen } from './components/OverviewScreen';
 import { SearchPalette } from './components/SearchPalette';
+import { TypeScreen } from './components/TypeScreen';
 
 const nodeTypes = { atlas: AtlasNodeCard };
 
 const ZONES: Zone[] = ['ui', 'api', 'logic', 'data', 'config', 'test'];
 
-type ViewName = 'boundaries' | 'overview' | 'map' | 'insights';
+type ViewName = 'boundaries' | 'overview' | 'map' | 'types' | 'insights';
 
 // Boundaries stays first: it is the home screen (SPEC.md 6.1) and the thing no other
 // tool does. Overview sits beside it for the reader who wants prose before a diagram.
@@ -55,6 +57,7 @@ const TABS: { view: ViewName; label: string }[] = [
   { view: 'boundaries', label: 'Boundaries' },
   { view: 'overview', label: 'Overview' },
   { view: 'map', label: 'Map' },
+  { view: 'types', label: 'Data' },
   { view: 'insights', label: 'Security' },
 ];
 
@@ -72,6 +75,7 @@ function AtlasApp() {
   const [overview, setOverview] = useState<OverviewView | null>(null);
   const [boundaries, setBoundaries] = useState<BoundaryView | null>(null);
   const [insights, setInsights] = useState<InsightsView | null>(null);
+  const [types, setTypes] = useState<TypeView | null>(null);
   const [levelId, setLevelId] = useState<string | null>(initial.levelId);
   const [level, setLevel] = useState<LevelView | null>(null);
   const [positions, setPositions] = useState<Map<string, Positioned>>(new Map());
@@ -104,13 +108,20 @@ function AtlasApp() {
       .catch(() => setAiEnabled(false));
   }, []);
 
-  // Security facts are only needed once someone asks for them.
+  // Security facts and the shape of the data are only needed once someone asks.
   useEffect(() => {
     if (view !== 'insights' || insights) return;
     fetchInsights()
       .then(setInsights)
       .catch((err: Error) => setError(err.message));
   }, [view, insights]);
+
+  useEffect(() => {
+    if (view !== 'types' || types) return;
+    fetchTypes()
+      .then(setTypes)
+      .catch((err: Error) => setError(err.message));
+  }, [view, types]);
 
   // --- load and lay out the current level ---
   useEffect(() => {
@@ -394,6 +405,14 @@ function AtlasApp() {
           )
         ) : null}
 
+        {view === 'types' ? (
+          types ? (
+            <TypeScreen view={types} selectedId={selectedId} onSelect={select} />
+          ) : (
+            <div className="loading">Reading the shape of your data…</div>
+          )
+        ) : null}
+
         {view === 'insights' ? (
           insights ? (
             <InsightsScreen insights={insights} onReveal={select} />
@@ -481,6 +500,7 @@ function readHash(): { view: ViewName; levelId: string | null } {
   const raw = decodeURIComponent(window.location.hash.replace(/^#/, ''));
   if (!raw || raw === 'boundaries') return { view: 'boundaries', levelId: null };
   if (raw === 'overview') return { view: 'overview', levelId: null };
+  if (raw === 'types') return { view: 'types', levelId: null };
   if (raw === 'insights') return { view: 'insights', levelId: null };
   if (raw === 'map') return { view: 'map', levelId: null };
   if (raw.startsWith('map/')) return { view: 'map', levelId: raw.slice(4) };

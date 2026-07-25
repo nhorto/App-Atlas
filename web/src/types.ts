@@ -121,6 +121,9 @@ export interface FieldInfo {
   name: string;
   type: string;
   optional: boolean;
+  /** Database tables only. */
+  isId?: boolean;
+  isUnique?: boolean;
 }
 
 export interface AtlasNode {
@@ -252,6 +255,48 @@ export interface ExplainResult {
   /** Which backend wrote it. Absent when the answer came from the cache. */
   backend?: string;
   cached: boolean;
+}
+
+// --- type explorer (SPEC.md 6.3) ---
+
+export type TypeKind = 'interface' | 'type-alias' | 'enum' | 'class' | 'table';
+
+export interface TypeField extends FieldInfo {
+  /** The card this row points at, when that card is on screen. */
+  linkTo: string | null;
+}
+
+export interface TypeCard {
+  id: string;
+  name: string;
+  typeKind: TypeKind;
+  path: string | null;
+  startLine: number | null;
+  zone: Zone;
+  fields: TypeField[];
+  hiddenFields: number;
+  summary: string | null;
+  summarySource: SummarySource;
+  usage: number;
+  usageByZone: { zone: Zone; count: number }[];
+  aliasOf: string | null;
+  provider: string | null;
+}
+
+export interface TypeLink {
+  id: string;
+  fromId: string;
+  toId: string;
+  fields: string[];
+  /** `declared` is a fact from the code or the schema; `name` is only a name match. */
+  basis: 'declared' | 'name';
+}
+
+export interface TypeView {
+  cards: TypeCard[];
+  links: TypeLink[];
+  total: number;
+  tables: number;
 }
 
 // --- boundary view (SPEC.md 6.1) ---

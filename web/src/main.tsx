@@ -7,6 +7,7 @@ import { App } from './App';
 import './styles.css';
 import './boundary.css';
 import './words.css';
+import './types.css';
 
 const container = document.getElementById('root');
 if (!container) throw new Error('Missing #root');

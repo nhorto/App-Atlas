@@ -10,6 +10,7 @@ import type {
   LevelView,
   NodeView,
   OverviewView,
+  TypeView,
 } from './types';
 
 async function get<T>(path: string): Promise<T> {
@@ -31,6 +32,10 @@ export function fetchBoundaries(): Promise<BoundaryView> {
 
 export function fetchInsights(): Promise<InsightsView> {
   return get<InsightsView>('/api/insights');
+}
+
+export function fetchTypes(): Promise<TypeView> {
+  return get<TypeView>('/api/types');
 }
 
 export function fetchLevel(id?: string): Promise<LevelView> {
