@@ -24,24 +24,26 @@ developers don't have a good answer to those questions either.
 Two rules keep it trustworthy:
 
 1. **Facts come from the compiler.** The structure you see — files, functions, types,
-   who-uses-what — is derived by the TypeScript type checker. It is not an LLM's
-   impression of your codebase, so it cannot be subtly wrong.
+   who-uses-what — is derived by the language's own parser and type checker. It is not
+   an LLM's impression of your codebase, so it cannot be subtly wrong.
 2. **Words come from your code first.** Descriptions are read verbatim from your own
    docstrings when they exist. Generated explanations fill only the gaps, and
    everything is labelled with where it came from.
 
 ## Status
 
-**Early development.** Milestones M1–M4 are complete: the CLI, the
-TypeScript/JavaScript analyzer, the atlas data model, the drill-down architecture map,
-the boundary view, the security badges, the plain-English explanations, the type
-explorer, guided walkthroughs and the `ATLAS.md` export all work on real repositories.
-See [the roadmap](#roadmap) and [SPEC.md](SPEC.md) for the full design.
+**Milestones M1–M5 are complete.** The CLI, the TypeScript/JavaScript analyzer, the
+Python analyzer, the atlas data model, incremental re-analysis, watch mode, the
+drill-down architecture map, the boundary view, the security badges, the plain-English
+explanations, the type explorer, guided walkthroughs, monorepo scopes and the
+`ATLAS.md` export all work on real repositories. See [the roadmap](#roadmap) and
+[SPEC.md](SPEC.md) for the full design.
 
 ## Quick start
 
 Requires **Node 22.5 or newer** (App Atlas uses Node's built-in SQLite, so there is
-nothing to compile).
+nothing to compile). Python projects also need **Python 3.9 or newer** on the machine
+— App Atlas reads Python with Python's own parser rather than guessing at the grammar.
 
 ```bash
 git clone https://github.com/nhorto/App-Atlas.git
@@ -74,8 +76,12 @@ the map in your browser.
 | Flag | Meaning |
 |---|---|
 | `-p, --port <n>` | Port for the local server (default 4477) |
+| `--watch` | Keep watching, and update the map whenever the code changes |
 | `--no-open` | Don't open a browser |
 | `--no-refs` | Skip the symbol-reference pass — much faster on very large repos |
+| `--fresh` | Re-read every file instead of reusing the last run |
+| `--scope <name>` | In a monorepo, work on one app only |
+| `--ignore <glob...>` | Leave paths out — example apps, vendored code |
 | `--max-files <n>` | Cap on files analyzed (default 5000) |
 | `--json <path>` | Also write the JSON export somewhere specific |
 | `-q, --quiet` | Less output |
@@ -219,6 +225,84 @@ Re-run the export after a session and the map is current again. (The full atlas 
 plain SQLite and JSON in `.app-atlas/`, so an agent that wants more can query it
 directly. An MCP server is planned for v1.1.)
 
+## It keeps up with your agent
+
+The map is only useful if it is right *now*. Two things make that cheap.
+
+**Only what changed is read again.** Every file's contribution to the atlas — its
+nodes, its edges, its boundary findings — is cached under a hash of that file's text.
+A second run restores everything you have not edited and never hands it to the
+compiler. On this repo that is 4.1s down to 0.3s.
+
+Editing a file also invalidates whatever imports it, because renaming an export
+changes the id its callers point at and only re-reading those callers can notice. If
+you ever want the paranoid version, `--fresh` re-reads the lot.
+
+**Watch mode closes the loop.**
+
+```bash
+app-atlas --watch
+```
+
+The map now updates itself while your agent works. Every save triggers a rebuild — the
+same pipeline as a normal run, so the two cannot drift — and the open page follows
+along without a reload. And it says the thing this tool exists to say:
+
+```
+  ↻ src/app/api/orders/route.ts · 0.3s
+    1 new route has no auth check App Atlas can see.
+```
+
+Watch mode never stops to ask about spending money. A question that appears mid-edit,
+repeatedly, is not consent — so a metered API key is quietly declined and a
+subscription is unaffected.
+
+## Python, at the good tier
+
+```bash
+app-atlas ~/code/my-fastapi-app
+```
+
+Python gets the same treatment as TypeScript: files, functions, classes with their
+fields, imports, docstrings, and the whole boundary layer — FastAPI, Flask and Django
+routes; Celery tasks; SQLAlchemy and Django ORM calls; `requests` and `httpx` with
+their literal URLs resolved to the company on the other end; `os.environ` read however
+you spell it.
+
+App Atlas reads Python with **Python's own `ast` module**, by shelling out to whatever
+interpreter your project already uses — a virtual environment in the project wins, and
+`APP_ATLAS_PYTHON` overrides everything. A parser reimplemented in JavaScript would
+disagree with the interpreter eventually, and being subtly wrong is the one thing this
+tool must not be. If there is no Python on the machine, the files still appear on the
+map; they just have no insides.
+
+One difference is stated rather than hidden. TypeScript gets a type checker, so "this
+identifier is that declaration" is a fact. Python matches a name through the import
+that introduced it: inside a file that is as good as certain, across files it is an
+inference — and every one of those edges carries **likely** instead of **certain**.
+The same rule applies to auth: a FastAPI `Depends(get_current_user)` counts as a
+guard, but only ever a likely one, because a function with that name that returns
+`None` for a stranger is not a check.
+
+## Monorepos get one map each
+
+```
+  3 packages in this workspace, 2 of them apps
+
+  api  1 file · 1 way in    1 of 1 routes unprotected
+  web  2 files · 2 ways in  2 of 2 routes unprotected
+  ui   1 file
+```
+
+App Atlas reads the package list from npm, yarn, pnpm, uv or Poetry — whichever one
+declared it — and gives every app its own atlas, with a switcher at the top of the
+page. One map of six apps is exactly the hairball this tool exists to avoid, and "my
+web app" is how people talk about their own repo anyway.
+
+Each app keeps its atlas and its cache in its own directory, so `app-atlas apps/web`
+on its own is the same operation as running it in a repo with one app in it. Use
+`--scope web` to work on one without leaving the root.
+
 ## Where the words come from
 
 Structure comes from the compiler. Sentences come from a ladder, and the rung is
@@ -275,11 +359,18 @@ CLI ──▶ Analyzer ──▶ Atlas model ──▶ Enricher ──▶ Local 
                                               ATLAS.md ─┘
 ```
 
-- **Analyzer** — [ts-morph](https://ts-morph.com) over the real TypeScript compiler.
-  The type checker is the point: knowing what an identifier *resolves to* is what
-  separates a real map from a regex guess. Language plugins are an interface from day
-  one; Python is next. Boundary detectors ride along on the same traversal, so finding
-  every door costs one extra pass, not ten.
+- **Analyzer** — [ts-morph](https://ts-morph.com) over the real TypeScript compiler,
+  and Python's own `ast` module for Python. The checker is the point: knowing what an
+  identifier *resolves to* is what separates a real map from a regex guess. Language
+  plugins are an interface, and the two shipped ones sit at deliberately different
+  depths to prove that interface tolerates it. Boundary detectors ride along on the
+  same traversal, so finding every door costs one extra pass, not ten.
+- **The cache** — one row per file, keyed by a hash of its text, holding everything
+  that file contributed. It works because every edge a file produces starts inside it,
+  so slices restore in any order; it stays correct because editing a file also
+  invalidates whatever imports it, and because anything project-wide that could change
+  an answer (the tool version, the flags, the dependency list, the config files) is
+  folded into one fingerprint that discards the lot when it moves.
 - **Atlas model** — a language-agnostic graph of nodes (app, folder, file, function,
   type, endpoint, service, store) and edges (contains, imports, references, reads-from,
   writes-to, exposed-by, protected-by), stored in SQLite with a JSON export any agent
@@ -307,7 +398,13 @@ CLI ──▶ Analyzer ──▶ Atlas model ──▶ Enricher ──▶ Local 
 | **M2** | Framework plugins, boundary detectors, the boundary view, security badges | ✅ done |
 | **M3** | Explanations — docstrings first, provider-agnostic AI for the gaps | ✅ done |
 | **M4** | Type explorer, guided walkthroughs, `ATLAS.md` export for coding agents | ✅ done |
-| **M5** | Incremental re-analysis, `--watch`, Python, monorepo scopes, launch | next |
+| **M5** | Incremental re-analysis, `--watch`, Python, monorepo scopes | ✅ done |
+
+After v1.0, in rough order of how useful they'd be: an MCP server so an agent can
+query the atlas directly instead of reading a file; a "what changed" overlay that
+shows what your agent just did to the map, with the new routes glowing; cross-package
+tracing so a monorepo can follow a call from the web app through a shared package into
+the API; and more language plugins.
 
 ## Development
 
@@ -318,19 +415,36 @@ npm run typecheck   # both TypeScript projects
 npm run dev:web     # Vite dev server (expects `app-atlas serve` running on 4477)
 ```
 
-Tests run against `dist/`, not `src/`, so they cover what actually ships.
+Tests run against `dist/`, not `src/`, so they cover what actually ships. The Python
+tests skip themselves when there is no Python 3.9+ on the machine, so working on the
+TypeScript side never requires installing one.
+
+`build:node` compiles TypeScript and then copies
+[`extract.py`](src/analyze/py/extract.py) into `dist/` — it is source for a different
+language, so `tsc` will not do it.
 
 App Atlas maps itself: [`ATLAS.md`](ATLAS.md) in this repo is its own export, and
 [`AGENTS.md`](AGENTS.md) was written by `app-atlas init`. Regenerate both after a
-change with `node dist/node/cli.js analyze . -q && node dist/node/cli.js export .`.
+change with:
+
+```bash
+node dist/node/cli.js analyze . -q --ignore "test/fixtures/**" && node dist/node/cli.js export .
+```
+
+The `--ignore` matters: `test/fixtures/` holds small deliberately-insecure apps, and
+without it App Atlas reports *their* unprotected routes as its own. Any repo that
+ships example code has the same problem.
 
 ## Contributing
 
-Contributions are welcome, particularly:
+See [CONTRIBUTING.md](CONTRIBUTING.md) for setup and the one rule everything else
+follows. Contributions are welcome, particularly:
 
 - **Language plugins.** The analyzer takes source files and emits atlas nodes and
-  edges — see [`src/analyze/plugin.ts`](src/analyze/plugin.ts). Go, Ruby and Rust are
-  all wide open.
+  edges — see [`src/analyze/plugin.ts`](src/analyze/plugin.ts). TypeScript and Python
+  are done and sit at different depths on purpose;
+  [`src/analyze/py/`](src/analyze/py/) is the shorter of the two to read first. Go,
+  Ruby and Rust are all wide open.
 - **Boundary detectors.** A detector is one small file that recognises one family of
   conventions — see [`src/analyze/boundaries/`](src/analyze/boundaries/). If your
   framework, ORM or auth library is missing, that is the file to add.

@@ -2,7 +2,7 @@
 
 > **One-liner:** Understand any app — including the one your AI built. Run one command in any project and get an interactive, always-accurate atlas of your application — where data enters, what happens to it inside, and where it goes.
 
-**Status:** ✅ Approved by Nick (2026-07-25). M1–M4 shipped; M5 (freshness & Python) is next. See section 13 for the build log. Incorporates feedback rounds 1–2: name locked, open source, provider-agnostic AI with agent-CLI passthrough, dual audience, security badges in v1.0, agent/MCP integration, explanation-source ladder (docstrings first).
+**Status:** ✅ Approved by Nick (2026-07-25). M1–M5 shipped — the v1.0 feature set is complete. See section 13 for the build log. Incorporates feedback rounds 1–2: name locked, open source, provider-agnostic AI with agent-CLI passthrough, dual audience, security badges in v1.0, agent/MCP integration, explanation-source ladder (docstrings first).
 
 ---
 
@@ -244,7 +244,7 @@ Two directions, deliberately staged:
 2. **M2 — Boundaries & badges: ✅ done.** Framework plugins + boundary detectors + boundary view with Sankey bands + security insight badges (auth coverage, external services, env inventory). *Proves the differentiator.* See section 13.
 3. **M3 — Words: ✅ done.** Provider-agnostic AI enricher (agent-CLI passthrough first, then API keys) + overview page + hover cards + detail panels + trust labels + `app-atlas init`. *Proves the explanation ladder.* See section 13.
 4. **M4 — Types & tours: ✅ done.** Type explorer (including database tables) + walkthrough primitive + auto-generated "what happens when…" tours + `app-atlas export` writing `ATLAS.md` for agents. *Proves the map can explain itself.* See section 13.
-5. **M5 — Freshness & Python:** incremental re-analysis, `--watch`, Python analyzer, monorepo scope switcher, polish, docs, open-source launch.
+5. **M5 — Freshness & Python: ✅ done.** Incremental re-analysis, `--watch` with live updates, the Python analyzer, and monorepo scopes with a switcher. *Proves the map can keep up with the agent writing the code.* See section 13.
 
 Each milestone is testable against real agent-built repos (dogfood on Nick's own projects).
 
@@ -330,3 +330,24 @@ Decisions made during the build, worth carrying forward:
 - **Fixed a Windows bug on the way through:** a checkout with CRLF line endings left `\r` at the end of every line, so any `$`-anchored pattern matched nothing. That read as "this schema has no documentation" rather than as the bug it was. Config readers now split on `/\r?\n/`.
 
 Measured: the M2 fixture (10 files, 3 tables) produces 6 tours and a 2.7 KB `ATLAS.md`; App Atlas itself (75 files, 194 types) produces 60 type cards with 58 links and a 5.5 KB export. Neither costs a model call.
+
+**M5 — Freshness & Python: ✅ complete (2026-07-25).** Incremental re-analysis behind a per-file cache, `--watch` with live updates in the open page, the Python analyzer as the second language plugin, and monorepo scopes with a switcher. 28 new tests, 91 in total.
+
+Decisions made during the build, worth carrying forward:
+
+- **The unit of caching is one file's whole contribution.** Its nodes, the edges that start inside it, its boundary findings and the offsets of its declarations, stored under a hash of its text. This works because every edge a file produces starts inside that file — an import it wrote, a reference from one of its own functions — so slices restore in any order and never collide. The refactor that made this true (accumulate per file, not into one pile) was worth more than the cache itself.
+- **Editing a file also invalidates whatever imports it.** Renaming an export changes the id its callers point at, and only re-reading those callers can notice. One hop is provably enough: a reference cannot cross a module boundary without an import. The test that matters checks the files that were *not* edited.
+- **A blunt project-wide fingerprint beats a clever one.** The tool version, the analysis flags, the dependency list the detectors are gated on and the contents of tsconfig are folded into one hash, and when it moves the whole cache is discarded. Working out which files a newly-enabled detector would have changed is harder than reading them all again.
+- **`cache: 'off'` exists because a library must not write to someone's project.** Analysis used to touch no disk at all; adding a cache quietly changed that, and the tests were the first thing to notice by leaving `.app-atlas` directories in the fixtures.
+- **Watch mode never asks about money.** A consent prompt that appears mid-edit, repeatedly, is not consent — it is a key someone learns to mash. A metered backend is declined and told to run an explicit analysis; a subscription is unaffected, because it never reaches the question. Same rule as section 12 question 2, applied to a case that did not exist when the rule was written.
+- **A rebuild that finds a new unprotected route says so immediately, in yellow.** This is the whole product in one line: the agent added a door, and the human watching found out in 0.3 seconds rather than in an incident.
+- **Server-sent events, not a websocket.** The traffic only goes one way, it is a dozen lines over the http server that already exists, and the browser reconnects by itself when the CLI restarts. The page discards what it had and refetches rather than merging: the server is the truth, and a half-refreshed screen is worse than a second of loading.
+- **Python is read by Python.** Shelling out to the project's own interpreter is the only way to be sure the parse agrees with the interpreter, and a Python project you can run is a Python project that has one. `extract.py` reports what is *written* and resolves nothing; deciding which file a name lives in happens on the Node side, where the whole project is in view. Same probe-before-trusting rule as M3's agent CLIs, and for a sharper reason: on Windows a bare `python3` is usually a Microsoft Store stub that prints an advertisement and exits zero.
+- **Python's cross-file edges are `likely`, and that is the honest answer.** There is no checker; a name is matched through the import that introduced it. Inside one file that is as good as certain, across files it is an inference. The same restraint applies to `Depends(get_current_user)` — a guard, but never a certain one. Section 5.7 promised the model would tolerate per-language depth differences; this is what that looks like in practice.
+- **Python gets its own zone table.** `app/` is a Next.js router in one ecosystem and simply the package name in the other. Sharing the JavaScript rules would paint a whole Django backend as interface code, and a colour that is wrong once is a colour nobody trusts again.
+- **A monorepo is N atlases, each beside its own app.** One map of six apps is the hairball this tool exists to avoid. Each scope keeps its atlas and its cache in its own directory, so `app-atlas apps/web` alone is the same operation as a single-app repo — only a small manifest at the workspace root knows they are related. One package in a workspace produces no scopes at all, because a switcher with one option is a control that does nothing.
+- **Switching app clears the screen.** It is closer to opening a different project than to changing a filter; keeping the breadcrumb would point at folders that do not exist.
+
+Measured: App Atlas itself (92 files) analyzes cold in 4.1s and warm in 0.3s, producing a byte-identical atlas. A watch-mode rebuild after adding one route is 0.3s. The Python fixture (5 files) is read, linked and badged in under a second.
+
+**Still open before a public launch:** two screenshots — the Data view and a walkthrough step — are missing from the README. Every other view has one.
