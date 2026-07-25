@@ -139,6 +139,17 @@ async function runAnalysis(dir: string, options: SharedOptions): Promise<Atlas> 
     console.log(`  ${pad(s.modules)} folders     ${pad(s.types)} types`);
     console.log(`  ${pad(s.imports)} imports     ${pad(s.references)} references`);
     console.log('');
+    console.log(`  ${pad(s.endpoints)} ${plural(s.endpoints, 'way in', 'ways in').padEnd(12)}${pad(s.services)} ${plural(s.services, 'service', 'services')}`);
+    console.log(`  ${pad(s.stores)} ${plural(s.stores, 'data store', 'data stores').padEnd(12)}${pad(s.envVars)} ${plural(s.envVars, 'env variable', 'env variables')}`);
+    // The one number worth interrupting for.
+    if (s.routes > 0) {
+      const line =
+        s.unprotectedRoutes === 0
+          ? `  every one of the ${s.routes} routes has an auth check`
+          : `  ${s.unprotectedRoutes} of ${s.routes} routes have no auth check App Atlas can see`;
+      console.log(s.unprotectedRoutes > 0 ? pc.yellow(line) : pc.green(line));
+    }
+    console.log('');
     const documented = s.files > 0 ? Math.round((s.documentedFiles / s.files) * 100) : 0;
     console.log(
       pc.dim(
@@ -186,6 +197,10 @@ async function runServer(dir: string, atlas: Atlas, options: SharedOptions): Pro
 
 function pad(value: number): string {
   return String(value).padStart(5, ' ');
+}
+
+function plural(count: number, one: string, many: string): string {
+  return count === 1 ? one : many;
 }
 
 program.parseAsync(process.argv).catch((err: unknown) => {
