@@ -19,7 +19,6 @@ import {
   MiniMap,
   ReactFlow,
   ReactFlowProvider,
-  useNodesInitialized,
   useReactFlow,
   type Edge,
   type Node,
@@ -108,7 +107,6 @@ function AtlasApp() {
   const [scopes, setScopes] = useState<ScopeInfo[]>([]);
   const [scopeId, setScopeId] = useState('');
   const { fitView } = useReactFlow();
-  const nodesInitialized = useNodesInitialized();
 
   // --- which apps there are, in a monorepo ---
   // Asked once, before anything else, because every other request is about one of them.
@@ -254,17 +252,22 @@ function AtlasApp() {
     };
   }, [selectedId, revision]);
 
-  // --- frame each level once React Flow has measured it ---
-  // Fitting too early frames the *previous* level's nodes, so wait for React Flow to
-  // report the current ones as measured. The delayed second call covers the frame
-  // where measurement finishes just after this effect runs.
+  // --- frame each level as soon as it is laid out ---
+  // Not gated on React Flow's own "nodes measured" signal: these nodes carry explicit
+  // width/height from elk, and React Flow never reports pre-sized nodes as measured,
+  // so that signal simply never fires. Our own state is the reliable one — positions
+  // arrive together with the level. The first call runs a frame after the nodes
+  // render; the delayed one covers React Flow syncing its store just after that.
   useEffect(() => {
-    if (view !== 'map' || !nodesInitialized || !level) return;
+    if (view !== 'map' || !level || positions.size === 0) return;
     const options = { padding: 0.2, maxZoom: 1 };
-    void fitView(options);
-    const timer = window.setTimeout(() => void fitView({ ...options, duration: 250 }), 120);
-    return () => window.clearTimeout(timer);
-  }, [view, nodesInitialized, level, fitView]);
+    const frame = requestAnimationFrame(() => void fitView(options));
+    const timer = window.setTimeout(() => void fitView({ ...options, duration: 250 }), 150);
+    return () => {
+      cancelAnimationFrame(frame);
+      window.clearTimeout(timer);
+    };
+  }, [view, level, positions, fitView]);
 
   const go = useCallback((next: ViewName, id?: string | null) => {
     setView(next);

@@ -53,11 +53,17 @@ export function TypeScreen({
   onSelect: (id: string) => void;
 }) {
   const [positions, setPositions] = useState<Map<string, Positioned>>(new Map());
+  // Bumped when a layout lands. Remounting React Flow on this key makes its one
+  // initial fitView run against the laid-out cards — fitting the pre-layout pile at
+  // (0,0) and then moving every card out from under the viewport was the old bug.
+  const [layoutRev, setLayoutRev] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
     void layoutTypes(view.cards, view.links).then((laid) => {
-      if (!cancelled) setPositions(laid);
+      if (cancelled) return;
+      setPositions(laid);
+      setLayoutRev((n) => n + 1);
     });
     return () => {
       cancelled = true;
@@ -167,8 +173,12 @@ export function TypeScreen({
       </div>
 
       <div className="type-canvas">
+        {positions.size === 0 ? (
+          <div className="loading">Laying the shapes out…</div>
+        ) : (
         <ReactFlowProvider>
           <ReactFlow
+            key={layoutRev}
             nodes={nodes}
             edges={edges}
             nodeTypes={nodeTypes}
@@ -188,6 +198,7 @@ export function TypeScreen({
             <Controls showInteractive={false} />
           </ReactFlow>
         </ReactFlowProvider>
+        )}
       </div>
     </div>
   );
