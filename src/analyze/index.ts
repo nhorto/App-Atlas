@@ -5,9 +5,11 @@
  * in the containment tree (app → modules → files → functions/types), and produces a
  * complete Atlas. This is the only place that knows the whole pipeline.
  */
-import type { Atlas, AtlasEdge, AtlasNode, AtlasStats, Zone } from '../model/types.js';
+import type { Atlas, AtlasEdge, AtlasNode, AtlasStats, EndpointMeta, Zone } from '../model/types.js';
 import { FORMAT_VERSION, makeAppId, makeEdgeId } from '../model/types.js';
 import { hashParts } from '../util/hash.js';
+import { buildBoundaryGraph } from './boundaries/build.js';
+import type { BoundaryFinding } from './boundaries/types.js';
 import { buildModuleTree } from './modules.js';
 import type { LanguagePlugin } from './plugin.js';
 import { discoverProject } from './project.js';
@@ -15,11 +17,13 @@ import type { ProjectInfo } from './project.js';
 import { typescriptPlugin } from './ts/index.js';
 import { dominantZone } from './zones.js';
 
-export const TOOL_VERSION = '0.1.0';
+export const TOOL_VERSION = '0.2.0';
 
 export interface AnalyzeOptions {
   maxFiles?: number;
   followReferences?: boolean;
+  /** Run the boundary detectors (SPEC.md 5.3). On by default. */
+  detectBoundaries?: boolean;
   onProgress?: (stage: string, done: number, total: number) => void;
 }
 
@@ -34,6 +38,7 @@ export async function analyzeProject(rootDir: string, options: AnalyzeOptions = 
   const started = Date.now();
   const maxFiles = options.maxFiles ?? 5000;
   const followReferences = options.followReferences ?? true;
+  const detectBoundaries = options.detectBoundaries ?? true;
 
   options.onProgress?.('Finding source files', 0, 1);
   const project = await discoverProject(rootDir, { maxFiles });
@@ -71,6 +76,7 @@ export async function analyzeProject(rootDir: string, options: AnalyzeOptions = 
   nodes.push(appNode);
 
   // --- language plugins ---
+  const findings: BoundaryFinding[] = [];
   for (const plugin of PLUGINS) {
     const claimed = project.files.filter((file) => plugin.claims(file));
     if (claimed.length === 0) continue;
@@ -78,12 +84,27 @@ export async function analyzeProject(rootDir: string, options: AnalyzeOptions = 
     const result = await plugin.analyze({
       project,
       files: claimed,
-      options: { followReferences },
+      options: { followReferences, detectBoundaries },
       onProgress: options.onProgress,
     });
     nodes.push(...result.nodes);
     edges.push(...result.edges);
+    findings.push(...result.boundaries);
     warnings.push(...result.warnings);
+  }
+
+  // --- boundaries ---
+  // Merged once across every language, so a Python route and a TypeScript route land
+  // in the same list rather than two parallel ones.
+  if (detectBoundaries) {
+    const boundary = buildBoundaryGraph({
+      findings,
+      appId,
+      signals: project.signals,
+      knownNodeIds: new Set(nodes.map((n) => n.id)),
+    });
+    nodes.push(...boundary.nodes);
+    edges.push(...boundary.edges);
   }
 
   // --- containment tree ---
@@ -185,6 +206,13 @@ function computeStats(nodes: AtlasNode[], edges: AtlasEdge[]): AtlasStats {
   let linesOfCode = 0;
   let documentedFiles = 0;
   let documentedFunctions = 0;
+  let endpoints = 0;
+  let routes = 0;
+  let unprotectedRoutes = 0;
+  let services = 0;
+  let externalServices = 0;
+  let stores = 0;
+  let envVars = 0;
 
   for (const node of nodes) {
     switch (node.kind) {
@@ -203,6 +231,23 @@ function computeStats(nodes: AtlasNode[], edges: AtlasEdge[]): AtlasStats {
       case 'module':
         modules++;
         break;
+      case 'endpoint': {
+        endpoints++;
+        const meta = node.meta as unknown as EndpointMeta;
+        if (meta.endpointKind === 'env') envVars += meta.vars?.length ?? 0;
+        if (isAuthRelevant(meta)) {
+          routes++;
+          if (meta.guards.length === 0) unprotectedRoutes++;
+        }
+        break;
+      }
+      case 'service':
+        services++;
+        if (node.meta.external !== false) externalServices++;
+        break;
+      case 'store':
+        stores++;
+        break;
       default:
         break;
     }
@@ -215,5 +260,35 @@ function computeStats(nodes: AtlasNode[], edges: AtlasEdge[]): AtlasStats {
     else if (edge.kind === 'references') references++;
   }
 
-  return { files, functions, types, modules, imports, references, linesOfCode, documentedFiles, documentedFunctions };
+  return {
+    files,
+    functions,
+    types,
+    modules,
+    imports,
+    references,
+    linesOfCode,
+    documentedFiles,
+    documentedFunctions,
+    endpoints,
+    routes,
+    unprotectedRoutes,
+    services,
+    externalServices,
+    stores,
+    envVars,
+  };
+}
+
+/**
+ * Auth coverage is measured over the doors a stranger can knock on. A cron job or a
+ * queue worker is not reachable from the internet, so counting it as "unprotected"
+ * would inflate the number that matters and teach people to ignore it.
+ */
+export function isAuthRelevant(meta: EndpointMeta): boolean {
+  return (
+    meta.endpointKind === 'http-route' ||
+    meta.endpointKind === 'server-action' ||
+    meta.endpointKind === 'realtime'
+  );
 }

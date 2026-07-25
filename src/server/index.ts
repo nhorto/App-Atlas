@@ -12,7 +12,9 @@ import http from 'node:http';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { Atlas } from '../model/types.js';
+import { buildBoundaryView } from '../model/boundary.js';
 import { AtlasGraph } from '../model/graph.js';
+import { buildInsights } from '../model/insights.js';
 
 export interface ServerHandle {
   url: string;
@@ -117,6 +119,12 @@ function handleRequest(
 
       case '/api/overview':
         return sendJson(res, 200, graph.getOverview());
+
+      case '/api/boundaries':
+        return sendJson(res, 200, buildBoundaryView(graph));
+
+      case '/api/insights':
+        return sendJson(res, 200, buildInsights(graph));
 
       case '/api/level': {
         const id = url.searchParams.get('id') || graph.rootId;

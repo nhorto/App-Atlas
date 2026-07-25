@@ -7,6 +7,7 @@
  * without the rest of the system knowing. See SPEC.md section 5.7.
  */
 import type { AtlasEdge, AtlasNode } from '../model/types.js';
+import type { BoundaryFinding } from './boundaries/types.js';
 import type { ProjectInfo, SourceFileRef } from './project.js';
 
 export interface PluginContext {
@@ -20,11 +21,19 @@ export interface PluginContext {
 export interface PluginOptions {
   /** Run the symbol-reference pass. Off makes very large repos much faster. */
   followReferences: boolean;
+  /** Run the boundary detectors. */
+  detectBoundaries: boolean;
 }
 
 export interface PluginResult {
   nodes: AtlasNode[];
   edges: AtlasEdge[];
+  /**
+   * Raw boundary observations. They stay unmerged here on purpose: turning forty
+   * Stripe call sites into one Stripe box needs the whole project, not one file, and
+   * that merge happens once for every language at the end.
+   */
+  boundaries: BoundaryFinding[];
   warnings: string[];
   timings: Record<string, number>;
 }

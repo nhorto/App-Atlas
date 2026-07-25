@@ -11,6 +11,8 @@ import fg from 'fast-glob';
 import ignoreFactory from 'ignore';
 import type { Zone } from '../model/types.js';
 import { relPosix, toPosix } from '../util/paths.js';
+import { readSignals } from './signals.js';
+import type { ProjectSignals } from './signals.js';
 import { classifyZone } from './zones.js';
 
 export interface SourceFileRef {
@@ -26,6 +28,8 @@ export interface ProjectInfo {
   packageJson: Record<string, unknown> | null;
   files: SourceFileRef[];
   frameworks: string[];
+  /** What the config files say: routers, crons, the database engine, `.env.example`. */
+  signals: ProjectSignals;
   /** Workspace globs, if this looks like a monorepo. Informational in M1. */
   workspaces: string[];
   warnings: string[];
@@ -99,6 +103,7 @@ export async function discoverProject(rootInput: string, options: DiscoverOption
     (typeof packageJson?.name === 'string' && packageJson.name.trim()) || path.basename(root) || 'app';
 
   const tsConfigPath = findTsConfig(root);
+  const signals = readSignals(root, packageJson);
   const workspaces = readWorkspaces(root, packageJson);
   if (workspaces.length > 0) {
     warnings.push(
@@ -138,7 +143,8 @@ export async function discoverProject(rootInput: string, options: DiscoverOption
     tsConfigPath,
     packageJson,
     files,
-    frameworks: detectFrameworks(packageJson),
+    frameworks: detectFrameworks(packageJson, signals),
+    signals,
     workspaces,
     warnings,
   };
@@ -179,16 +185,22 @@ function readWorkspaces(root: string, pkg: Record<string, unknown> | null): stri
   return [...new Set(out)];
 }
 
-function detectFrameworks(pkg: Record<string, unknown> | null): string[] {
-  if (!pkg) return [];
-  const deps = {
-    ...(pkg.dependencies as Record<string, string> | undefined),
-    ...(pkg.devDependencies as Record<string, string> | undefined),
-  };
+function detectFrameworks(pkg: Record<string, unknown> | null, signals: ProjectSignals): string[] {
   const out = new Set<string>();
-  for (const [dep, label] of Object.entries(FRAMEWORK_SIGNALS)) {
-    if (deps[dep]) out.add(label);
+  if (pkg) {
+    const deps = {
+      ...(pkg.dependencies as Record<string, string> | undefined),
+      ...(pkg.devDependencies as Record<string, string> | undefined),
+    };
+    for (const [dep, label] of Object.entries(FRAMEWORK_SIGNALS)) {
+      if (deps[dep]) out.add(label);
+    }
   }
+  // Config files know things package.json does not: which Next.js router is in use,
+  // and whether anything is scheduled.
+  if (signals.nextAppDir) out.add('Next.js App Router');
+  if (signals.nextPagesDir && !signals.nextAppDir) out.add('Next.js Pages Router');
+  if (signals.crons.length > 0) out.add('Vercel Cron');
   return [...out].sort();
 }
 

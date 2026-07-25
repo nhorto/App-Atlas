@@ -31,6 +31,8 @@ import type { AtlasEdge, AtlasNode, FieldInfo, ParamInfo } from '../../model/typ
 import { makeEdgeId, makeFileId, makeFunctionId, makeTypeId } from '../../model/types.js';
 import { hashParts, hashText } from '../../util/hash.js';
 import { extOf, toPosix } from '../../util/paths.js';
+import { detectBoundaries } from '../boundaries/index.js';
+import type { BoundaryFinding } from '../boundaries/types.js';
 import type { LanguagePlugin, PluginContext, PluginResult } from '../plugin.js';
 import type { SourceFileRef } from '../project.js';
 
@@ -127,7 +129,35 @@ export function analyzeTypeScript(ctx: PluginContext): PluginResult {
     timings.references = Date.now() - t3;
   }
 
-  return { nodes, edges: [...edges.values()], warnings, timings };
+  // ---- Pass 4: boundaries ---------------------------------------------------
+  const boundaries: BoundaryFinding[] = [];
+  if (options.detectBoundaries) {
+    const t4 = Date.now();
+    done = 0;
+    for (const { ref, sf } of sourceFiles) {
+      const posKey = normPath(ref.absPath);
+      const fileId = makeFileId(ref.relPath);
+      try {
+        boundaries.push(
+          ...detectBoundaries({
+            ref,
+            sf,
+            fileId,
+            project,
+            signals: project.signals,
+            enclosing: (node) => declaredNodeId(node, posKey, registered, fileId),
+          }),
+        );
+      } catch (err) {
+        warnings.push(`Failed to read boundaries in ${ref.relPath}: ${(err as Error).message}`);
+      }
+      if (++done % 25 === 0) ctx.onProgress?.('Finding the boundaries', done, sourceFiles.length);
+    }
+    ctx.onProgress?.('Finding the boundaries', sourceFiles.length, sourceFiles.length);
+    timings.boundaries = Date.now() - t4;
+  }
+
+  return { nodes, edges: [...edges.values()], boundaries, warnings, timings };
 }
 
 function createProject(tsConfigPath: string | null): Project {
@@ -633,6 +663,21 @@ function extractReferences(
 
 function enclosingNodeId(node: Node, posKey: string, registered: Registered, fallback: string): string {
   let current: Node | undefined = node.getParent();
+  while (current) {
+    const hit = registered.byPosition.get(`${posKey}|${current.getStart()}`);
+    if (hit) return hit;
+    current = current.getParent();
+  }
+  return fallback;
+}
+
+/**
+ * Like `enclosingNodeId`, but a declaration maps to itself. Boundary detectors hand us
+ * the declaration of a route handler directly, and "which function is this" should
+ * answer "that one" rather than walking past it to its parent.
+ */
+function declaredNodeId(node: Node, posKey: string, registered: Registered, fallback: string): string {
+  let current: Node | undefined = node;
   while (current) {
     const hit = registered.byPosition.get(`${posKey}|${current.getStart()}`);
     if (hit) return hit;

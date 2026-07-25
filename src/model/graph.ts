@@ -106,6 +106,23 @@ export class AtlasGraph {
     return this.nodes.get(id);
   }
 
+  /** Every node of one kind, in id order. The boundary and insight views live off this. */
+  nodesOfKind(kind: AtlasNode['kind']): AtlasNode[] {
+    const out: AtlasNode[] = [];
+    for (const node of this.nodes.values()) {
+      if (node.kind === kind) out.push(node);
+    }
+    return out.sort((a, b) => a.id.localeCompare(b.id));
+  }
+
+  edgesFrom(id: string): AtlasEdge[] {
+    return this.outgoing.get(id) ?? [];
+  }
+
+  edgesTo(id: string): AtlasEdge[] {
+    return this.incoming.get(id) ?? [];
+  }
+
   /** Root-first chain of ancestors, ending with the node itself. */
   private pathTo(id: string): string[] {
     const cached = this.pathCache.get(id);

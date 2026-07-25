@@ -3,9 +3,10 @@
 > **Understand any app — including the one your AI built.**
 
 Run one command in any project and get an interactive, always-accurate map of your
-application: what the pieces are, how they connect, and what each one actually does.
+application: every way data gets in, everywhere it goes, and what all the pieces in
+between actually do.
 
-![The architecture map, drilled into a folder](docs/architecture-map.png)
+![The boundary view: inputs on the left, your app in the middle, outputs on the right](docs/boundary-view.png)
 
 ---
 
@@ -31,10 +32,11 @@ Two rules keep it trustworthy:
 
 ## Status
 
-**Early development.** Milestone M1 is complete: the CLI, the TypeScript/JavaScript
-analyzer, the atlas data model, and the drill-down architecture map all work on real
-repositories. The boundary view, plain-English explanations and security badges are
-next — see [the roadmap](#roadmap) and [SPEC.md](SPEC.md) for the full design.
+**Early development.** Milestones M1 and M2 are complete: the CLI, the
+TypeScript/JavaScript analyzer, the atlas data model, the drill-down architecture map,
+the boundary view and the security badges all work on real repositories. Plain-English
+explanations are next — see [the roadmap](#roadmap) and [SPEC.md](SPEC.md) for the full
+design.
 
 ## Quick start
 
@@ -76,13 +78,54 @@ the map in your browser.
 | `--json <path>` | Also write the JSON export somewhere specific |
 | `-q, --quiet` | Less output |
 
-## Getting around the map
+## The three views
+
+### Boundaries — the home screen
+
+Every door into your app on the left, your app in the middle, everywhere your data
+goes on the right. Band thickness is the number of code paths. It knows about:
+
+- **Routes and pages** — Next.js App Router and Pages Router, Express, Fastify, Hono,
+  Koa, NestJS controllers, tRPC procedures
+- **Server actions**, the quietest door in a Next.js app: an exported async function
+  any browser can invoke
+- **Webhooks**, recognised by the signature check rather than the URL
+- **Scheduled and background jobs** — `vercel.json` crons, node-cron, BullMQ workers,
+  Inngest, Trigger.dev
+- **The command line, realtime subscriptions, files read off disk, and every
+  environment variable you read**
+- **Databases** — Prisma (including the engine and table names from `schema.prisma`),
+  Drizzle, Kysely, Knex, pg, Mongoose, Supabase, plus browser `localStorage` and
+  IndexedDB, which are easy to forget and mean your data lives on one device
+- **Outbound calls** — `fetch`/`axios` with a literal URL resolved to a hostname, and
+  official SDKs resolved through the package they came from
+
+### Security — the answers the map implies
+
+![Auth coverage, external services and the environment inventory](docs/security-badges.png)
+
+Three questions, answered from static facts:
+
+1. **Who can get in.** Every route, page and server action badged with what protects
+   it — a middleware matcher, Clerk, NextAuth, Supabase, a tRPC `protectedProcedure`,
+   or your own `requireUser`. When the check is in the handler itself the badge is
+   definite; when it is a middleware pattern we had to approximate, it says *likely*.
+   Claiming a route is protected when it is not would be the most damaging thing this
+   tool could do, so it never rounds up.
+2. **Where your data goes.** Every company your app sends data to, with the package or
+   hostname that proves it.
+3. **Configuration and secrets.** Every environment variable you read, where you read
+   it, and whether it is documented in `.env.example`.
+
+### Map — the drill-down
+
+![The architecture map, drilled into a folder](docs/architecture-map.png)
 
 - **Click** a box to see what it is, what it uses, and what would break without it.
   Its immediate neighbours light up; everything else dims.
 - **Press ›** on a box to go inside it. The breadcrumb takes you back out, as does
   <kbd>Backspace</kbd>.
-- **<kbd>Ctrl</kbd>+<kbd>K</kbd>** searches every file, function and type.
+- **<kbd>Ctrl</kbd>+<kbd>K</kbd>** searches every file, function, type and endpoint.
 - Colour always means one thing: which zone something belongs to — interface, API,
   logic, data, config or tests.
 - The URL tracks where you are, so you can send someone a link to a specific spot.
@@ -102,11 +145,13 @@ CLI ──▶ Analyzer ──▶ Atlas model ──▶ Local web app
 - **Analyzer** — [ts-morph](https://ts-morph.com) over the real TypeScript compiler.
   The type checker is the point: knowing what an identifier *resolves to* is what
   separates a real map from a regex guess. Language plugins are an interface from day
-  one; Python is next.
+  one; Python is next. Boundary detectors ride along on the same traversal, so finding
+  every door costs one extra pass, not ten.
 - **Atlas model** — a language-agnostic graph of nodes (app, folder, file, function,
-  type) and edges (contains, imports, references), stored in SQLite with a JSON
-  export any agent can read. Every node carries a content hash and a provenance
-  label, which is what incremental re-analysis and explanation caching build on.
+  type, endpoint, service, store) and edges (contains, imports, references, reads-from,
+  writes-to, exposed-by, protected-by), stored in SQLite with a JSON export any agent
+  can read. Every node carries a content hash and a provenance label, which is what
+  incremental re-analysis and explanation caching build on.
 - **Web app** — one level of the graph on screen at a time, laid out deterministically
   by [elkjs](https://github.com/kieler/elkjs) so the same code always produces the
   same picture. There is no force-directed hairball anywhere in this project, by
@@ -117,15 +162,10 @@ CLI ──▶ Analyzer ──▶ Atlas model ──▶ Local web app
 | | Milestone | Status |
 |---|---|---|
 | **M1** | CLI, TypeScript analyzer, atlas model, drill-down architecture map | ✅ done |
-| **M2** | Framework plugins, boundary detectors, the boundary view, security badges | next |
-| **M3** | Explanations — docstrings first, provider-agnostic AI for the gaps | |
+| **M2** | Framework plugins, boundary detectors, the boundary view, security badges | ✅ done |
+| **M3** | Explanations — docstrings first, provider-agnostic AI for the gaps | next |
 | **M4** | Type explorer, guided walkthroughs, `ATLAS.md` export for coding agents | |
 | **M5** | Incremental re-analysis, `--watch`, Python, monorepo scopes, launch | |
-
-The security badges in M2 are worth calling out: every route badged protected or
-unprotected and by what, an inventory of every external company your app sends data
-to, and every environment variable you read and where. All statically derived — facts,
-not guesses.
 
 ## Development
 
@@ -145,10 +185,14 @@ Contributions are welcome, particularly:
 - **Language plugins.** The analyzer takes source files and emits atlas nodes and
   edges — see [`src/analyze/plugin.ts`](src/analyze/plugin.ts). Go, Ruby and Rust are
   all wide open.
-- **Framework detectors.** Anything that knows where a framework puts its routes,
-  jobs or database access.
-- **Real-world repos that produce a bad map.** Those are the most useful bug reports
-  this project can get.
+- **Boundary detectors.** A detector is one small file that recognises one family of
+  conventions — see [`src/analyze/boundaries/`](src/analyze/boundaries/). If your
+  framework, ORM or auth library is missing, that is the file to add.
+- **The service catalog.** [`catalog.ts`](src/analyze/boundaries/catalog.ts) maps
+  packages and hostnames to the company behind them. Adding an entry is a one-line PR
+  and immediately improves everyone's boundary view.
+- **Real-world repos that produce a bad map** — or, worse, a route badged protected
+  that is not. Those are the most useful bug reports this project can get.
 
 [SPEC.md](SPEC.md) is the source of truth for the design and explains why each
 decision was made, including what was deliberately left out.

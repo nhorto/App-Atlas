@@ -6,7 +6,14 @@
  * circles. Colour always means zone; nothing else is colour-coded.
  */
 import { Handle, Position, type NodeProps } from '@xyflow/react';
-import type { LevelNode, ParamInfo, FieldInfo } from '../types';
+import type {
+  EndpointMeta,
+  FieldInfo,
+  LevelNode,
+  ParamInfo,
+  ServiceMeta,
+  StoreMeta,
+} from '../types';
 
 export interface AtlasCardData extends Record<string, unknown> {
   node: LevelNode;
@@ -54,6 +61,8 @@ export function AtlasNodeCard({ data, selected }: NodeProps) {
 
       <div className="card-sub">{subtitle(node)}</div>
 
+      {node.kind === 'endpoint' ? <EndpointBadge node={node} /> : null}
+
       {node.kind === 'module' && node.preview.length > 0 ? (
         <ul className="card-preview">
           {node.preview.slice(0, 4).map((name) => (
@@ -95,6 +104,25 @@ function FieldRows({ node }: { node: LevelNode }) {
   );
 }
 
+/**
+ * A door only says "no auth check" when it is a door a stranger can reach. Crons and
+ * queue workers are not, and badging them would train people to ignore the badge.
+ */
+function EndpointBadge({ node }: { node: LevelNode }) {
+  const meta = node.meta as unknown as EndpointMeta;
+  if (!['http-route', 'server-action', 'realtime'].includes(meta.endpointKind)) return null;
+
+  const guard = meta.guards[0];
+  if (!guard) return <span className="card-badge badge-open">no auth check</span>;
+  const certain = meta.guards.some((g) => g.confidence === 'certain');
+  const name = guard.provider !== 'custom' ? guard.provider : guard.name;
+  return (
+    <span className={`card-badge badge-${certain ? 'protected' : 'likely'}`}>
+      {certain ? name : `likely · ${name}`}
+    </span>
+  );
+}
+
 function kindGlyph(node: LevelNode): string {
   switch (node.kind) {
     case 'module':
@@ -107,6 +135,14 @@ function kindGlyph(node: LevelNode): string {
       return '⬡';
     case 'app':
       return '◎';
+    case 'zone':
+      return (node.meta.direction as string) === 'in' ? '⇥' : '⇤';
+    case 'endpoint':
+      return '⌾';
+    case 'service':
+      return '◇';
+    case 'store':
+      return '⛁';
     default:
       return '•';
   }
@@ -138,6 +174,27 @@ function subtitle(node: LevelNode): string {
       const kind = String(node.meta.typeKind ?? 'type');
       const fields = ((node.meta.fields as FieldInfo[] | undefined) ?? []).length;
       return fields > 0 ? `${kind} · ${fields} fields` : kind;
+    }
+    case 'zone': {
+      const count = Number(node.meta.endpointCount ?? node.childCount);
+      const direction = String(node.meta.direction ?? 'in');
+      return direction === 'in' ? `${count} ways data gets in` : `${count} places data goes`;
+    }
+    case 'endpoint': {
+      const meta = node.meta as unknown as EndpointMeta;
+      if (meta.endpointKind === 'env') return `${meta.vars?.length ?? 0} variables`;
+      if (meta.schedule) return `${meta.framework} · ${meta.schedule}`;
+      return `${meta.framework} · ${meta.sites.length} ${meta.sites.length === 1 ? 'place' : 'places'}`;
+    }
+    case 'service': {
+      const meta = node.meta as unknown as ServiceMeta;
+      const source = meta.packages[0] ?? meta.hosts[0] ?? meta.category;
+      return `${source} · ${meta.sites.length} ${meta.sites.length === 1 ? 'call' : 'calls'}`;
+    }
+    case 'store': {
+      const meta = node.meta as unknown as StoreMeta;
+      const tables = meta.tables.length;
+      return tables > 0 ? `${meta.client} · ${tables} ${tables === 1 ? 'table' : 'tables'}` : meta.client;
     }
     default:
       return node.path ?? '';
