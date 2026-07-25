@@ -182,7 +182,8 @@ function inputDetail(family: string, members: AtlasNode[]): string {
     return `${vars.length} ${vars.length === 1 ? 'variable' : 'variables'}`;
   }
   if (family === 'cli' || family === 'files') {
-    return `${(members[0].meta as unknown as EndpointMeta).sites.length} places`;
+    const sites = (members[0].meta as unknown as EndpointMeta).sites.length;
+    return `${sites} ${sites === 1 ? 'place' : 'places'}`;
   }
   const noun = INPUT_NOUNS[family] ?? 'entry point';
   return `${count} ${count === 1 ? noun : `${noun}s`}`;
