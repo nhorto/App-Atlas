@@ -342,8 +342,12 @@ async function runSingleAnalysis(root: string, options: SharedOptions): Promise<
     if (s.routes > 0) {
       const line =
         s.unprotectedRoutes === 0
-          ? `  every one of the ${s.routes} routes has an auth check`
-          : `  ${s.unprotectedRoutes} of ${s.routes} routes have no auth check App Atlas can see`;
+          ? s.routes === 1
+            ? '  the one route has an auth check'
+            : `  every one of the ${s.routes} routes has an auth check`
+          : s.routes === 1
+            ? '  the one route has no auth check App Atlas can see'
+            : `  ${s.unprotectedRoutes} of ${s.routes} routes have no auth check App Atlas can see`;
       console.log(s.unprotectedRoutes > 0 ? pc.yellow(line) : pc.green(line));
     }
     console.log('');
