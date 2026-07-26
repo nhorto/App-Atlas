@@ -282,12 +282,17 @@ test('reads tables out of SQL migrations, replayed in order', () => {
   // Columns come from CREATE TABLE plus every later ALTER, in order.
   assert.deepEqual(
     pageViews.meta.fields.map((f) => f.name),
-    ['id', 'path', 'session_id', 'at', 'referrer'],
+    ['id', 'path', 'session_id', 'at', 'referrer', 'seen_at'],
   );
   const id = pageViews.meta.fields.find((f) => f.name === 'id');
   assert.equal(id.isId, true, 'the table-level PRIMARY KEY constraint lands on the column');
   const path = pageViews.meta.fields.find((f) => f.name === 'path');
   assert.equal(path.type, 'varchar(2048)', 'ALTER COLUMN TYPE is replayed too');
+
+  // One repo, several hands: SHOUTED types and types wrapped over a line read the
+  // same as the quiet ones, so a wall of cards does not shout half its columns.
+  assert.equal(pageViews.meta.fields.find((f) => f.name === 'referrer').type, 'text');
+  assert.equal(pageViews.meta.fields.find((f) => f.name === 'seen_at').type, 'timestamp with time zone');
 
   const email = sessions.meta.fields.find((f) => f.name === 'user_email');
   assert.equal(email.isUnique, true, 'a table-level UNIQUE constraint lands on the column');

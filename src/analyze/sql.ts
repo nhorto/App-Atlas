@@ -279,7 +279,7 @@ function readAlterations(clauses: string, table: SqlTable): void {
       const retype = /^alter\s+(?:column\s+)?(\S+)\s+(?:set\s+data\s+)?type\s+([\s\S]+)$/i.exec(clause);
       if (retype) {
         const field = table.fields.find((f) => f.name === unquote(retype[1]));
-        if (field) field.type = retype[2].trim();
+        if (field) field.type = normalizeType(retype[2]);
       }
     }
   }
@@ -338,6 +338,17 @@ function readTableEntry(entry: string, table: SqlTable): void {
 const MODIFIER =
   /\b(not\s+null|null|default|primary\s+key|references|unique|check|constraint|generated|collate)\b/i;
 
+/**
+ * Migrations in one repo are written by several hands and several generators: `uuid`
+ * in this file, `UUID` in that one, `TIMESTAMP WITH TIME ZONE` broken across lines in
+ * a third. SQL does not care, but a wall of cards that shouts half its types does. A
+ * quoted type is a real identifier, though — Postgres preserves its case, so we do too.
+ */
+function normalizeType(raw: string): string {
+  const type = raw.trim().replace(/\s+/g, ' ');
+  return type.includes('"') ? type : type.toLowerCase();
+}
+
 function readColumn(entry: string): SchemaField | null {
   const m = /^("[^"]+"|[A-Za-z_][A-Za-z0-9_$]*)\s+([\s\S]+)$/.exec(entry);
   if (!m) return null;
@@ -345,7 +356,7 @@ function readColumn(entry: string): SchemaField | null {
   const rest = m[2];
 
   const cut = MODIFIER.exec(rest);
-  const type = (cut ? rest.slice(0, cut.index) : rest).trim();
+  const type = normalizeType(cut ? rest.slice(0, cut.index) : rest);
   const modifiers = cut ? rest.slice(cut.index) : '';
   if (!type) return null;
 
