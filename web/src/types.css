@@ -207,6 +207,11 @@
   color: var(--ink-faint);
 }
 
+/* Set like the other note the card can carry — a pencilled aside, not an alarm. */
+.tcard-usage.is-unused {
+  font-style: italic;
+}
+
 /* Row handles are anchors for the lines, not controls — never visible, never clickable.
    Kept fully inside the card: the clip-path would slice anything that overhangs. */
 .tcard .handle-row {
