@@ -16,6 +16,17 @@ import type { AtlasNode, LevelNode, OverviewView, Tour } from '../types';
 import { zoneLabel } from './AtlasNodeCard';
 import { TrustLabel } from './Trust';
 
+/**
+ * A create-whatever template leaves package.json saying "testproject" long after
+ * the folder is called cork-and-note. The declared name still leads — it is what
+ * the code says — but the folder is the name the person actually knows.
+ */
+function folderNameOf(root: string, declared: string): string {
+  const folder = root.replace(/[\\/]+$/, '').split(/[\\/]/).pop() ?? '';
+  if (!folder || folder.toLowerCase() === declared.toLowerCase()) return '';
+  return ` · in ${folder}`;
+}
+
 interface Props {
   view: OverviewView;
   tours: Tour[];
@@ -36,6 +47,7 @@ export function OverviewScreen({ view, tours, onDrill, onReveal, onStartTour, on
         <h1>{meta.name}</h1>
         <p className="page-sub">
           {meta.frameworks.length > 0 ? meta.frameworks.join(' · ') : (meta.languages.join(' · ') || 'Source code')}
+          {folderNameOf(meta.root, meta.name)}
         </p>
       </header>
 
