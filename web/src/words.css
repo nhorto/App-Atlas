@@ -289,33 +289,49 @@
   gap: 12px;
 }
 
+/* The parts are specimen labels too — zone strip on top, clipped corner,
+   perforated rule. Hover lifts the label a hair off the page. */
 .part-card {
+  position: relative;
   display: flex;
   flex-direction: column;
   gap: 4px;
-  padding: 13px 15px;
-  border: 1px solid var(--line);
-  border-left: 4px solid var(--zone-unknown);
-  border-radius: var(--radius);
-  background: var(--surface);
+  padding: 12px 15px 13px;
+  border: 1px solid var(--line-strong);
+  border-top: 4px solid var(--zone-unknown);
+  background: var(--label);
+  clip-path: polygon(0 0, calc(100% - 14px) 0, 100% 14px, 100% 100%, 0 100%);
+  filter: drop-shadow(1px 2px 0 rgba(64, 54, 32, 0.09));
   text-align: left;
   font: inherit;
   color: inherit;
   cursor: pointer;
-  transition: box-shadow 120ms ease, border-color 120ms ease;
+  transition: filter 120ms ease, border-color 120ms ease, transform 120ms ease;
+}
+
+.part-card::before {
+  content: '';
+  position: absolute;
+  inset: 3px;
+  border: 1px dashed var(--line);
+  clip-path: polygon(0 0, calc(100% - 11px) 0, 100% 11px, 100% 100%, 0 100%);
+  pointer-events: none;
 }
 
 .part-card:hover {
-  box-shadow: var(--shadow);
-  border-color: var(--line-strong);
+  border-left-color: var(--ink-faint);
+  border-right-color: var(--ink-faint);
+  border-bottom-color: var(--ink-faint);
+  transform: translateY(-1px);
+  filter: drop-shadow(1px 3px 0 rgba(64, 54, 32, 0.13));
 }
 
-.part-card.zone-ui { border-left-color: var(--zone-ui); }
-.part-card.zone-api { border-left-color: var(--zone-api); }
-.part-card.zone-logic { border-left-color: var(--zone-logic); }
-.part-card.zone-data { border-left-color: var(--zone-data); }
-.part-card.zone-config { border-left-color: var(--zone-config); }
-.part-card.zone-test { border-left-color: var(--zone-test); }
+.part-card.zone-ui { border-top-color: var(--zone-ui); }
+.part-card.zone-api { border-top-color: var(--zone-api); }
+.part-card.zone-logic { border-top-color: var(--zone-logic); }
+.part-card.zone-data { border-top-color: var(--zone-data); }
+.part-card.zone-config { border-top-color: var(--zone-config); }
+.part-card.zone-test { border-top-color: var(--zone-test); }
 
 .part-name {
   font-size: 14px;

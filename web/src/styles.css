@@ -14,6 +14,8 @@
   --bg: #f4f1e9;
   --surface: #fdfcf7;
   --surface-press: #f2eee3;
+  /* Card paper: a shade gummier than --surface, like a label licked and stuck on. */
+  --label: #fbf8ef;
   --ink: #26231c;
   --ink-soft: #5f594b;
   --ink-faint: #8f8776;
@@ -243,34 +245,60 @@ kbd {
 
 /* ---------- cards on the canvas ---------- */
 
+/* Every card in the app is set as a specimen label out of a naturalist's field
+   kit: slightly warmer paper than the page, a clipped top-right corner, a
+   perforated inner rule, and the zone color as the label's binding strip along
+   the top. Sharp corners and a 1px offset shadow — nothing floats, nothing
+   glows. The clip means box-shadow would be cut off, so depth and selection
+   both travel through drop-shadow filters instead. */
+
 .card {
+  position: relative;
   width: 100%;
   height: 100%;
-  background: var(--surface);
+  background: var(--label);
   border: 1px solid var(--line-strong);
-  border-left: 4px solid var(--zone-unknown);
-  border-radius: var(--radius);
-  box-shadow: var(--shadow);
-  padding: 9px 12px;
+  border-top: 4px solid var(--zone-unknown);
+  clip-path: polygon(0 0, calc(100% - 14px) 0, 100% 14px, 100% 100%, 0 100%);
+  filter: drop-shadow(1px 2px 0 rgba(64, 54, 32, 0.09));
+  padding: 8px 12px 9px;
   overflow: hidden;
-  transition: opacity 140ms ease, box-shadow 140ms ease, border-color 140ms ease;
+  transition: opacity 140ms ease, border-color 140ms ease, filter 140ms ease;
 }
 
-.card.zone-ui { border-left-color: var(--zone-ui); }
-.card.zone-api { border-left-color: var(--zone-api); }
-.card.zone-logic { border-left-color: var(--zone-logic); }
-.card.zone-data { border-left-color: var(--zone-data); }
-.card.zone-config { border-left-color: var(--zone-config); }
-.card.zone-test { border-left-color: var(--zone-test); }
+.card::before {
+  content: '';
+  position: absolute;
+  inset: 3px;
+  border: 1px dashed var(--line);
+  clip-path: polygon(0 0, calc(100% - 11px) 0, 100% 11px, 100% 100%, 0 100%);
+  pointer-events: none;
+}
+
+.card.zone-ui { border-top-color: var(--zone-ui); }
+.card.zone-api { border-top-color: var(--zone-api); }
+.card.zone-logic { border-top-color: var(--zone-logic); }
+.card.zone-data { border-top-color: var(--zone-data); }
+.card.zone-config { border-top-color: var(--zone-config); }
+.card.zone-test { border-top-color: var(--zone-test); }
 
 .card.is-dim {
   opacity: 0.18;
 }
 
+/* The zone strip stays; the other three sides and the perforation turn
+   terracotta, like a label somebody circled in red pencil. */
 .card.is-selected,
 .card.is-focus {
-  border-color: var(--accent);
-  box-shadow: 0 0 0 3px var(--accent-soft), var(--shadow);
+  border-left-color: var(--accent);
+  border-right-color: var(--accent);
+  border-bottom-color: var(--accent);
+  filter: drop-shadow(1px 2px 0 rgba(176, 69, 43, 0.3));
+}
+
+.card.is-selected::before,
+.card.is-focus::before {
+  border-color: rgba(176, 69, 43, 0.5);
 }
 
 .card-head {
@@ -298,7 +326,7 @@ kbd {
 .card-open {
   border: 1px solid var(--line);
   background: var(--surface-press);
-  border-radius: 6px;
+  border-radius: 2px;
   color: var(--ink-soft);
   font-size: 15px;
   line-height: 1;
