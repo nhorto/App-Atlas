@@ -14,7 +14,8 @@ import path from 'node:path';
 import type { AtlasEdge, AtlasNode, FieldInfo } from '../model/types.js';
 import { makeEdgeId, makeFileId, makeTypeId } from '../model/types.js';
 import { hashParts } from '../util/hash.js';
-import type { PrismaSignal, SchemaModel } from './signals.js';
+import type { PrismaSignal, SchemaModel, SqlSchemaSignal } from './signals.js';
+import type { SqlTable } from './sql.js';
 
 export interface SchemaResult {
   nodes: AtlasNode[];
@@ -126,6 +127,145 @@ function tableNode(id: string, fileId: string, table: SchemaModel, signal: Prism
       isExported: true,
       extends: [],
       provider: signal.provider,
+    },
+  };
+}
+
+// --- the same tables, read out of SQL migrations -----------------------------------
+
+export interface SqlSchemaResult {
+  nodes: AtlasNode[];
+  edges: AtlasEdge[];
+  /** Migration files that declared a surviving table — the folder tree hangs these. */
+  filePaths: string[];
+}
+
+/**
+ * SQL-declared tables become the same nodes Prisma tables become. When both sources
+ * declare a table, Prisma wins — `prisma/migrations` is generated *from*
+ * `schema.prisma`, so the SQL copy is an echo, not a second opinion.
+ */
+export function buildSqlSchemaNodes(signal: SqlSchemaSignal | null, prisma: PrismaSignal | null): SqlSchemaResult {
+  const prismaNames = new Set((prisma?.models ?? []).map((model) => model.toLowerCase()));
+  const tables = (signal?.tables ?? []).filter((table) => !prismaNames.has(table.name.toLowerCase()));
+  if (tables.length === 0) return { nodes: [], edges: [], filePaths: [] };
+
+  const nodes: AtlasNode[] = [];
+  const edges: AtlasEdge[] = [];
+
+  const idOf = new Map<string, string>();
+  for (const table of tables) idOf.set(table.name.toLowerCase(), makeTypeId(table.path, table.name));
+  // A foreign key may point at a Prisma-declared table; the edge should land on it.
+  if (prisma) for (const model of prisma.models) idOf.set(model.toLowerCase(), makeTypeId(prisma.path, model));
+
+  // One file node per migration that created a table, so every table has a real
+  // file:line behind it and somewhere to live in the folder tree.
+  const byFile = new Map<string, SqlTable[]>();
+  for (const table of tables) {
+    const list = byFile.get(table.path);
+    if (list) list.push(table);
+    else byFile.set(table.path, [table]);
+  }
+  for (const [filePath, declared] of byFile) nodes.push(sqlFileNode(filePath, declared));
+
+  for (const table of tables) {
+    const fromId = idOf.get(table.name.toLowerCase())!;
+    nodes.push(sqlTableNode(fromId, table));
+
+    for (const field of table.fields) {
+      const targetId = field.relationTo ? idOf.get(field.relationTo.toLowerCase()) : undefined;
+      if (!targetId || targetId === fromId) continue;
+      const id = makeEdgeId('references', fromId, targetId);
+      const existing = edges.find((edge) => edge.id === id);
+      if (existing) {
+        existing.weight++;
+        existing.meta.fields = [...new Set([...(existing.meta.fields as string[]), field.name])];
+        continue;
+      }
+      edges.push({
+        id,
+        kind: 'references',
+        fromId,
+        toId: targetId,
+        weight: 1,
+        // A foreign key constraint. The database enforces it; we merely report it.
+        confidence: 'certain',
+        provenance: 'static',
+        meta: { fields: [field.name] },
+      });
+    }
+  }
+
+  return { nodes, edges, filePaths: [...byFile.keys()] };
+}
+
+function sqlFileNode(filePath: string, declared: SqlTable[]): AtlasNode {
+  const id = makeFileId(filePath);
+  const endLine = Math.max(...declared.map((table) => table.endLine));
+  return {
+    id,
+    kind: 'file',
+    name: path.posix.basename(filePath),
+    label: null,
+    parentId: null, // the orchestrator hangs it off the folder tree like any other file
+    language: 'sql',
+    path: filePath,
+    startLine: 1,
+    endLine,
+    zone: 'data',
+    summary: null,
+    summarySource: null,
+    docHash: null,
+    bodyHash: null,
+    hash: hashParts('sql-schema', filePath, ...declared.map((table) => table.name)),
+    provenance: 'static',
+    meta: {
+      ext: '.sql',
+      loc: endLine,
+      externalImports: [],
+      exportedNames: declared.map((table) => table.name),
+      functionCount: 0,
+      typeCount: declared.length,
+      provider: 'postgresql',
+    },
+  };
+}
+
+function sqlTableNode(id: string, table: SqlTable): AtlasNode {
+  const fields: FieldInfo[] = table.fields.map((field) => ({
+    name: field.name,
+    type: field.type,
+    optional: field.optional,
+    isId: field.isId || undefined,
+    isUnique: field.isUnique || undefined,
+  }));
+  const shape = table.fields.map((field) => `${field.name}:${field.type}`).join(',');
+  const rlsShape = `${table.rlsEnabled}:${table.policies.map((p) => p.name).join(',')}`;
+
+  return {
+    id,
+    kind: 'type',
+    name: table.name,
+    label: null,
+    parentId: makeFileId(table.path),
+    language: 'sql',
+    path: table.path,
+    startLine: table.line,
+    endLine: table.endLine,
+    zone: 'data',
+    summary: table.doc,
+    summarySource: table.doc ? 'docs' : null,
+    docHash: table.doc ? hashParts(table.doc) : null,
+    bodyHash: hashParts(shape),
+    hash: hashParts(table.name, shape, rlsShape),
+    provenance: table.doc ? 'docs' : 'static',
+    meta: {
+      typeKind: 'table',
+      fields,
+      isExported: true,
+      extends: [],
+      provider: 'postgresql',
+      rls: { enabled: table.rlsEnabled, policies: table.policies },
     },
   };
 }

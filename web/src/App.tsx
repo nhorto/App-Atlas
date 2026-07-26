@@ -37,7 +37,7 @@ import {
   onAtlasUpdated,
   setScope,
 } from './api';
-import { layoutLevel, sizeOf, type Positioned } from './layout';
+import { layoutLevel, layoutOutsideWorld, MEMBRANE_ID, sizeOf, type Positioned } from './layout';
 import type {
   AtlasNode,
   BoundaryView,
@@ -50,7 +50,7 @@ import type {
   TypeView,
   Zone,
 } from './types';
-import { AtlasNodeCard, zoneLabel } from './components/AtlasNodeCard';
+import { AtlasNodeCard, MembraneNode, zoneLabel } from './components/AtlasNodeCard';
 import { BoundaryScreen } from './components/BoundaryScreen';
 import { DetailPanel } from './components/DetailPanel';
 import { InsightsScreen } from './components/InsightsScreen';
@@ -59,7 +59,7 @@ import { SearchPalette } from './components/SearchPalette';
 import { TypeScreen } from './components/TypeScreen';
 import { Walkthrough } from './components/Walkthrough';
 
-const nodeTypes = { atlas: AtlasNodeCard };
+const nodeTypes = { atlas: AtlasNodeCard, membrane: MembraneNode };
 
 const ZONES: Zone[] = ['ui', 'api', 'logic', 'data', 'config', 'test'];
 
@@ -231,7 +231,7 @@ function AtlasApp() {
         const laid = await layoutLevel(data.nodes, data.edges);
         if (cancelled) return;
         setLevel(data);
-        setPositions(laid);
+        setPositions(layoutOutsideWorld(laid, data.outside));
         setLoading(false);
       })
       .catch((err: Error) => {
@@ -414,7 +414,7 @@ function AtlasApp() {
 
   const rfNodes: Node[] = useMemo(() => {
     if (!level) return [];
-    return level.nodes.map((node) => {
+    const cards: Node[] = level.nodes.map((node) => {
       const placed = positions.get(node.id);
       const fallback = sizeOf(node);
       return {
@@ -435,11 +435,50 @@ function AtlasApp() {
         height: placed?.height ?? fallback.height,
       } satisfies Node;
     });
+
+    // The outside world: a dashed membrane past the rightmost card, then a ghost
+    // card per store/service/endpoint this level talks to. Ghosts keep their real
+    // atlas ids, so clicking one opens the same detail panel as the real thing.
+    const membrane = positions.get(MEMBRANE_ID);
+    if (level.outside.length > 0 && membrane) {
+      cards.push({
+        id: MEMBRANE_ID,
+        type: 'membrane',
+        position: { x: membrane.x, y: membrane.y },
+        data: {},
+        width: membrane.width,
+        height: membrane.height,
+        selectable: false,
+        draggable: false,
+        focusable: false,
+      } satisfies Node);
+
+      for (const neighbor of level.outside) {
+        const placed = positions.get(neighbor.node.id);
+        if (!placed) continue;
+        cards.push({
+          id: neighbor.node.id,
+          type: 'atlas',
+          position: { x: placed.x, y: placed.y },
+          data: {
+            node: { ...neighbor.node, childCount: 0, drillable: false, outsideIn: 0, outsideOut: 0, preview: [] },
+            dim: litIds ? !litIds.has(neighbor.node.id) : false,
+            focus: neighbor.node.id === selectedId,
+            ghost: true,
+            onDrill: drill,
+          },
+          selected: neighbor.node.id === selectedId,
+          width: placed.width,
+          height: placed.height,
+        } satisfies Node);
+      }
+    }
+    return cards;
   }, [level, positions, litIds, selectedId, drill]);
 
   const rfEdges: Edge[] = useMemo(() => {
     if (!level) return [];
-    return level.edges.map((edge) => {
+    const drawn: Edge[] = level.edges.map((edge) => {
       const touchesSelection = selectedId === edge.fromId || selectedId === edge.toId;
       const opacity = selectedId ? (touchesSelection ? 0.95 : 0.06) : 0.32;
       const width = Math.min(5, 1 + Math.log2(edge.weight + 1));
@@ -463,6 +502,37 @@ function AtlasApp() {
         },
       } satisfies Edge;
     });
+
+    // Flows across the membrane. Dashed where the internal edges are solid: the
+    // difference between "these two files talk" and "this one leaves the building".
+    for (const neighbor of level.outside) {
+      for (const flow of neighbor.flows) {
+        const touchesSelection = selectedId === flow.insideId || selectedId === neighbor.node.id;
+        const opacity = selectedId ? (touchesSelection ? 0.95 : 0.06) : 0.45;
+        const width = Math.min(5, 1 + Math.log2(flow.weight + 1));
+        drawn.push({
+          id: `membrane:${flow.out ? 'out' : 'in'}:${flow.insideId}->${neighbor.node.id}`,
+          source: flow.out ? flow.insideId : neighbor.node.id,
+          target: flow.out ? neighbor.node.id : flow.insideId,
+          label: touchesSelection && flow.weight > 1 ? String(flow.weight) : undefined,
+          labelBgStyle: { fill: '#f4f1e9' },
+          labelStyle: { fontSize: 11, fill: '#5f594b' },
+          style: {
+            stroke: touchesSelection ? '#4a4436' : '#a89f8b',
+            strokeWidth: touchesSelection ? Math.max(1.6, width) : width,
+            strokeDasharray: '7 5',
+            opacity,
+          },
+          markerEnd: {
+            type: MarkerType.ArrowClosed,
+            width: 14,
+            height: 14,
+            color: touchesSelection ? '#4a4436' : '#a89f8b',
+          },
+        } satisfies Edge);
+      }
+    }
+    return drawn;
   }, [level, selectedId]);
 
   if (error) {
@@ -518,23 +588,7 @@ function AtlasApp() {
           </label>
         ) : null}
 
-        {view === 'map' ? (
-          <nav className="crumbs" aria-label="Breadcrumb">
-            {crumbs.map((crumb: AtlasNode, index) => (
-              <span key={crumb.id}>
-                {index > 0 ? <span className="crumb-sep">›</span> : null}
-                <button
-                  className={index === crumbs.length - 1 ? 'crumb is-current' : 'crumb'}
-                  onClick={() => drill(crumb.id)}
-                >
-                  {crumb.label ?? crumb.name}
-                </button>
-              </span>
-            ))}
-          </nav>
-        ) : (
-          <span className="topbar-title">{overview?.meta.name ?? ''}</span>
-        )}
+        <span className="topbar-title">{overview?.meta.name ?? ''}</span>
 
         <div className="topbar-right">
           {justUpdated ? <span className="live-badge">code changed · updated</span> : null}
@@ -600,6 +654,24 @@ function AtlasApp() {
 
         {view === 'map' ? (
           <>
+            {/* The path you drilled, drawn on the map it describes. It used to live in
+                the top chrome, where it read as decoration and nobody found it — where
+                you are belongs on the picture, not in the corner of the frame. */}
+            {crumbs.length > 0 ? (
+              <nav className="map-crumbs" aria-label="Where you are in the map">
+                {crumbs.map((crumb: AtlasNode, index) => (
+                  <span key={crumb.id}>
+                    {index > 0 ? <span className="crumb-sep">›</span> : null}
+                    <button
+                      className={index === crumbs.length - 1 ? 'crumb is-current' : 'crumb'}
+                      onClick={() => drill(crumb.id)}
+                    >
+                      {crumb.label ?? crumb.name}
+                    </button>
+                  </span>
+                ))}
+              </nav>
+            ) : null}
             {loading ? <div className="loading">Drawing the map…</div> : null}
             {!loading && level && level.nodes.length === 0 ? (
               <div className="loading">Nothing inside this one.</div>

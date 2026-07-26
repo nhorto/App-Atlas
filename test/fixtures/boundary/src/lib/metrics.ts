@@ -13,3 +13,8 @@ export async function topPages(): Promise<unknown[]> {
   const { data } = await supabase.from('page_views').select('*').limit(10);
   return data ?? [];
 }
+
+/** Client-side errors land in a table no migration has caught up with yet. */
+export async function recordClientError(message: string): Promise<void> {
+  await supabase.from('client_errors').insert({ message, at: new Date().toISOString() });
+}

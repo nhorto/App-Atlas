@@ -219,6 +219,7 @@ function detectFrameworks(pkg: Record<string, unknown> | null, signals: ProjectS
   // and whether anything is scheduled.
   if (signals.nextAppDir) out.add('Next.js App Router');
   if (signals.nextPagesDir && !signals.nextAppDir) out.add('Next.js Pages Router');
+  if (signals.expoRouterDir) out.add('Expo Router');
   if (signals.crons.length > 0) out.add('Vercel Cron');
   for (const [dep, label] of Object.entries(PYTHON_FRAMEWORKS)) {
     if (signals.pythonPackages.has(dep)) out.add(label);

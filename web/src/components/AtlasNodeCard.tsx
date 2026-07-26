@@ -19,11 +19,13 @@ export interface AtlasCardData extends Record<string, unknown> {
   node: LevelNode;
   dim: boolean;
   focus: boolean;
+  /** Drawn beyond the membrane: the outside world, not a child of this level. */
+  ghost?: boolean;
   onDrill: (id: string) => void;
 }
 
 export function AtlasNodeCard({ data, selected }: NodeProps) {
-  const { node, dim, focus, onDrill } = data as unknown as AtlasCardData;
+  const { node, dim, focus, ghost, onDrill } = data as unknown as AtlasCardData;
   const classes = [
     'card',
     `card-${node.kind}`,
@@ -31,6 +33,7 @@ export function AtlasNodeCard({ data, selected }: NodeProps) {
     dim ? 'is-dim' : '',
     focus ? 'is-focus' : '',
     selected ? 'is-selected' : '',
+    ghost ? 'is-outside' : '',
   ]
     .filter(Boolean)
     .join(' ');
@@ -208,6 +211,7 @@ function subtitle(node: LevelNode): string {
     case 'endpoint': {
       const meta = node.meta as unknown as EndpointMeta;
       if (meta.endpointKind === 'env') return `${meta.vars?.length ?? 0} variables`;
+      if (meta.endpointKind === 'screen') return `${meta.framework} · screen`;
       if (meta.schedule) return `${meta.framework} · ${meta.schedule}`;
       return `${meta.framework} · ${meta.sites.length} ${meta.sites.length === 1 ? 'place' : 'places'}`;
     }
@@ -243,4 +247,17 @@ export function zoneLabel(zone: string): string {
     default:
       return 'Other';
   }
+}
+
+/**
+ * The dashed line where the app ends. Everything past it is someone else's
+ * computer. Rendered as an ordinary React Flow node so it pans and zooms with the
+ * picture instead of floating over it.
+ */
+export function MembraneNode() {
+  return (
+    <div className="membrane" aria-hidden="true">
+      <span className="membrane-label">where your app ends</span>
+    </div>
+  );
 }

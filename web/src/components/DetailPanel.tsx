@@ -105,6 +105,12 @@ export function DetailPanel({ detail, overview, aiEnabled, tour, onReveal, onDri
         </Section>
       ) : null}
 
+      {detail.typesUsed.length > 0 ? (
+        <Section title={`Types used (${detail.typesUsed.length})`} hint="The shapes of data it works with">
+          <TypesUsed types={detail.typesUsed} onReveal={onReveal} />
+        </Section>
+      ) : null}
+
       {detail.outgoing.length > 0 ? (
         <Section title={`Uses (${detail.outgoingTotal})`} hint="Things this depends on">
           <NeighborList links={detail.outgoing} onReveal={onReveal} />
@@ -345,6 +351,36 @@ function NeighborList({ links, onReveal }: { links: NodeView['outgoing']; onReve
       ))}
     </ul>
   );
+}
+
+/**
+ * The types a file or function is built around, as chips you can click through to.
+ * Deliberately separate from the "uses" list: a reader asking "what shape is the data
+ * here?" should not have to hunt for the types among ordinary function calls.
+ */
+function TypesUsed({ types, onReveal }: { types: AtlasNode[]; onReveal: (id: string) => void }) {
+  return (
+    <ul className="type-chips">
+      {types.map((type) => {
+        const fields = ((type.meta.fields as FieldInfo[] | undefined) ?? []).length;
+        return (
+          <li key={type.id}>
+            <button className={`type-chip zone-${type.zone}`} onClick={() => onReveal(type.id)} title={type.path ?? type.name}>
+              <span className="type-chip-glyph">⬡</span>
+              <span className="type-chip-name">{type.name}</span>
+              <span className="type-chip-note">{typeChipNote(type, fields)}</span>
+            </button>
+          </li>
+        );
+      })}
+    </ul>
+  );
+}
+
+function typeChipNote(type: AtlasNode, fields: number): string {
+  const kind = String(type.meta.typeKind ?? 'type');
+  if (fields > 0) return `${kind} · ${fields}`;
+  return kind;
 }
 
 function Section({ title, hint, children }: { title: string; hint?: string; children: ReactNode }) {

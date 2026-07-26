@@ -53,7 +53,11 @@ export type EndpointKind =
   | 'realtime'
   | 'cli'
   | 'env'
-  | 'file-read';
+  | 'file-read'
+  // A screen in a file-routed native/web app (Expo Router, React Navigation file
+  // routes). A way a *person* gets in, not a network door — deliberately kept out of
+  // the auth-coverage count so it never dilutes the routes a stranger can reach.
+  | 'screen';
 
 /** What a third party does for you — drives the grouping in the boundary view. */
 export type ServiceCategory =
@@ -132,6 +136,28 @@ export interface TypeMeta {
   extends: string[];
   /** Tables only: `postgresql`, `mysql`, `sqlite`… */
   provider?: string;
+  /** Tables only: named in queries but declared nowhere, so the columns are unknown. */
+  observed?: boolean;
+  /**
+   * Tables from SQL migrations only: row-level security, as the migrations state it.
+   * Absent means the migrations said nothing — which is *unknown*, not "off"; a table
+   * created in a dashboard may well be protected by policies we never saw.
+   */
+  rls?: TableRlsInfo;
+}
+
+/** What the migrations say protects a table's rows. */
+export interface TableRlsInfo {
+  enabled: boolean;
+  policies: TablePolicyInfo[];
+}
+
+export interface TablePolicyInfo {
+  name: string;
+  /** `select` | `insert` | `update` | `delete` | `all`. */
+  command: string;
+  path: string;
+  line: number;
 }
 
 /** meta for kind === 'module' */

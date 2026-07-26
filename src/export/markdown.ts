@@ -153,7 +153,10 @@ export function renderAtlasMarkdown(graph: AtlasGraph, options: MarkdownOptions 
     out.push('## Database tables');
     out.push('');
     for (const table of tables) {
-      out.push(`- **${table.name}** — ${table.fields.map((field) => `${field.name}: ${field.type}`).join(', ')}`);
+      // A table found only by name in a query has no columns to list. Say so, rather
+      // than trailing off after the dash as though the row were still being written.
+      const columns = table.fields.map((field) => `${field.name}: ${field.type}`).join(', ');
+      out.push(`- **${table.name}** — ${columns || 'columns unknown'}`);
     }
     out.push('');
   }

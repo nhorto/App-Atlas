@@ -14,7 +14,7 @@ import { buildBoundaryGraph } from './boundaries/build.js';
 import type { BoundaryFinding } from './boundaries/types.js';
 import { AnalysisCache, fingerprintProject } from './cache.js';
 import { buildModuleTree } from './modules.js';
-import { buildSchemaNodes } from './schema.js';
+import { buildSchemaNodes, buildSqlSchemaNodes } from './schema.js';
 import type { FileSlice, LanguagePlugin } from './plugin.js';
 import { discoverProject } from './project.js';
 import type { ProjectInfo } from './project.js';
@@ -150,6 +150,9 @@ export async function analyzeProject(rootDir: string, options: AnalyzeOptions = 
   const schema = buildSchemaNodes(project.signals.prisma);
   nodes.push(...schema.nodes);
   edges.push(...schema.edges);
+  const sqlSchema = buildSqlSchemaNodes(project.signals.sqlSchema, project.signals.prisma);
+  nodes.push(...sqlSchema.nodes);
+  edges.push(...sqlSchema.edges);
 
   // --- boundaries ---
   // Merged once across every language, so a Python route and a TypeScript route land
@@ -169,6 +172,7 @@ export async function analyzeProject(rootDir: string, options: AnalyzeOptions = 
   options.onProgress?.('Building the map', 0, 1);
   const treeFiles = project.files.map((f) => ({ relPath: f.relPath, zone: f.zone as Zone }));
   if (schema.filePath) treeFiles.push({ relPath: schema.filePath, zone: 'data' });
+  for (const relPath of sqlSchema.filePaths) treeFiles.push({ relPath, zone: 'data' });
   const { modules, parentForFile } = buildModuleTree(treeFiles, appId);
   nodes.push(...modules);
 

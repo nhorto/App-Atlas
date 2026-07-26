@@ -20,6 +20,7 @@ import type {
   GuardInfo,
   ServiceMeta,
   StoreMeta,
+  TypeMeta,
 } from './types.js';
 import type { AtlasGraph } from './graph.js';
 
@@ -64,6 +65,29 @@ export interface StoreInsight {
 
 export interface EnvInsight extends EnvVarInfo {}
 
+/**
+ * One table, and what the migrations say protects its rows.
+ *
+ * `rls: null` is *unknown*, not "off" — a table created in a dashboard may be fully
+ * protected by policies no migration ever recorded. Claiming it was open would be
+ * the badge equivalent of rounding up.
+ */
+export interface TableProtectionInsight {
+  /** The type node, so the panel can reveal it. */
+  id: string;
+  name: string;
+  /** Whether a schema source declared it, or the code's queries merely named it. */
+  declared: boolean;
+  rls: {
+    enabled: boolean;
+    policyCount: number;
+    /** Distinct commands the policies cover: `select`, `insert`… */
+    commands: string[];
+  } | null;
+  path: string | null;
+  line: number | null;
+}
+
 export interface InsightsView {
   auth: {
     total: number;
@@ -75,6 +99,16 @@ export interface InsightsView {
   };
   services: ServiceInsight[];
   stores: StoreInsight[];
+  /** Row-level security per table, when SQL migrations are there to read. */
+  tables: {
+    total: number;
+    /** Declared with row security off — the row that deserves the reader's eye. */
+    unprotected: number;
+    /** RLS enabled but not one policy: every request is denied. Usually a mistake. */
+    locked: number;
+    unknown: number;
+    list: TableProtectionInsight[];
+  };
   env: {
     exampleFile: string | null;
     total: number;
@@ -126,7 +160,49 @@ export function buildInsights(graph: AtlasGraph): InsightsView {
     },
     services: buildServices(graph),
     stores: buildStores(graph),
+    tables: buildTableProtection(graph),
     env: buildEnv(envMeta),
+  };
+}
+
+/**
+ * Row-level security, table by table. On a Supabase-style app the browser talks to
+ * Postgres directly with a published key, so RLS is not a database detail — it is
+ * the auth model, and a table without it is an open route by another name.
+ */
+function buildTableProtection(graph: AtlasGraph): InsightsView['tables'] {
+  const list: TableProtectionInsight[] = [];
+  for (const node of graph.nodesOfKind('type')) {
+    const meta = node.meta as unknown as TypeMeta;
+    if (meta.typeKind !== 'table') continue;
+    const rls = meta.rls
+      ? {
+          enabled: meta.rls.enabled,
+          policyCount: meta.rls.policies.length,
+          commands: [...new Set(meta.rls.policies.map((policy) => policy.command))],
+        }
+      : null;
+    list.push({
+      id: node.id,
+      name: node.name,
+      declared: meta.observed !== true,
+      rls,
+      path: node.path,
+      line: node.startLine,
+    });
+  }
+
+  // Problems first: no row security, then locked-out tables, then the unknowns.
+  const rank = (table: TableProtectionInsight) =>
+    table.rls === null ? 2 : !table.rls.enabled ? 0 : table.rls.policyCount === 0 ? 1 : 3;
+  list.sort((a, b) => rank(a) - rank(b) || a.name.localeCompare(b.name));
+
+  return {
+    total: list.length,
+    unprotected: list.filter((table) => rank(table) === 0).length,
+    locked: list.filter((table) => rank(table) === 1).length,
+    unknown: list.filter((table) => table.rls === null).length,
+    list,
   };
 }
 

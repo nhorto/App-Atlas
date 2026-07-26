@@ -123,15 +123,26 @@
 .boundary-scroll {
   flex: 1;
   display: flex;
-  justify-content: center;
-  align-items: center;
   overflow: auto;
   padding: 8px 0;
 }
 
-.boundary-stage {
+/* `margin: auto` centres the picture while it fits and collapses to zero when it does
+   not. Centring with `justify-content` instead overflows equally into both ends, and
+   the half that spills past the start edge is unreachable — no scrollbar reaches it. */
+.boundary-fit {
   position: relative;
   flex: none;
+  margin: auto;
+}
+
+/* Scaled from the top-left so the wrapper's reserved box and the painted picture
+   start at the same point; the wrapper carries the scaled size. */
+.boundary-stage {
+  position: absolute;
+  top: 0;
+  left: 0;
+  transform-origin: top left;
 }
 
 .boundary-bands {

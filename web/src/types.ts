@@ -40,7 +40,8 @@ export type EndpointKind =
   | 'realtime'
   | 'cli'
   | 'env'
-  | 'file-read';
+  | 'file-read'
+  | 'screen';
 
 export type ServiceCategory =
   | 'payments'
@@ -173,12 +174,28 @@ export interface LevelEdge {
   kinds: EdgeKind[];
 }
 
+/** One flow crossing the app's boundary at this level. */
+export interface OutsideFlow {
+  insideId: string;
+  weight: number;
+  /** True when the inside node calls out; false when the outside world calls in. */
+  out: boolean;
+}
+
+/** A store, service or endpoint this level talks to, drawn beyond the boundary line. */
+export interface OutsideNeighbor {
+  node: AtlasNode;
+  flows: OutsideFlow[];
+  total: number;
+}
+
 export interface LevelView {
   levelId: string;
   self: AtlasNode | null;
   breadcrumb: AtlasNode[];
   nodes: LevelNode[];
   edges: LevelEdge[];
+  outside: OutsideNeighbor[];
   truncated: boolean;
   totalChildren: number;
 }
@@ -197,6 +214,8 @@ export interface NodeView {
   outgoing: NeighborLink[];
   incomingTotal: number;
   outgoingTotal: number;
+  /** The types this node names — the shapes of the data it works with. */
+  typesUsed: AtlasNode[];
 }
 
 export interface AtlasStats {
@@ -416,6 +435,20 @@ export interface StoreInsight {
   writes: number;
 }
 
+/** One table and what the migrations say protects its rows. `rls: null` is unknown, not "off". */
+export interface TableProtectionInsight {
+  id: string;
+  name: string;
+  declared: boolean;
+  rls: {
+    enabled: boolean;
+    policyCount: number;
+    commands: string[];
+  } | null;
+  path: string | null;
+  line: number | null;
+}
+
 export interface InsightsView {
   auth: {
     total: number;
@@ -426,6 +459,13 @@ export interface InsightsView {
   };
   services: ServiceInsight[];
   stores: StoreInsight[];
+  tables: {
+    total: number;
+    unprotected: number;
+    locked: number;
+    unknown: number;
+    list: TableProtectionInsight[];
+  };
   env: {
     exampleFile: string | null;
     total: number;

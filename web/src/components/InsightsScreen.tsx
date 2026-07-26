@@ -17,13 +17,14 @@ interface Props {
 }
 
 export function InsightsScreen({ insights, onReveal }: Props) {
-  const { auth, services, stores, env } = insights;
+  const { auth, services, stores, tables, env } = insights;
 
   return (
     <div className="insights">
       <AuthCoverage auth={auth} onReveal={onReveal} />
       <ExternalServices services={services} onReveal={onReveal} />
       <DataStores stores={stores} onReveal={onReveal} />
+      <TableProtection tables={tables} onReveal={onReveal} />
       <EnvInventory env={env} />
       <p className="insights-foot">
         Everything on this page is derived from your code by the compiler. Nothing here was generated or guessed.
@@ -204,6 +205,73 @@ function DataStores({ stores, onReveal }: { stores: InsightsView['stores']; onRe
           </li>
         ))}
       </ul>
+    </Card>
+  );
+}
+
+/**
+ * Row-level security, table by table. Shown only when the migrations actually said
+ * something — a page of "unknown" would be noise wearing a badge. Tables the code
+ * merely queries are summarised in one honest sentence instead of being rounded
+ * up to "unprotected".
+ */
+function TableProtection({ tables, onReveal }: { tables: InsightsView['tables']; onReveal: (id: string) => void }) {
+  const stated = tables.list.filter((table) => table.rls !== null);
+  if (stated.length === 0) return null;
+
+  return (
+    <Card
+      title="Who can touch your data"
+      subtitle={`${stated.length} of ${tables.total} tables have their row security written in migrations`}
+    >
+      {tables.unprotected > 0 ? (
+        <p className="note note-warn">
+          {tables.unprotected} {tables.unprotected === 1 ? 'table has' : 'tables have'} row-level security switched
+          off. If this database is reached with a published client key, those rows are open to whoever holds it.
+        </p>
+      ) : tables.locked > 0 ? (
+        <p className="note note-warn">
+          {tables.locked} {tables.locked === 1 ? 'table has' : 'tables have'} row security enabled but not a single
+          policy — every request is denied. Usually a migration half-finished.
+        </p>
+      ) : (
+        <p className="note note-ok">
+          Every table the migrations declare has row-level security on, with at least one policy.
+        </p>
+      )}
+
+      <ul className="service-list">
+        {stated.map((table) => (
+          <li key={table.id}>
+            <button onClick={() => onReveal(table.id)}>
+              <span className="service-name">{table.name}</span>
+              {table.rls!.enabled ? (
+                table.rls!.policyCount === 0 ? (
+                  <span className="tag tag-send">locked · no policies</span>
+                ) : (
+                  <span className="tag">RLS on</span>
+                )
+              ) : (
+                <span className="tag tag-send">no row security</span>
+              )}
+              <span className="service-count">
+                {table.rls!.policyCount === 0
+                  ? 'no policies'
+                  : `${table.rls!.policyCount} ${table.rls!.policyCount === 1 ? 'policy' : 'policies'} · ${table
+                      .rls!.commands.join(', ')}`}
+              </span>
+            </button>
+            {table.path ? <span className="service-evidence">{table.path}</span> : null}
+          </li>
+        ))}
+      </ul>
+
+      {tables.unknown > 0 ? (
+        <p className="muted">
+          …and {tables.unknown} more {tables.unknown === 1 ? 'table' : 'tables'} seen only in queries — their
+          protection lives in the database, not in this repo, so nothing is claimed either way.
+        </p>
+      ) : null}
     </Card>
   );
 }

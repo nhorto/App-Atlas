@@ -11,6 +11,7 @@
  */
 import fs from 'node:fs';
 import path from 'node:path';
+import { parseSqlMigrations, type SqlPolicy, type SqlTable } from './sql.js';
 
 export interface CronSignal {
   schedule: string;
@@ -53,6 +54,15 @@ export interface PrismaSignal {
   lineCount: number;
 }
 
+/** Tables read out of SQL migration files — the schema, for projects without Prisma. */
+export interface SqlSchemaSignal {
+  tables: SqlTable[];
+  /** Policies on tables no migration created (`storage.objects` on Supabase). */
+  orphanPolicies: SqlPolicy[];
+  /** Every migration file read, repo-relative, in the order applied. */
+  files: string[];
+}
+
 export interface ProjectSignals {
   /** Every declared dependency, dev included — used to gate framework detectors. */
   packages: Set<string>;
@@ -68,8 +78,11 @@ export interface ProjectSignals {
   nextAppDir: string | null;
   /** Repo-relative directory of the Next.js Pages Router, if there is one. */
   nextPagesDir: string | null;
+  /** Repo-relative directory Expo Router treats as the route tree, if there is one. */
+  expoRouterDir: string | null;
   crons: CronSignal[];
   prisma: PrismaSignal | null;
+  sqlSchema: SqlSchemaSignal | null;
   /** Variable names documented in `.env.example` and friends. */
   envExample: Set<string>;
   envExamplePath: string | null;
@@ -77,15 +90,76 @@ export interface ProjectSignals {
 
 export function readSignals(root: string, packageJson: Record<string, unknown> | null): ProjectSignals {
   const packages = readPackages(packageJson);
+  const prisma = readPrismaSchema(root);
   return {
     packages,
     nextAppDir: packages.has('next') ? firstExistingDir(root, ['app', 'src/app']) : null,
     nextPagesDir: packages.has('next') ? firstExistingDir(root, ['pages', 'src/pages']) : null,
+    // Expo Router owns `app/` the same way Next's App Router does, but declares itself
+    // through the dependency rather than a config file. Same candidate dirs.
+    expoRouterDir: packages.has('expo-router') ? firstExistingDir(root, ['app', 'src/app']) : null,
     crons: readVercelCrons(root),
-    prisma: readPrismaSchema(root),
+    prisma,
+    // When Prisma is present its migrations are generated from schema.prisma, so
+    // reading both would declare every table twice.
+    sqlSchema: readSqlSchema(root, prisma !== null),
     ...readPythonPackages(root),
     ...readEnvExample(root),
   };
+}
+
+/** The migration folders projects actually use. Checked, not globbed — a glob over an
+ * unknown repo can wander into gigabytes of vendored code for three .sql files. */
+const MIGRATION_DIRS = [
+  'supabase/migrations',
+  'migrations',
+  'db/migrations',
+  'database/migrations',
+  'sql/migrations',
+  'drizzle',
+  'drizzle/migrations',
+  'prisma/migrations',
+];
+
+const MAX_MIGRATION_FILES = 400;
+
+/**
+ * Reads the schema out of SQL migrations, replayed in filename order — which is
+ * application order, because every migration tool timestamps its filenames precisely
+ * so that lexical order is run order.
+ */
+export function readSqlSchema(root: string, hasPrisma: boolean): SqlSchemaSignal | null {
+  const files: { path: string; text: string }[] = [];
+  for (const dir of MIGRATION_DIRS) {
+    if (hasPrisma && dir === 'prisma/migrations') continue;
+    const abs = path.join(root, dir);
+    let entries: fs.Dirent[];
+    try {
+      entries = fs.readdirSync(abs, { withFileTypes: true, recursive: true });
+    } catch {
+      continue;
+    }
+    const sqlFiles = entries
+      .filter((e) => e.isFile() && e.name.endsWith('.sql'))
+      .map((e) => path.join(e.parentPath, e.name))
+      .sort()
+      .slice(0, MAX_MIGRATION_FILES);
+    for (const absFile of sqlFiles) {
+      try {
+        files.push({
+          path: path.relative(root, absFile).split(path.sep).join('/'),
+          text: fs.readFileSync(absFile, 'utf8'),
+        });
+      } catch {
+        // A single unreadable migration must not cost the rest of the schema.
+      }
+    }
+  }
+  if (files.length === 0) return null;
+
+  const parsed = parseSqlMigrations(files);
+  if (parsed.tables.length === 0 && parsed.orphanPolicies.length === 0) return null;
+  return { tables: parsed.tables, orphanPolicies: parsed.orphanPolicies, files: files.map((f) => f.path) };
 }
 
 /**

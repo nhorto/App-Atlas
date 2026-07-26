@@ -56,6 +56,24 @@ export interface BuildInput {
 /** Names that look like a credential rather than a setting. */
 const SECRET_PATTERN = /(secret|token|key|password|passwd|credential|private|dsn|auth|salt|signature|webhook)/i;
 
+/**
+ * Prefixes a build tool inlines into the client bundle on purpose. A variable named
+ * this way is shipped to every browser that loads the app, so whatever else it is, it
+ * is not a secret — `NEXT_PUBLIC_SUPABASE_ANON_KEY` matches SECRET_PATTERN on "key"
+ * but is published by design.
+ *
+ * Badging those as secrets is not a harmless over-warning: a list where most rows are
+ * false teaches the reader to skim past the one row that is real.
+ */
+const PUBLIC_ENV_PREFIX =
+  /^(NEXT_PUBLIC_|EXPO_PUBLIC_|VITE_|REACT_APP_|GATSBY_|NUXT_PUBLIC_|VUE_APP_|STORYBOOK_|PUBLIC_)/;
+
+/** Whether a variable name should be treated as holding a credential. */
+function isSecretName(name: string): boolean {
+  if (PUBLIC_ENV_PREFIX.test(name)) return false;
+  return SECRET_PATTERN.test(name);
+}
+
 export function buildBoundaryGraph(input: BuildInput): BoundaryGraph {
   const nodes: AtlasNode[] = [];
   const edges: AtlasEdge[] = [];
@@ -85,7 +103,17 @@ export function buildBoundaryGraph(input: BuildInput): BoundaryGraph {
     addEdges(edges, flowEdges(service.id, service.meta.sites, service.writes, input.knownNodeIds));
   }
   // Every table a schema file declares already has a proper card, columns and all.
-  const declaredTables = new Set((input.signals.prisma?.models ?? []).map((model) => model.toLowerCase()));
+  // Queries naming a declared table still count: their edges are pointed at the
+  // declared card, so "used in N places" stays true instead of resetting to zero the
+  // day a migration finally writes the table down.
+  const declaredTableIds = new Map<string, string>();
+  const prisma = input.signals.prisma;
+  if (prisma) for (const model of prisma.models) declaredTableIds.set(model.toLowerCase(), makeTypeId(prisma.path, model));
+  for (const table of input.signals.sqlSchema?.tables ?? []) {
+    if (!declaredTableIds.has(table.name.toLowerCase())) {
+      declaredTableIds.set(table.name.toLowerCase(), makeTypeId(table.path, table.name));
+    }
+  }
 
   for (const store of stores.values()) {
     nodes.push(storeNode(store));
@@ -97,11 +125,12 @@ export function buildBoundaryGraph(input: BuildInput): BoundaryGraph {
     // draw. Columns are unknowable from here, so the card says so instead of lying.
     if (store.meta.storeKind !== 'sql' && store.meta.storeKind !== 'nosql') continue;
     for (const [table, sites] of store.tableSites) {
-      if (declaredTables.has(table.toLowerCase())) continue;
-      nodes.push(observedTableNode(store, table, sites));
+      const declaredId = declaredTableIds.get(table.toLowerCase());
+      const tableId = declaredId ?? makeTypeId(store.id, table);
+      if (!declaredId) nodes.push(observedTableNode(store, table, sites));
       addEdges(
         edges,
-        flowEdges(makeTypeId(store.id, table), sites, false, input.knownNodeIds).map((edge) => ({
+        flowEdges(tableId, sites, false, input.knownNodeIds).map((edge) => ({
           ...edge,
           kind: 'references' as const,
         })),
@@ -322,7 +351,7 @@ function collectEnv(input: BuildInput): MergedEndpoint | null {
       name,
       sites: sites.sort(compareSites),
       documented: input.signals.envExample.has(name),
-      secret: SECRET_PATTERN.test(name),
+      secret: isSecretName(name),
     }))
     .sort((a, b) => a.name.localeCompare(b.name));
 
@@ -499,6 +528,8 @@ const ENDPOINT_ZONES: Record<EndpointKind, Zone> = {
   cli: 'config',
   env: 'config',
   'file-read': 'data',
+  // A screen is the interface, so it colours as UI rather than as a network door.
+  screen: 'ui',
 };
 
 function endpointNode(endpoint: MergedEndpoint): AtlasNode {

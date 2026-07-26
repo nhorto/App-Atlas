@@ -131,12 +131,12 @@ test('reads the database out of the client and the schema', () => {
 
   const supabase = stores.find((n) => n.meta.client === 'Supabase');
   assert.ok(supabase);
-  assert.deepEqual(supabase.meta.tables, ['page_views'], 'the table name is read out of the query');
+  assert.deepEqual(supabase.meta.tables, ['client_errors', 'page_views'], 'table names read out of the queries');
 });
 
 test('a table named only in queries still becomes a shape', () => {
-  const observed = atlas.nodes.find((n) => n.kind === 'type' && n.name === 'page_views');
-  assert.ok(observed, 'no schema declares page_views; the .from() call is the evidence');
+  const observed = atlas.nodes.find((n) => n.kind === 'type' && n.name === 'client_errors');
+  assert.ok(observed, 'no schema declares client_errors; the .from() call is the evidence');
   assert.equal(observed.meta.typeKind, 'table');
   assert.equal(observed.meta.observed, true);
   assert.deepEqual(observed.meta.fields, [], 'columns are unknowable, and the card must not invent them');
@@ -172,20 +172,43 @@ test('names the companies data goes to, from SDKs and from literal URLs', () => 
 
 test('inventories every environment variable and checks it against .env.example', () => {
   assert.equal(insights.env.exampleFile, '.env.example');
-  assert.deepEqual(
-    insights.env.vars.map((v) => v.name).sort(),
-    ['RESEND_API_KEY', 'STRIPE_SECRET_KEY', 'STRIPE_WEBHOOK_SECRET', 'SUPABASE_ANON_KEY', 'SUPABASE_URL'],
-  );
-  assert.deepEqual(
-    insights.env.undocumented.map((v) => v.name).sort(),
-    ['RESEND_API_KEY', 'STRIPE_WEBHOOK_SECRET', 'SUPABASE_ANON_KEY', 'SUPABASE_URL'],
-  );
+  assert.deepEqual(insights.env.vars.map((v) => v.name).sort(), [
+    'NEXT_PUBLIC_APP_URL',
+    'NEXT_PUBLIC_SUPABASE_ANON_KEY',
+    'RESEND_API_KEY',
+    'STRIPE_SECRET_KEY',
+    'STRIPE_WEBHOOK_SECRET',
+    'SUPABASE_ANON_KEY',
+    'SUPABASE_URL',
+  ]);
+  assert.deepEqual(insights.env.undocumented.map((v) => v.name).sort(), [
+    'NEXT_PUBLIC_SUPABASE_ANON_KEY',
+    'RESEND_API_KEY',
+    'STRIPE_WEBHOOK_SECRET',
+    'SUPABASE_ANON_KEY',
+    'SUPABASE_URL',
+  ]);
   const url = insights.env.vars.find((v) => v.name === 'SUPABASE_URL');
   assert.equal(url.secret, false, 'a URL is a setting, not a credential');
   const anonKey = insights.env.vars.find((v) => v.name === 'SUPABASE_ANON_KEY');
   assert.equal(anonKey.secret, true);
   const resendKey = insights.env.vars.find((v) => v.name === 'RESEND_API_KEY');
   assert.equal(resendKey.sites[0].path, 'src/lib/email.ts');
+});
+
+test('a variable the build tool publishes on purpose is not a secret', () => {
+  // Every one of these trips the credential word-list on "key", and every one is
+  // compiled into the client bundle by design. A secrets list that cries wolf on the
+  // normal case teaches people to skim past the row that is real.
+  const publicKey = insights.env.vars.find((v) => v.name === 'NEXT_PUBLIC_SUPABASE_ANON_KEY');
+  assert.equal(publicKey.secret, false, 'NEXT_PUBLIC_* is inlined into the browser bundle');
+
+  // Still inventoried, and still flagged as missing from .env.example — not a secret
+  // is not the same as not worth writing down.
+  assert.ok(insights.env.undocumented.some((v) => v.name === 'NEXT_PUBLIC_SUPABASE_ANON_KEY'));
+
+  // The unprefixed twin, read on the server, keeps its badge.
+  assert.equal(insights.env.vars.find((v) => v.name === 'SUPABASE_ANON_KEY').secret, true);
 });
 
 test('hangs every boundary off the two containers, with edges that land somewhere real', () => {
@@ -233,7 +256,7 @@ test('counts the boundary in the headline stats', () => {
   assert.equal(s.endpoints, endpoints.length);
   assert.equal(s.stores, 2);
   assert.equal(s.externalServices, 4);
-  assert.equal(s.envVars, 5);
+  assert.equal(s.envVars, 7);
   // Crons and config are not doors a stranger can knock on.
   assert.equal(s.routes, insights.auth.routes.length);
   assert.equal(s.unprotectedRoutes, insights.auth.openCount);
@@ -242,4 +265,73 @@ test('counts the boundary in the headline stats', () => {
 test('detects the frameworks from config files, not only package.json', () => {
   assert.ok(atlas.meta.frameworks.includes('Next.js App Router'));
   assert.ok(atlas.meta.frameworks.includes('Vercel Cron'));
+});
+
+// --- the schema read out of SQL migrations (no Prisma required) ---
+
+test('reads tables out of SQL migrations, replayed in order', () => {
+  const tables = atlas.nodes.filter((n) => n.kind === 'type' && n.meta.typeKind === 'table');
+  const sessions = tables.find((n) => n.name === 'sessions');
+  const pageViews = tables.find((n) => n.name === 'page_views');
+
+  assert.ok(sessions, 'sessions is declared');
+  assert.ok(pageViews, 'page_views is declared');
+  assert.notEqual(sessions.meta.observed, true);
+  assert.notEqual(pageViews.meta.observed, true);
+
+  // Columns come from CREATE TABLE plus every later ALTER, in order.
+  assert.deepEqual(
+    pageViews.meta.fields.map((f) => f.name),
+    ['id', 'path', 'session_id', 'at', 'referrer'],
+  );
+  const id = pageViews.meta.fields.find((f) => f.name === 'id');
+  assert.equal(id.isId, true, 'the table-level PRIMARY KEY constraint lands on the column');
+  const path = pageViews.meta.fields.find((f) => f.name === 'path');
+  assert.equal(path.type, 'varchar(2048)', 'ALTER COLUMN TYPE is replayed too');
+
+  const email = sessions.meta.fields.find((f) => f.name === 'user_email');
+  assert.equal(email.isUnique, true, 'a table-level UNIQUE constraint lands on the column');
+  assert.equal(sessions.summary, 'One row per visitor session.', 'COMMENT ON TABLE is the docstring');
+});
+
+test('a foreign key becomes a relation line from the exact column', () => {
+  const fk = atlas.edges.find(
+    (e) => e.kind === 'references' && e.fromId.endsWith('#page_views') && e.toId.endsWith('#sessions'),
+  );
+  assert.ok(fk, 'page_views.session_id → sessions exists');
+  assert.deepEqual(fk.meta.fields, ['session_id']);
+  assert.equal(fk.confidence, 'certain');
+});
+
+test('a table upgraded from observed to declared keeps its usage', () => {
+  // metrics.ts queries page_views; before the migrations existed that produced an
+  // observed card. Now the declared card must absorb those edges, not orphan them.
+  const observed = atlas.nodes.filter(
+    (n) => n.kind === 'type' && n.meta.observed === true && n.name === 'page_views',
+  );
+  assert.equal(observed.length, 0, 'no duplicate observed card');
+
+  const declared = atlas.nodes.find((n) => n.name === 'page_views' && n.meta.typeKind === 'table');
+  const usage = atlas.edges.filter((e) => e.kind === 'references' && e.toId === declared.id);
+  assert.ok(usage.length >= 2, `query sites still point at the table (got ${usage.length})`);
+});
+
+test('row-level security is reported, and unknown is not rounded up to open', () => {
+  const t = insights.tables;
+  // 3 Prisma tables + 1 observed (protection unknowable for all four) + 2 SQL tables.
+  assert.equal(t.total, 6);
+  assert.equal(t.unknown, 4);
+  assert.equal(t.unprotected, 0);
+  // page_views: RLS enabled, zero policies — locked, and listed first.
+  assert.equal(t.locked, 1);
+  assert.equal(t.list[0].name, 'page_views');
+  assert.equal(t.list[0].rls.enabled, true);
+  assert.equal(t.list[0].rls.policyCount, 0);
+
+  const sessions = t.list.find((x) => x.name === 'sessions');
+  assert.deepEqual(sessions.rls, { enabled: true, policyCount: 1, commands: ['select'] });
+
+  // The storage.objects policy belongs to Supabase's table, not ours — it must not
+  // invent a table, and it must not crash the read.
+  assert.ok(!t.list.some((x) => x.name === 'objects'));
 });

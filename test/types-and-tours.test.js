@@ -47,6 +47,18 @@ test('a reference between two types remembers which field made it', () => {
   assert.deepEqual(edge.meta.fields, ['role'], 'the row, not just the card');
 });
 
+test('a node reports the types it is built around, pulled out of its references', () => {
+  // `countUsers` runs `prisma.user…` and names the User model — the shape of the data
+  // it works with, which the panel surfaces as its own answer.
+  const fn = boundaryAtlas.nodes.find((n) => n.kind === 'function' && n.name === 'countUsers');
+  assert.ok(fn, 'the fixture has a countUsers function');
+  const view = boundary.getNode(fn.id);
+  const names = view.typesUsed.map((t) => t.name);
+  assert.ok(names.includes('User'), `expected User among ${JSON.stringify(names)}`);
+  // Everything in the list is a type node, never a function or a store.
+  assert.ok(view.typesUsed.every((t) => t.kind === 'type'));
+});
+
 test('an initializer is not a field pointing at a type', () => {
   const session = 'type:src/models/user.ts#Session';
   const toUser = sample.edgesFrom(session).find((e) => e.toId === 'type:src/models/user.ts#User');
@@ -113,8 +125,8 @@ test('an enum-typed column is not reported as a relation', () => {
 
 test('tables come first, and every card knows where it is used', () => {
   const view = buildTypeView(boundary);
-  // Three from schema.prisma, one observed in Supabase queries.
-  assert.equal(view.tables, 4);
+  // Three from schema.prisma, two from SQL migrations, one observed in queries.
+  assert.equal(view.tables, 6);
   assert.equal(view.cards[0].typeKind, 'table');
 
   const order = view.cards.find((c) => c.name === 'Order');
@@ -145,7 +157,7 @@ test('a shared name is a link of its own kind, never a declared one', () => {
 test('the card list is capped, and says so by reporting the total', () => {
   const view = buildTypeView(boundary, 2);
   assert.equal(view.cards.length, 2);
-  assert.equal(view.total, 4, 'the count is of everything, not of what fit');
+  assert.equal(view.total, 6, 'the count is of everything, not of what fit');
 });
 
 // ---------------------------------------------------------------------------

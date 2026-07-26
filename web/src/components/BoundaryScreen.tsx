@@ -9,7 +9,7 @@
  * The bands are SVG; the cards are ordinary HTML sitting on top of them. That way a
  * card is a real button with real text, and the ribbon behind it is just geometry.
  */
-import { useMemo, useState } from 'react';
+import { useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { CSSProperties } from 'react';
 import type { BoundaryView, SummarySource } from '../types';
 import { TrustLabel } from './Trust';
@@ -38,6 +38,14 @@ const APP_HEAD = 34;
 const MIN_BAND = 3;
 const MAX_BAND = 26;
 
+/**
+ * How far the picture may shrink to fit its pane before we stop and let it scroll
+ * instead. The whole point of this screen is to be read at a glance, and a diagram
+ * squeezed past about two-thirds stops being readable — better a scrollbar than a
+ * wall of unreadable labels.
+ */
+const MIN_SCALE = 0.62;
+
 interface Box {
   x: number;
   y: number;
@@ -48,6 +56,8 @@ interface Box {
 export function BoundaryScreen({ view, selectedId, summary, summarySource, onSelect, onOpenInsights }: Props) {
   const [hovered, setHovered] = useState<string | null>(null);
   const layout = useMemo(() => computeLayout(view), [view]);
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const scale = useFitScale(scrollRef, layout.width);
 
   const active = hovered ?? selectedId;
 
@@ -55,8 +65,14 @@ export function BoundaryScreen({ view, selectedId, summary, summarySource, onSel
     <div className="boundary">
       <Headline view={view} onOpenInsights={onOpenInsights} />
 
-      <div className="boundary-scroll">
-        <div className="boundary-stage" style={{ width: layout.width, height: layout.height }}>
+      <div className="boundary-scroll" ref={scrollRef}>
+        {/* The stage keeps its natural pixel geometry and is scaled as a whole; this
+            wrapper reserves the scaled size so centring and scrolling stay honest. */}
+        <div className="boundary-fit" style={{ width: layout.width * scale, height: layout.height * scale }}>
+          <div
+            className="boundary-stage"
+            style={{ width: layout.width, height: layout.height, transform: `scale(${scale})` }}
+          >
           <svg className="boundary-bands" width={layout.width} height={layout.height} aria-hidden="true">
             {layout.bands.map((band) => (
               <path
@@ -103,7 +119,11 @@ export function BoundaryScreen({ view, selectedId, summary, summarySource, onSel
                 onMouseLeave={() => setHovered(null)}
                 onClick={() => onSelect(card.nodeId ?? card.memberIds[0] ?? '')}
               >
-                <span className="bcard-glyph">{glyphFor(card.family)}</span>
+                {/* Decoration only — the card's name says the same thing in words, and
+                    without this a screen reader opens every card with "⇥" or "◉". */}
+                <span className="bcard-glyph" aria-hidden="true">
+                  {glyphFor(card.family)}
+                </span>
                 <span className="bcard-body">
                   <span className="bcard-name">{card.name}</span>
                   <span className="bcard-detail">{card.detail}</span>
@@ -116,6 +136,7 @@ export function BoundaryScreen({ view, selectedId, summary, summarySource, onSel
               </button>
             );
           })}
+          </div>
         </div>
       </div>
 
@@ -134,6 +155,47 @@ export function BoundaryScreen({ view, selectedId, summary, summarySource, onSel
       </p>
     </div>
   );
+}
+
+/**
+ * Shrinks the diagram to whatever pane it has been given.
+ *
+ * The layout is computed in fixed pixels because the geometry — column widths, band
+ * curves — has to agree with itself. Fitting is therefore a display concern: measure
+ * the pane, scale the finished picture. Never magnifies past its natural size, and
+ * never shrinks past MIN_SCALE; past that the pane scrolls instead.
+ */
+function useFitScale(ref: React.RefObject<HTMLDivElement | null>, naturalWidth: number): number {
+  const [scale, setScale] = useState(1);
+
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el || naturalWidth <= 0) return;
+
+    const measure = () => {
+      const available = el.clientWidth;
+      if (available <= 0) return;
+      const next = Math.min(1, Math.max(MIN_SCALE, available / naturalWidth));
+      // Shrinking can retract the scrollbar, which widens the pane, which would ask
+      // for a larger scale that brings the scrollbar back. Ignoring hairline changes
+      // settles that loop instead of letting it flicker.
+      setScale((current) => (Math.abs(current - next) > 0.005 ? next : current));
+    };
+
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(el);
+    // The observer catches the pane changing under a still window — a side panel
+    // opening. The window event is the belt to that braces: some embedded browsers
+    // throttle observer delivery when the tab is not painting.
+    window.addEventListener('resize', measure);
+    return () => {
+      observer.disconnect();
+      window.removeEventListener('resize', measure);
+    };
+  }, [ref, naturalWidth]);
+
+  return scale;
 }
 
 function Headline({ view, onOpenInsights }: { view: BoundaryView; onOpenInsights: () => void }) {
@@ -316,6 +378,7 @@ function boxStyle(box: Box): CSSProperties {
  * someone's machine, and a box says nothing.
  */
 const GLYPHS: Record<string, string> = {
+  screens: '▢',
   pages: '□',
   routes: '⇥',
   actions: '⚡',
