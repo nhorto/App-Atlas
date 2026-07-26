@@ -213,6 +213,8 @@
   color: var(--ink-faint);
 }
 
+/* Boundary cards wear the same specimen-label cut as the map cards. No zone
+   strip here — a door or a store is not a zone — the glyph carries the color. */
 .bcard {
   position: absolute;
   display: flex;
@@ -220,11 +222,11 @@
   gap: 10px;
   padding: 0 12px;
   text-align: left;
-  border: 1px solid var(--line);
-  border-radius: 10px;
-  background: var(--surface);
-  box-shadow: var(--shadow);
-  transition: opacity 120ms ease, border-color 120ms ease, transform 120ms ease;
+  border: 1px solid var(--line-strong);
+  background: var(--label);
+  clip-path: polygon(0 0, calc(100% - 12px) 0, 100% 12px, 100% 100%, 0 100%);
+  filter: drop-shadow(1px 2px 0 rgba(64, 54, 32, 0.09));
+  transition: opacity 120ms ease, border-color 120ms ease, transform 120ms ease, filter 120ms ease;
 }
 
 .bcard:hover {
@@ -234,7 +236,7 @@
 
 .bcard.is-selected {
   border-color: var(--accent);
-  box-shadow: 0 0 0 2px var(--accent-soft), var(--shadow);
+  filter: drop-shadow(1px 2px 0 rgba(176, 69, 43, 0.3));
 }
 
 .bcard.is-dim {
@@ -247,7 +249,7 @@
   place-items: center;
   width: 30px;
   height: 30px;
-  border-radius: 8px;
+  border-radius: 2px;
   background: var(--surface-press);
   color: var(--ink-soft);
   font-size: 14px;
@@ -315,12 +317,11 @@
   padding: 24px 24px 40px;
 }
 
+/* Full-width sections read as pages, not labels: flat, sharp, hairline-ruled. */
 .insight-card {
   padding: 20px 22px;
-  border: 1px solid var(--line);
-  border-radius: 12px;
-  background: var(--surface);
-  box-shadow: var(--shadow);
+  border: 1px solid var(--line-strong);
+  background: var(--label);
 }
 
 .insight-card header {

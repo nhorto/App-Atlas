@@ -193,29 +193,45 @@
   gap: 10px;
 }
 
+/* Tour launch points wear the same label cut; the binding strip is terracotta
+   because a tour is a route, and route-red belongs to the map's pen. */
 .tour-card {
+  position: relative;
   display: flex;
   flex-direction: column;
   gap: 3px;
-  padding: 12px 14px;
-  border: 1px solid var(--line);
-  border-left: 4px solid var(--accent);
-  border-radius: var(--radius);
-  background: var(--surface);
+  padding: 11px 14px 12px;
+  border: 1px solid var(--line-strong);
+  border-top: 4px solid var(--accent);
+  background: var(--label);
+  clip-path: polygon(0 0, calc(100% - 14px) 0, 100% 14px, 100% 100%, 0 100%);
+  filter: drop-shadow(1px 2px 0 rgba(64, 54, 32, 0.09));
   text-align: left;
   font: inherit;
   color: inherit;
   cursor: pointer;
-  transition: box-shadow 120ms ease, border-color 120ms ease;
+  transition: filter 120ms ease, border-color 120ms ease, transform 120ms ease;
+}
+
+.tour-card::before {
+  content: '';
+  position: absolute;
+  inset: 3px;
+  border: 1px dashed var(--line);
+  clip-path: polygon(0 0, calc(100% - 11px) 0, 100% 11px, 100% 100%, 0 100%);
+  pointer-events: none;
 }
 
 .tour-card:hover {
-  box-shadow: var(--shadow);
-  border-color: var(--line-strong);
+  border-left-color: var(--ink-faint);
+  border-right-color: var(--ink-faint);
+  border-bottom-color: var(--ink-faint);
+  transform: translateY(-1px);
+  filter: drop-shadow(1px 3px 0 rgba(64, 54, 32, 0.13));
 }
 
 .tour-card.tour-flow {
-  border-left-color: var(--zone-api);
+  border-top-color: var(--zone-api);
 }
 
 .tour-title {

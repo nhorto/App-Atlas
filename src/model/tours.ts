@@ -68,7 +68,15 @@ function welcomeTour(graph: AtlasGraph): Tour {
   const stats = graph.meta.stats;
   const app = graph.getNodeById(graph.rootId) ?? null;
   const overview = graph.getOverview();
-  const modules = overview.topLevel.filter((node) => node.kind === 'module').slice(0, 6);
+  // Sorted by size, because the welcome step introduces them as "the biggest" —
+  // and the level's own order is layout order, which made that claim a lie.
+  const modules = overview.topLevel
+    .filter((node) => node.kind === 'module')
+    .sort(
+      (a, b) =>
+        Number(b.meta.descendantFileCount ?? b.childCount ?? 0) - Number(a.meta.descendantFileCount ?? a.childCount ?? 0),
+    )
+    .slice(0, 6);
   const endpoints = graph.nodesOfKind('endpoint');
   const stores = graph.nodesOfKind('store');
   const services = graph.nodesOfKind('service');
