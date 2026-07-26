@@ -47,6 +47,18 @@ test('a reference between two types remembers which field made it', () => {
   assert.deepEqual(edge.meta.fields, ['role'], 'the row, not just the card');
 });
 
+test('a node reports the types it is built around, pulled out of its references', () => {
+  // `countUsers` runs `prisma.user…` and names the User model — the shape of the data
+  // it works with, which the panel surfaces as its own answer.
+  const fn = boundaryAtlas.nodes.find((n) => n.kind === 'function' && n.name === 'countUsers');
+  assert.ok(fn, 'the fixture has a countUsers function');
+  const view = boundary.getNode(fn.id);
+  const names = view.typesUsed.map((t) => t.name);
+  assert.ok(names.includes('User'), `expected User among ${JSON.stringify(names)}`);
+  // Everything in the list is a type node, never a function or a store.
+  assert.ok(view.typesUsed.every((t) => t.kind === 'type'));
+});
+
 test('an initializer is not a field pointing at a type', () => {
   const session = 'type:src/models/user.ts#Session';
   const toUser = sample.edgesFrom(session).find((e) => e.toId === 'type:src/models/user.ts#User');

@@ -53,7 +53,11 @@ export type EndpointKind =
   | 'realtime'
   | 'cli'
   | 'env'
-  | 'file-read';
+  | 'file-read'
+  // A screen in a file-routed native/web app (Expo Router, React Navigation file
+  // routes). A way a *person* gets in, not a network door — deliberately kept out of
+  // the auth-coverage count so it never dilutes the routes a stranger can reach.
+  | 'screen';
 
 /** What a third party does for you — drives the grouping in the boundary view. */
 export type ServiceCategory =

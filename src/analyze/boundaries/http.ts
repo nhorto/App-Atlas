@@ -188,6 +188,53 @@ function serverActions(ctx: DetectorContext): void {
 }
 
 // ---------------------------------------------------------------------------
+// Expo Router — a native/web app whose file system is the router
+// ---------------------------------------------------------------------------
+
+/**
+ * Expo Router (and the file-routes convention React Navigation borrowed from Next)
+ * turns every file under `app/` into a screen a person can land on. These are doors
+ * too — but doors into a *client*, not doors a stranger reaches over the network — so
+ * they get their own `screen` kind and are kept out of the auth-coverage count. The
+ * point is to answer "what are the ways into this app?" for a mobile app the same way
+ * the route list answers it for a server, without crying wolf about missing auth on
+ * two dozen screens.
+ */
+export const expoRoutesDetector: BoundaryDetector = {
+  id: 'expo-routes',
+  enabled: (ctx) => Boolean(ctx.signals.expoRouterDir),
+  fileScan(ctx) {
+    const dir = ctx.signals.expoRouterDir;
+    const { relPath } = ctx.ref;
+    if (!dir || !isUnder(relPath, dir)) return;
+
+    const rest = relPath.slice(dir.length + 1);
+    const base = fileBase(rest);
+    // `_layout` wraps screens without being one; `+not-found`, `+html` and
+    // `+native-intent` are framework hooks, not navigable routes.
+    if (base.startsWith('_') || base.startsWith('+')) return;
+
+    const route = expoRoutePath(rest);
+    const component = defaultExport(ctx.sf);
+    ctx.emit({
+      type: 'endpoint',
+      endpointKind: 'screen',
+      key: `SCREEN ${route}`,
+      name: route,
+      method: 'SCREEN',
+      route,
+      framework: 'Expo Router',
+      writes: false,
+      guards: [],
+      site: ctx.site(component ?? ctx.sf, route),
+      // The screen component is the handler, so a redirect-if-signed-out guard in its
+      // body is an exact match rather than a same-file guess.
+      handlerId: component ? ctx.enclosing(component) : ctx.fileId,
+    });
+  },
+};
+
+// ---------------------------------------------------------------------------
 // Express / Fastify / Hono / Koa / NestJS — the call is the router
 // ---------------------------------------------------------------------------
 
@@ -527,6 +574,18 @@ function pagesRoutePath(rest: string): string {
   if (segments[segments.length - 1] === 'index') segments.pop();
   const mapped = segments.map(routeSegment).filter((s) => s !== null);
   return `/${mapped.join('/')}`.replace(/\/{2,}/g, '/').replace(/(.)\/$/, '$1');
+}
+
+/**
+ * Like the Pages Router, an Expo screen file *is* the route — `cellar/[id].tsx` is the
+ * screen, not a `page.tsx` inside a folder. So every segment counts, including the
+ * basename, and a trailing `index` drops to its parent (`(tabs)/index` → `/`).
+ */
+function expoRoutePath(rest: string): string {
+  const parts = rest.replace(/\.[cm]?[jt]sx?$/, '').split('/');
+  if (parts[parts.length - 1] === 'index') parts.pop();
+  const segs = parts.map(routeSegment).filter((s) => s !== null);
+  return `/${segs.join('/')}`.replace(/\/{2,}/g, '/').replace(/(.)\/$/, '$1') || '/';
 }
 
 /** null means the segment shapes the folder tree but not the URL. */

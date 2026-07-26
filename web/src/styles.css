@@ -732,6 +732,60 @@ kbd {
   word-break: break-all;
 }
 
+/* Types used: a wrap of small pills, each a shape the node is built around. */
+.type-chips {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.type-chip {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  max-width: 100%;
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--zone-unknown);
+  background: var(--surface);
+  border-radius: 6px;
+  padding: 4px 9px;
+  font-size: 12.5px;
+  color: var(--ink);
+  cursor: pointer;
+}
+
+.type-chip:hover {
+  background: var(--surface-press);
+}
+
+.type-chip.zone-ui { border-left-color: var(--zone-ui); }
+.type-chip.zone-api { border-left-color: var(--zone-api); }
+.type-chip.zone-logic { border-left-color: var(--zone-logic); }
+.type-chip.zone-data { border-left-color: var(--zone-data); }
+.type-chip.zone-config { border-left-color: var(--zone-config); }
+.type-chip.zone-test { border-left-color: var(--zone-test); }
+
+.type-chip-glyph {
+  color: var(--ink-faint);
+  font-size: 11px;
+}
+
+.type-chip-name {
+  font-family: var(--mono);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.type-chip-note {
+  font-size: 10.5px;
+  color: var(--ink-faint);
+  flex: none;
+}
+
 .warn-list {
   margin: 0;
   padding-left: 18px;

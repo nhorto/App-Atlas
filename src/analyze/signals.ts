@@ -78,6 +78,8 @@ export interface ProjectSignals {
   nextAppDir: string | null;
   /** Repo-relative directory of the Next.js Pages Router, if there is one. */
   nextPagesDir: string | null;
+  /** Repo-relative directory Expo Router treats as the route tree, if there is one. */
+  expoRouterDir: string | null;
   crons: CronSignal[];
   prisma: PrismaSignal | null;
   sqlSchema: SqlSchemaSignal | null;
@@ -93,6 +95,9 @@ export function readSignals(root: string, packageJson: Record<string, unknown> |
     packages,
     nextAppDir: packages.has('next') ? firstExistingDir(root, ['app', 'src/app']) : null,
     nextPagesDir: packages.has('next') ? firstExistingDir(root, ['pages', 'src/pages']) : null,
+    // Expo Router owns `app/` the same way Next's App Router does, but declares itself
+    // through the dependency rather than a config file. Same candidate dirs.
+    expoRouterDir: packages.has('expo-router') ? firstExistingDir(root, ['app', 'src/app']) : null,
     crons: readVercelCrons(root),
     prisma,
     // When Prisma is present its migrations are generated from schema.prisma, so

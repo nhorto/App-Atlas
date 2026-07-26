@@ -528,6 +528,8 @@ const ENDPOINT_ZONES: Record<EndpointKind, Zone> = {
   cli: 'config',
   env: 'config',
   'file-read': 'data',
+  // A screen is the interface, so it colours as UI rather than as a network door.
+  screen: 'ui',
 };
 
 function endpointNode(endpoint: MergedEndpoint): AtlasNode {

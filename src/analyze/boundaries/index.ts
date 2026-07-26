@@ -15,7 +15,7 @@ import { authDetector, middlewareDetector } from './auth.js';
 import { argAt, dottedName, isBareSpecifier, literalString, packageRoot, snippetOf } from './ast.js';
 import { storeDetector } from './data.js';
 import { envDetector } from './env.js';
-import { edgeFunctionDetector, nextRoutesDetector, nodeRoutesDetector, trpcDetector } from './http.js';
+import { edgeFunctionDetector, expoRoutesDetector, nextRoutesDetector, nodeRoutesDetector, trpcDetector } from './http.js';
 import { jobsDetector } from './jobs.js';
 import { outboundDetector } from './outbound.js';
 import type {
@@ -33,6 +33,7 @@ export type { BoundaryFinding, DetectorContext } from './types.js';
 /** Order is irrelevant to correctness — every detector sees every node. */
 const DETECTORS: BoundaryDetector[] = [
   nextRoutesDetector,
+  expoRoutesDetector,
   nodeRoutesDetector,
   trpcDetector,
   edgeFunctionDetector,

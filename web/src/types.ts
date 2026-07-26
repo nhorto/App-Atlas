@@ -40,7 +40,8 @@ export type EndpointKind =
   | 'realtime'
   | 'cli'
   | 'env'
-  | 'file-read';
+  | 'file-read'
+  | 'screen';
 
 export type ServiceCategory =
   | 'payments'
@@ -213,6 +214,8 @@ export interface NodeView {
   outgoing: NeighborLink[];
   incomingTotal: number;
   outgoingTotal: number;
+  /** The types this node names — the shapes of the data it works with. */
+  typesUsed: AtlasNode[];
 }
 
 export interface AtlasStats {

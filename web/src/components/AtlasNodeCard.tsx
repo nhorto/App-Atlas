@@ -211,6 +211,7 @@ function subtitle(node: LevelNode): string {
     case 'endpoint': {
       const meta = node.meta as unknown as EndpointMeta;
       if (meta.endpointKind === 'env') return `${meta.vars?.length ?? 0} variables`;
+      if (meta.endpointKind === 'screen') return `${meta.framework} · screen`;
       if (meta.schedule) return `${meta.framework} · ${meta.schedule}`;
       return `${meta.framework} · ${meta.sites.length} ${meta.sites.length === 1 ? 'place' : 'places'}`;
     }

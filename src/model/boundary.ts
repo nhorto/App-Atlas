@@ -61,6 +61,7 @@ export interface BoundaryView {
 
 /** Kept in this order on screen: how a request arrives, roughly. */
 const INPUT_FAMILIES: { family: string; label: string; kinds: EndpointKind[]; pagesOnly?: boolean }[] = [
+  { family: 'screens', label: 'Screens', kinds: ['screen'] },
   { family: 'pages', label: 'Pages', kinds: ['http-route'], pagesOnly: true },
   { family: 'routes', label: 'API routes', kinds: ['http-route'] },
   { family: 'actions', label: 'Server actions', kinds: ['server-action'] },
@@ -190,6 +191,7 @@ function inputDetail(family: string, members: AtlasNode[]): string {
 }
 
 const INPUT_NOUNS: Record<string, string> = {
+  screens: 'screen',
   pages: 'page',
   routes: 'route',
   actions: 'action',

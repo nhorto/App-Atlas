@@ -378,6 +378,7 @@ function boxStyle(box: Box): CSSProperties {
  * someone's machine, and a box says nothing.
  */
 const GLYPHS: Record<string, string> = {
+  screens: '▢',
   pages: '□',
   routes: '⇥',
   actions: '⚡',

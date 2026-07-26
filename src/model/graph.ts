@@ -75,6 +75,12 @@ export interface NodeView {
   outgoing: NeighborLink[];
   incomingTotal: number;
   outgoingTotal: number;
+  /**
+   * The types this node names — the shapes of the data it works with. Pulled out of
+   * the reference edges so they surface as their own answer instead of being buried
+   * among function calls and capped off the end of the "uses" list.
+   */
+  typesUsed: AtlasNode[];
 }
 
 export interface OverviewView {
@@ -93,6 +99,8 @@ const MAX_OUTSIDE_NEIGHBORS = 8;
 /** The kinds that are the outside world, as opposed to more of the user's code. */
 const WORLD_KINDS = new Set<string>(['store', 'service', 'endpoint']);
 const MAX_NEIGHBORS = 60;
+/** Enough to show what a file is shaped around; more would be a schema dump. */
+const MAX_TYPES_USED = 12;
 
 export class AtlasGraph {
   readonly meta: AtlasMeta;
@@ -315,7 +323,29 @@ export class AtlasGraph {
       outgoing,
       incomingTotal: incomingAll.length,
       outgoingTotal: outgoingAll.length,
+      typesUsed: this.typesUsedBy(outgoingAll),
     };
+  }
+
+  /**
+   * The distinct type nodes a set of outgoing edges reference, heaviest first. Read
+   * from the full edge list rather than the capped `outgoing` slice, so the shapes a
+   * file works with never fall off the end of a long list of ordinary calls.
+   */
+  private typesUsedBy(outgoingAll: AtlasEdge[]): AtlasNode[] {
+    const seen = new Map<string, { node: AtlasNode; weight: number }>();
+    for (const edge of outgoingAll) {
+      if (edge.kind !== 'references') continue;
+      const target = this.nodes.get(edge.toId);
+      if (!target || target.kind !== 'type') continue;
+      const existing = seen.get(target.id);
+      if (existing) existing.weight += edge.weight;
+      else seen.set(target.id, { node: target, weight: edge.weight });
+    }
+    return [...seen.values()]
+      .sort((a, b) => b.weight - a.weight || a.node.name.localeCompare(b.node.name))
+      .slice(0, MAX_TYPES_USED)
+      .map((entry) => entry.node);
   }
 
   /** The landing view: headline numbers plus the top-level shape of the app. */
