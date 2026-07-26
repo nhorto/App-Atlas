@@ -600,11 +600,19 @@ function factRows(node: AtlasNode): [string, string][] {
       break;
     case 'endpoint': {
       const meta = node.meta as unknown as EndpointMeta;
-      if (meta.method) rows.push(['Kind', meta.method]);
+      // "SCREEN" as a method is the chip above repeating itself; GET and POST are not.
+      if (meta.method && meta.endpointKind !== 'screen') rows.push(['Kind', meta.method]);
       if (meta.route) rows.push([meta.endpointKind === 'cron' ? 'Runs' : 'Path', meta.route]);
       if (meta.schedule) rows.push(['Schedule', meta.schedule]);
       rows.push(['Found by', meta.framework]);
-      if (meta.endpointKind !== 'env') {
+      if (meta.endpointKind === 'screen') {
+        // The security page leaves screens out of the auth list on purpose: a screen
+        // opens inside an app someone already installed, not over the network. Saying
+        // "nothing found" here would report two dozen holes the same page denies, and
+        // a reader who clicks one card should not be told the opposite of the count.
+        rows.push(['Auth', 'not graded — opened from inside the app']);
+        rows.push(['Writes data', meta.writes ? 'yes' : 'no']);
+      } else if (meta.endpointKind !== 'env') {
         rows.push([
           'Protected by',
           meta.guards.length === 0
