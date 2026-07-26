@@ -72,7 +72,10 @@ export function sizeOfTypeCard(card: TypeCard): { width: number; height: number 
   const rows = card.fields.length + (card.hiddenFields > 0 ? 1 : 0) + (card.aliasOf ? 1 : 0) + (observedNote ? 1 : 0);
   return {
     width: Math.min(340, Math.max(observedNote ? 260 : 210, longest * 7.1 + 34)),
-    height: 46 + rows * 21 + (card.usage > 0 ? 22 : 8),
+    // Every card carries a footer now — "used in 6 places", or "nothing here uses it"
+    // when it does not. The old zero-usage card left room for padding and clipped the
+    // sentence it had just been given.
+    height: 46 + rows * 21 + 22,
   };
 }
 
