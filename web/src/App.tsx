@@ -108,6 +108,20 @@ function AtlasApp() {
   const [scopeId, setScopeId] = useState('');
   const { fitView } = useReactFlow();
 
+  // The URL bar is an input too: pasting a different #view, or the browser's own
+  // back/forward, should move the atlas without needing a reload. Our own writes
+  // use replaceState, which never fires this event, so there is no loop to guard.
+  useEffect(() => {
+    const onHashChange = () => {
+      const next = readHash();
+      setView(next.view);
+      if (next.view === 'map' && next.levelId) setLevelId(next.levelId);
+      setSelectedId(null);
+    };
+    window.addEventListener('hashchange', onHashChange);
+    return () => window.removeEventListener('hashchange', onHashChange);
+  }, []);
+
   // --- which apps there are, in a monorepo ---
   // Asked once, before anything else, because every other request is about one of them.
   useEffect(() => {
