@@ -67,6 +67,27 @@ test('reads functions with signatures, including arrow consts', () => {
   assert.equal(helper.meta.isExported, false);
 });
 
+test('reads service-object methods as functions', () => {
+  const load = find('function', 'load');
+  assert.ok(load, 'shorthand methods of an exported object literal should be captured');
+  assert.equal(load.meta.isMethod, true);
+  assert.equal(load.meta.ownerName, 'userStore');
+  assert.equal(load.meta.isExported, true);
+  assert.equal(load.summarySource, 'docs');
+  assert.match(load.summary, /Reads one user/);
+
+  const save = find('function', 'save');
+  assert.ok(save, 'function-valued properties should be captured too');
+  assert.equal(save.meta.ownerName, 'userStore');
+  assert.equal(save.meta.isAsync, true);
+
+  const callers = atlas.edges.filter((e) => e.kind === 'references' && e.toId === load.id);
+  assert.ok(
+    callers.some((e) => e.fromId.includes('registerRoutes')),
+    'calling userStore.load should count as a reference to the method',
+  );
+});
+
 test('uses docstrings verbatim and labels their provenance', () => {
   const userFile = atlas.nodes.find((n) => n.path === 'src/models/user.ts' && n.kind === 'file');
   assert.equal(userFile.summarySource, 'docs');
