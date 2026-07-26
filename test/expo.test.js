@@ -11,7 +11,7 @@ import assert from 'node:assert/strict';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import test from 'node:test';
-import { analyzeProject, AtlasGraph, buildBoundaryView, buildInsights } from '../dist/node/index.js';
+import { analyzeProject, AtlasGraph, buildBoundaryView, buildInsights, buildTours } from '../dist/node/index.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const FIXTURE = path.join(here, 'fixtures', 'expo');
@@ -68,6 +68,20 @@ test('screens are NEVER graded for auth — this is the anti-cry-wolf guarantee'
   for (const r of insights.auth.routes) {
     assert.ok(!screenRoutes.has(r.route), `${r.route} is a screen and must not be auth-graded`);
   }
-  // And they must not inflate the headline counts either.
-  assert.equal(atlas.meta.stats.unprotectedRoutes, 0, 'no network doors here, so none are open');
+  // The one real network door is guarded, so nothing here is open — and the auth list
+  // has exactly that door in it, not four screens plus it.
+  assert.equal(insights.auth.routes.length, 1);
+  assert.equal(atlas.meta.stats.unprotectedRoutes, 0);
+});
+
+test('the tours lead with the network door, not with a screen', () => {
+  // Two dozen screens and one edge function is the shape of every file-routed app.
+  // Ranking them together offers five screen tours and hides the single door a
+  // stranger can knock on, which is the one thing the reader most needs to see.
+  const flows = buildTours(graph).filter((t) => t.kind === 'flow');
+  assert.ok(flows.length > 1, 'there should be screen tours as well');
+  assert.match(flows[0].title, /functions\/v1\/sync/, 'the network door goes first');
+  for (const flow of flows.slice(1)) {
+    assert.match(flow.title, /someone opens/, 'a screen is opened, not "reached"');
+  }
 });

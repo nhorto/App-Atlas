@@ -224,10 +224,21 @@ function majorEntryPoints(graph: AtlasGraph): AtlasNode[] {
     })
     .filter((entry) => entry.score > 0);
 
+  // A screen is a door a person walks through; a route is a door a stranger can reach
+  // over the network. Both deserve a tour, but a file-routed app has two dozen screens
+  // and perhaps one edge function, and ranking them together buries the single thing a
+  // reader most needs to see. Network doors go first; screens fill whatever is left.
   return scored
-    .sort((a, b) => b.score - a.score || a.node.name.localeCompare(b.node.name))
+    .sort(
+      (a, b) =>
+        doorRank(a.node) - doorRank(b.node) || b.score - a.score || a.node.name.localeCompare(b.node.name),
+    )
     .slice(0, MAX_FLOW_TOURS)
     .map((entry) => entry.node);
+}
+
+function doorRank(node: AtlasNode): number {
+  return (node.meta as unknown as EndpointMeta).endpointKind === 'screen' ? 1 : 0;
 }
 
 function flowTour(graph: AtlasGraph, endpoint: AtlasNode): Tour | null {
@@ -420,6 +431,8 @@ function trigger(endpoint: AtlasNode): string {
       return `a client subscribes to ${route}`;
     case 'cli':
       return `the command line runs it`;
+    case 'screen':
+      return `someone opens ${route}`;
     default:
       return `${route} is reached`;
   }
