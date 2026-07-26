@@ -29,12 +29,34 @@ export interface LevelEdge {
   kinds: EdgeKind[];
 }
 
+/** One flow crossing the app's boundary at this level. */
+export interface OutsideFlow {
+  /** The card on screen the flow leaves from or arrives at. */
+  insideId: string;
+  weight: number;
+  /** True when the inside node calls out; false when the outside world calls in. */
+  out: boolean;
+}
+
+/**
+ * A store, service or endpoint the level on screen talks to — the outside world,
+ * kept whole so the map can draw it beyond a boundary line instead of reducing it
+ * to a number in the card's corner.
+ */
+export interface OutsideNeighbor {
+  node: AtlasNode;
+  flows: OutsideFlow[];
+  total: number;
+}
+
 export interface LevelView {
   levelId: string;
   self: AtlasNode | null;
   breadcrumb: AtlasNode[];
   nodes: LevelNode[];
   edges: LevelEdge[];
+  /** The outside world this level touches, heaviest flows first. */
+  outside: OutsideNeighbor[];
   truncated: boolean;
   totalChildren: number;
 }
@@ -66,6 +88,10 @@ export interface OverviewView {
 }
 
 const MAX_LEVEL_NODES = 400;
+const MAX_OUTSIDE_NEIGHBORS = 8;
+
+/** The kinds that are the outside world, as opposed to more of the user's code. */
+const WORLD_KINDS = new Set<string>(['store', 'service', 'endpoint']);
 const MAX_NEIGHBORS = 60;
 
 export class AtlasGraph {
@@ -172,6 +198,23 @@ export class AtlasGraph {
     const outsideIn = new Map<string, number>();
     const outsideOut = new Map<string, number>();
 
+    // The outside world, kept by identity. A cross-boundary edge names the exact
+    // store, service or endpoint on its far side; discarding that and keeping a
+    // count was making the reader infer the most interesting fact on the screen.
+    const outside = new Map<string, OutsideNeighbor>();
+    const noteOutside = (world: AtlasNode | null, insideId: string, weight: number, out: boolean) => {
+      if (!world || world.id === levelId || visibleIds.has(world.id)) return;
+      let entry = outside.get(world.id);
+      if (!entry) {
+        entry = { node: world, flows: [], total: 0 };
+        outside.set(world.id, entry);
+      }
+      entry.total += weight;
+      const flow = entry.flows.find((f) => f.insideId === insideId && f.out === out);
+      if (flow) flow.weight += weight;
+      else entry.flows.push({ insideId, weight, out });
+    };
+
     for (const edge of this.relations) {
       const from = this.ancestorAtLevel(edge.fromId, levelId);
       const to = this.ancestorAtLevel(edge.toId, levelId);
@@ -188,8 +231,10 @@ export class AtlasGraph {
         }
       } else if (from && visibleIds.has(from)) {
         outsideOut.set(from, (outsideOut.get(from) ?? 0) + edge.weight);
+        noteOutside(this.worldNeighborOf(edge.toId), from, edge.weight, true);
       } else if (to && visibleIds.has(to)) {
         outsideIn.set(to, (outsideIn.get(to) ?? 0) + edge.weight);
+        noteOutside(this.worldNeighborOf(edge.fromId), to, edge.weight, false);
       }
     }
 
@@ -211,9 +256,26 @@ export class AtlasGraph {
       breadcrumb: this.breadcrumb(levelId),
       nodes,
       edges: [...aggregated.values()].sort((a, b) => b.weight - a.weight),
+      // Heaviest flows first, capped: eight ghost cards is a boundary, twenty is fog.
+      outside: [...outside.values()].sort((a, b) => b.total - a.total).slice(0, MAX_OUTSIDE_NEIGHBORS),
       truncated,
       totalChildren: all.length,
     };
+  }
+
+  /**
+   * The store, service or endpoint a node belongs to, if it belongs to one — the
+   * "outside world" a cross-boundary edge should be attributed to. A table hangs off
+   * its store, so a query into an observed table reads as traffic to the database.
+   * Plain code elsewhere in the app returns null and stays a mere count.
+   */
+  private worldNeighborOf(id: string): AtlasNode | null {
+    let node = this.nodes.get(id);
+    while (node) {
+      if (WORLD_KINDS.has(node.kind)) return node;
+      node = node.parentId ? this.nodes.get(node.parentId) : undefined;
+    }
+    return null;
   }
 
   /** Everything the detail panel needs about one node. */

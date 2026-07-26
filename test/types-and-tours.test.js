@@ -113,8 +113,8 @@ test('an enum-typed column is not reported as a relation', () => {
 
 test('tables come first, and every card knows where it is used', () => {
   const view = buildTypeView(boundary);
-  // Three from schema.prisma, one observed in Supabase queries.
-  assert.equal(view.tables, 4);
+  // Three from schema.prisma, two from SQL migrations, one observed in queries.
+  assert.equal(view.tables, 6);
   assert.equal(view.cards[0].typeKind, 'table');
 
   const order = view.cards.find((c) => c.name === 'Order');
@@ -145,7 +145,7 @@ test('a shared name is a link of its own kind, never a declared one', () => {
 test('the card list is capped, and says so by reporting the total', () => {
   const view = buildTypeView(boundary, 2);
   assert.equal(view.cards.length, 2);
-  assert.equal(view.total, 4, 'the count is of everything, not of what fit');
+  assert.equal(view.total, 6, 'the count is of everything, not of what fit');
 });
 
 // ---------------------------------------------------------------------------

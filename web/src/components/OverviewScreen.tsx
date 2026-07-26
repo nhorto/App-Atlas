@@ -100,7 +100,9 @@ export function OverviewScreen({ view, tours, onDrill, onReveal, onStartTour, on
               <button key={part.id} className={`part-card zone-${part.zone}`} onClick={() => onDrill(part.id)}>
                 <span className="part-name">{part.label ?? part.name}</span>
                 {part.label ? <span className="part-path">{part.name}</span> : null}
-                <span className="part-summary">{part.summary ?? `${countOf(part)} files · ${zoneLabel(part.zone)}`}</span>
+                {/* The count already has a home in `part-meta` below, so the fallback
+                    is the zone alone — repeating it read as "1 files · Logic / 1 file". */}
+                <span className="part-summary">{part.summary ?? zoneLabel(part.zone)}</span>
                 <span className="part-meta">
                   {countOf(part)} {countOf(part) === 1 ? 'file' : 'files'}
                 </span>

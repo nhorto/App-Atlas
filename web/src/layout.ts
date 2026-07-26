@@ -6,7 +6,7 @@
  * depend on randomness, timing, or previous positions.
  */
 import ELK from 'elkjs/lib/elk.bundled.js';
-import type { LevelEdge, LevelNode, TypeCard, TypeLink } from './types';
+import type { LevelEdge, LevelNode, OutsideNeighbor, TypeCard, TypeLink } from './types';
 
 const elk = new ELK();
 
@@ -145,4 +145,58 @@ export async function layoutLevel(nodes: LevelNode[], edges: LevelEdge[]): Promi
     });
   }
   return positions;
+}
+
+/** The id the membrane divider is drawn under. Not a real atlas node. */
+export const MEMBRANE_ID = '::membrane::';
+
+/**
+ * Places the outside world beyond the laid-out picture: a dashed membrane just past
+ * the rightmost card, and one ghost card per store/service/endpoint beyond it.
+ *
+ * Deliberately not given to elk. The boundary is a statement, not a layout
+ * preference — the outside world sits past the edge of the app no matter what the
+ * graph inside looks like, and keeping elk ignorant of the ghosts means the real
+ * layout cannot shift when the outside world changes.
+ */
+export function layoutOutsideWorld(
+  positions: Map<string, Positioned>,
+  outside: OutsideNeighbor[],
+): Map<string, Positioned> {
+  if (outside.length === 0 || positions.size === 0) return positions;
+
+  let maxX = -Infinity;
+  let minY = Infinity;
+  let maxY = -Infinity;
+  for (const p of positions.values()) {
+    maxX = Math.max(maxX, p.x + p.width);
+    minY = Math.min(minY, p.y);
+    maxY = Math.max(maxY, p.y + p.height);
+  }
+
+  const CARD_W = 230;
+  const CARD_H = 76;
+  const GAP = 20;
+  const stackHeight = outside.length * CARD_H + (outside.length - 1) * GAP;
+  const centre = (minY + maxY) / 2;
+  const top = centre - stackHeight / 2;
+
+  const membraneX = maxX + 110;
+  const ghostX = membraneX + 80;
+
+  const out = new Map(positions);
+  out.set(MEMBRANE_ID, {
+    id: MEMBRANE_ID,
+    x: membraneX,
+    y: Math.min(minY, top) - 30,
+    width: 34,
+    height: Math.max(maxY, top + stackHeight) - Math.min(minY, top) + 60,
+  });
+
+  let y = top;
+  for (const neighbor of outside) {
+    out.set(neighbor.node.id, { id: neighbor.node.id, x: ghostX, y, width: CARD_W, height: CARD_H });
+    y += CARD_H + GAP;
+  }
+  return out;
 }

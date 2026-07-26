@@ -110,6 +110,27 @@ export function atlasDir(root: string): string {
   return path.join(root, '.app-atlas');
 }
 
+/**
+ * Creates the atlas directory, and keeps it out of the project's version control.
+ *
+ * The atlas is a derived artifact — a few megabytes rebuilt from source on demand — so
+ * it has no business showing up in someone's `git status` the first time they try the
+ * tool. Ignoring from the inside means never editing a `.gitignore` the project owns;
+ * the `*` covers this file too, so the directory disappears completely.
+ *
+ * Written only when absent, so deleting it is a durable way to say "I want to commit
+ * this after all".
+ */
+export function ensureAtlasDir(dir: string): void {
+  fs.mkdirSync(dir, { recursive: true });
+  const ignoreFile = path.join(dir, '.gitignore');
+  try {
+    if (!fs.existsSync(ignoreFile)) fs.writeFileSync(ignoreFile, '*\n', 'utf8');
+  } catch {
+    // A read-only checkout is not a reason to fail the analysis.
+  }
+}
+
 export function atlasDbPath(root: string): string {
   return path.join(atlasDir(root), 'atlas.db');
 }
@@ -139,7 +160,7 @@ export interface ScopeRecord {
 
 export function writeScopes(root: string, scopes: ScopeRecord[]): void {
   const file = scopesPath(root);
-  fs.mkdirSync(path.dirname(file), { recursive: true });
+  ensureAtlasDir(path.dirname(file));
   fs.writeFileSync(file, JSON.stringify({ scopes }, null, 2), 'utf8');
 }
 
@@ -156,7 +177,7 @@ export class AtlasStore {
   private constructor(private readonly db: DatabaseSync) {}
 
   static open(dbPath: string): AtlasStore {
-    fs.mkdirSync(path.dirname(dbPath), { recursive: true });
+    ensureAtlasDir(path.dirname(dbPath));
     const db = new DatabaseSync(dbPath);
     db.exec('PRAGMA journal_mode = WAL;');
     db.exec(SCHEMA);
@@ -355,7 +376,7 @@ export function persistAtlas(root: string, atlas: Atlas, extraJsonPath?: string)
     store.close();
   }
   const jsonPath = atlasJsonPath(root);
-  fs.mkdirSync(path.dirname(jsonPath), { recursive: true });
+  ensureAtlasDir(path.dirname(jsonPath));
   const json = JSON.stringify(atlas);
   fs.writeFileSync(jsonPath, json, 'utf8');
   if (extraJsonPath) {

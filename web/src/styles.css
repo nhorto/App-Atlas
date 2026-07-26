@@ -130,14 +130,28 @@ code {
 
 /* ---------- breadcrumb ---------- */
 
-.crumbs {
+/* Floats over the top-left of the map canvas — where you are, drawn on the thing it
+   describes. It lived in the top chrome once, sized like a caption, and read as
+   decoration; here it is the first thing the eye crosses on its way to the picture. */
+.map-crumbs {
+  position: absolute;
+  top: 14px;
+  left: 16px;
+  z-index: 6;
   display: flex;
   align-items: center;
-  align-self: center;
+  flex-wrap: wrap;
   gap: 2px;
-  min-width: 0;
-  overflow: hidden;
-  white-space: nowrap;
+  max-width: calc(100% - 32px);
+  padding: 5px 10px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  box-shadow: 0 2px 10px rgba(60, 50, 30, 0.08);
+}
+
+.map-crumbs .crumb {
+  font-size: 14.5px;
 }
 
 .crumb {
@@ -899,4 +913,43 @@ kbd {
   .brand {
     display: none;
   }
+}
+
+/* ---------- the membrane: where the app ends ---------- */
+
+.membrane {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+
+.membrane::before {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 0;
+  bottom: 0;
+  border-left: 2px dashed var(--ink-faint);
+}
+
+.membrane-label {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  writing-mode: vertical-rl;
+  padding: 10px 2px;
+  background: #f4f1e9; /* the canvas colour, so the label breaks the line */
+  color: var(--ink-faint);
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+/* The outside world's cards: really there, but not of this place. */
+.card.is-outside {
+  border-style: dashed;
+  box-shadow: none;
 }
