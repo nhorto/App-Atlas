@@ -225,16 +225,23 @@ function run(
   signal?: AbortSignal,
 ): Promise<RunResult> {
   return new Promise((resolve, reject) => {
-    const child = spawn(command, args, {
-      // npm installs these as .cmd shims on Windows, which cannot be executed
-      // directly. Safe here only because argv is entirely fixed flags — see rule 1.
-      shell: process.platform === 'win32',
+    // npm installs these as .cmd shims on Windows, which cannot be executed
+    // directly, so the shell has to be involved there. Node deprecates passing an
+    // args *array* alongside `shell: true` (DEP0190) — and prints a warning into
+    // every analyze — so on Windows the argv is joined into the one string form
+    // the shell actually receives. Safe here only because argv is entirely fixed
+    // flags — see rule 1.
+    const options = {
       env: childEnv(),
       // A temp directory, so the CLI has no repo to wander into and leaves no session
       // files behind in the project being analyzed.
       cwd: os.tmpdir(),
-      stdio: ['pipe', 'pipe', 'pipe'],
-    });
+      stdio: ['pipe', 'pipe', 'pipe'] as ['pipe', 'pipe', 'pipe'],
+    };
+    const child =
+      process.platform === 'win32'
+        ? spawn([command, ...args].map(quoteForShell).join(' '), { ...options, shell: true })
+        : spawn(command, args, options);
 
     let stdout = '';
     let stderr = '';
@@ -286,6 +293,12 @@ function run(
  * Redirection variables are only removed when a parent session is detected, so a user
  * who genuinely configured their own base URL or proxy keeps it.
  */
+/** Quotes one argument for the Windows shell. Our argv is fixed flags, so this only
+ * ever has to defend against a model name with a space in it. */
+function quoteForShell(arg: string): string {
+  return /[\s"]/.test(arg) ? `"${arg.replace(/"/g, '""')}"` : arg;
+}
+
 function childEnv(): NodeJS.ProcessEnv {
   const env = { ...process.env };
   const insideAgentSession = Boolean(env.CLAUDECODE || env.CLAUDE_CODE_ENTRYPOINT || env.CODEX_SANDBOX);

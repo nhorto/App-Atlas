@@ -25,8 +25,10 @@
 
 .type-head h1 {
   margin: 0;
-  font-size: 22px;
-  letter-spacing: -0.02em;
+  font-family: var(--font-display);
+  font-size: 23px;
+  font-weight: 600;
+  letter-spacing: 0;
 }
 
 .type-legend {
@@ -46,12 +48,12 @@
   display: inline-block;
   width: 26px;
   height: 0;
-  border-top: 2px solid #94a3b8;
+  border-top: 2px solid #a49c8a;
 }
 
 .legend-line.legend-guess {
   border-top-style: dashed;
-  border-top-color: #a78bfa;
+  border-top-color: #8b74d8;
 }
 
 .type-canvas {
@@ -70,7 +72,7 @@
   border-top: 3px solid var(--zone-unknown);
   border-radius: 9px;
   background: var(--surface);
-  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.06);
+  box-shadow: 0 1px 2px rgba(64, 54, 32, 0.06);
   overflow: hidden;
   transition: box-shadow 120ms ease, opacity 120ms ease;
 }
@@ -84,8 +86,8 @@
 
 /* A table is not a shape someone wrote in the app — it is the database itself. */
 .tcard-table {
-  background: #f8fafc;
-  border-color: #94a3b8;
+  background: var(--surface-press);
+  border-color: var(--zone-unknown);
   border-style: solid;
 }
 
@@ -94,7 +96,7 @@
 }
 
 .tcard.is-selected {
-  box-shadow: 0 0 0 2px var(--accent), 0 6px 18px rgba(15, 23, 42, 0.12);
+  box-shadow: 0 0 0 2px var(--accent), 0 6px 18px rgba(64, 54, 32, 0.14);
 }
 
 .tcard-head {
@@ -120,7 +122,18 @@
 }
 
 .tcard-table .tcard-kind {
-  color: #0f766e;
+  color: #266344;
+}
+
+.tcard-observed {
+  padding: 6px 11px;
+  font-size: 10.5px;
+  font-style: italic;
+  color: var(--ink-faint);
+  border-bottom: 1px solid var(--line);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .tcard-alias {
@@ -153,7 +166,7 @@
 }
 
 .tcard-fields li.is-link {
-  background: rgba(148, 163, 184, 0.11);
+  background: rgba(164, 156, 138, 0.14);
 }
 
 .tfield-name {
@@ -164,7 +177,7 @@
 
 .tfield-key {
   margin-right: 4px;
-  color: #b45309;
+  color: #8f6210;
 }
 
 .tfield-type {
@@ -198,6 +211,6 @@
   min-width: 0;
   min-height: 0;
   border: 0;
-  background: #94a3b8;
+  background: #a49c8a;
   opacity: 0.9;
 }

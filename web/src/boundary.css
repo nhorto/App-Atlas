@@ -9,42 +9,49 @@
 
 /* ---------- view tabs ---------- */
 
+/* Underline tabs, like the thumb tabs cut into a reference book. They sit flush on
+   the topbar's bottom rule, so the active mark reads as part of the page edge. */
 .tabs {
   display: flex;
-  align-items: center;
-  gap: 2px;
+  align-items: stretch;
+  gap: 4px;
   flex: none;
-  padding: 3px;
-  background: #eef2f7;
-  border-radius: 9px;
 }
 
 .tab {
   border: 0;
   background: transparent;
-  border-radius: 7px;
-  padding: 4px 12px;
+  border-radius: 0;
+  padding: 0 11px;
   font-size: 13px;
   font-weight: 500;
   color: var(--ink-soft);
+  box-shadow: inset 0 -2px 0 transparent;
+  transition: box-shadow 120ms ease, color 120ms ease;
 }
 
 .tab:hover {
   color: var(--ink);
+  box-shadow: inset 0 -2px 0 var(--line-strong);
 }
 
 .tab.is-current {
-  background: var(--surface);
   color: var(--ink);
-  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.08);
+  font-weight: 600;
+  box-shadow: inset 0 -2px 0 var(--accent);
 }
 
+/* The project's name, set as a label rather than a button, so it cannot be read
+   as a sixth tab. */
 .topbar-title {
   flex: 1;
+  align-self: center;
   min-width: 0;
-  font-size: 13px;
+  font-size: 11px;
   font-weight: 600;
-  color: var(--ink-soft);
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--ink-faint);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -76,9 +83,10 @@
 
 .boundary-head h1 {
   margin: 0;
-  font-size: 19px;
+  font-family: var(--font-display);
+  font-size: 20px;
   font-weight: 600;
-  letter-spacing: -0.01em;
+  letter-spacing: 0;
 }
 
 .boundary-head .sep {
@@ -102,14 +110,14 @@
 }
 
 .pill-warn {
-  border-color: rgba(220, 38, 38, 0.35);
-  background: rgba(254, 226, 226, 0.5);
-  color: #b91c1c;
+  border-color: rgba(179, 55, 42, 0.4);
+  background: rgba(179, 55, 42, 0.07);
+  color: #a03325;
 }
 
 .pill-warn:hover {
-  border-color: #dc2626;
-  color: #991b1b;
+  border-color: #b3372a;
+  color: #8c2c20;
 }
 
 .boundary-scroll {
@@ -154,7 +162,7 @@
   position: absolute;
   border: 1px solid var(--line-strong);
   border-radius: 14px;
-  background: rgba(255, 255, 255, 0.55);
+  background: rgba(253, 252, 247, 0.6);
 }
 
 .boundary-appname {
@@ -226,7 +234,7 @@
 
 .bcard.is-selected {
   border-color: var(--accent);
-  box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.18), var(--shadow);
+  box-shadow: 0 0 0 2px var(--accent-soft), var(--shadow);
 }
 
 .bcard.is-dim {
@@ -240,19 +248,19 @@
   width: 30px;
   height: 30px;
   border-radius: 8px;
-  background: #f1f5f9;
+  background: var(--surface-press);
   color: var(--ink-soft);
   font-size: 14px;
 }
 
 .bcard-in .bcard-glyph {
-  background: rgba(14, 165, 233, 0.12);
-  color: #0369a1;
+  background: rgba(45, 126, 163, 0.13);
+  color: #205e7c;
 }
 
 .bcard-out .bcard-glyph {
-  background: rgba(16, 185, 129, 0.14);
-  color: #047857;
+  background: rgba(55, 132, 90, 0.15);
+  color: #266344;
 }
 
 .bcard-body {
@@ -285,8 +293,8 @@
   border-radius: 999px;
   font-size: 10.5px;
   font-weight: 600;
-  background: rgba(254, 226, 226, 0.9);
-  color: #b91c1c;
+  background: rgba(179, 55, 42, 0.12);
+  color: #a03325;
 }
 
 .boundary-foot {
@@ -321,7 +329,8 @@
 
 .insight-card h2 {
   margin: 0;
-  font-size: 16px;
+  font-family: var(--font-display);
+  font-size: 17px;
   font-weight: 600;
 }
 
@@ -349,9 +358,9 @@
   background: var(--line);
 }
 
-.meter-ok { background: #10b981; }
-.meter-maybe { background: #f59e0b; }
-.meter-open { background: #ef4444; }
+.meter-ok { background: #37845a; }
+.meter-maybe { background: #c4881c; }
+.meter-open { background: #b3372a; }
 
 .score-key {
   display: flex;
@@ -375,9 +384,9 @@
   border-radius: 2px;
 }
 
-.swatch-ok { background: #10b981; }
-.swatch-maybe { background: #f59e0b; }
-.swatch-open { background: #ef4444; }
+.swatch-ok { background: #37845a; }
+.swatch-maybe { background: #c4881c; }
+.swatch-open { background: #b3372a; }
 
 .route-list,
 .service-list,
@@ -437,17 +446,17 @@
   font-size: 10.5px;
   font-weight: 700;
   letter-spacing: 0.02em;
-  background: #f1f5f9;
+  background: var(--surface-press);
   color: var(--ink-soft);
 }
 
-.method-get { background: rgba(14, 165, 233, 0.14); color: #0369a1; }
+.method-get { background: rgba(45, 126, 163, 0.14); color: #205e7c; }
 .method-post,
 .method-put,
-.method-patch { background: rgba(245, 158, 11, 0.18); color: #b45309; }
-.method-delete { background: rgba(239, 68, 68, 0.14); color: #b91c1c; }
-.method-page { background: rgba(124, 92, 255, 0.14); color: #5b3fd6; }
-.method-action { background: rgba(236, 72, 153, 0.14); color: #be185d; }
+.method-patch { background: rgba(196, 136, 28, 0.17); color: #8f6210; }
+.method-delete { background: rgba(179, 55, 42, 0.13); color: #a03325; }
+.method-page { background: rgba(106, 85, 196, 0.14); color: #503aa8; }
+.method-action { background: rgba(176, 79, 124, 0.14); color: #8c3a60; }
 
 .route-name,
 .service-name {
@@ -488,13 +497,13 @@
   border-radius: 999px;
   font-size: 10.5px;
   font-weight: 600;
-  background: #f1f5f9;
+  background: var(--surface-press);
   color: var(--ink-soft);
 }
 
-.tag-write { background: rgba(245, 158, 11, 0.16); color: #b45309; }
-.tag-send { background: rgba(239, 68, 68, 0.12); color: #b91c1c; }
-.tag-secret { background: rgba(100, 116, 139, 0.16); color: #334155; }
+.tag-write { background: rgba(196, 136, 28, 0.16); color: #8f6210; }
+.tag-send { background: rgba(179, 55, 42, 0.11); color: #a03325; }
+.tag-secret { background: rgba(133, 124, 104, 0.18); color: #4a4436; }
 
 .badge {
   flex: none;
@@ -505,9 +514,9 @@
   white-space: nowrap;
 }
 
-.badge-protected { background: rgba(16, 185, 129, 0.14); color: #047857; }
-.badge-likely { background: rgba(245, 158, 11, 0.16); color: #b45309; }
-.badge-open { background: rgba(239, 68, 68, 0.13); color: #b91c1c; }
+.badge-protected { background: rgba(55, 132, 90, 0.15); color: #266344; }
+.badge-likely { background: rgba(196, 136, 28, 0.16); color: #8f6210; }
+.badge-open { background: rgba(179, 55, 42, 0.12); color: #a03325; }
 
 .card-badge {
   align-self: flex-start;
@@ -523,22 +532,22 @@
   padding: 9px 12px;
   border-left: 3px solid var(--line-strong);
   border-radius: 0 6px 6px 0;
-  background: #f8fafc;
+  background: var(--surface-press);
   font-size: 12.5px;
   line-height: 1.5;
   color: var(--ink-soft);
 }
 
 .note-warn {
-  border-left-color: #ef4444;
-  background: rgba(254, 226, 226, 0.5);
-  color: #991b1b;
+  border-left-color: #b3372a;
+  background: rgba(179, 55, 42, 0.08);
+  color: #8c2c20;
 }
 
 .note-ok {
-  border-left-color: #10b981;
-  background: rgba(209, 250, 229, 0.5);
-  color: #065f46;
+  border-left-color: #37845a;
+  background: rgba(55, 132, 90, 0.1);
+  color: #245c3e;
 }
 
 .env-name {
@@ -601,7 +610,7 @@
   margin-top: 2px;
   padding: 3px 6px;
   border-radius: 4px;
-  background: #f8fafc;
+  background: var(--surface-press);
   font-size: 11px;
   color: var(--ink-faint);
   white-space: nowrap;

@@ -53,11 +53,17 @@ export function TypeScreen({
   onSelect: (id: string) => void;
 }) {
   const [positions, setPositions] = useState<Map<string, Positioned>>(new Map());
+  // Bumped when a layout lands. Remounting React Flow on this key makes its one
+  // initial fitView run against the laid-out cards — fitting the pre-layout pile at
+  // (0,0) and then moving every card out from under the viewport was the old bug.
+  const [layoutRev, setLayoutRev] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
     void layoutTypes(view.cards, view.links).then((laid) => {
-      if (!cancelled) setPositions(laid);
+      if (cancelled) return;
+      setPositions(laid);
+      setLayoutRev((n) => n + 1);
     });
     return () => {
       cancelled = true;
@@ -108,17 +114,17 @@ export function TypeScreen({
           sourceHandle: link.fields[0] ? `f:${link.fields[0]}` : 'out',
           targetHandle: 'in',
           label: touches && link.fields.length > 0 ? link.fields.join(', ') : undefined,
-          labelBgStyle: { fill: '#ffffff' },
-          labelStyle: { fontSize: 11, fill: '#475569' },
+          labelBgStyle: { fill: '#f4f1e9' },
+          labelStyle: { fontSize: 11, fill: '#5f594b' },
           style: {
-            stroke: guess ? '#a78bfa' : touches ? '#334155' : '#94a3b8',
+            stroke: guess ? '#8b74d8' : touches ? '#4a4436' : '#a89f8b',
             strokeWidth: touches ? 2 : 1.4,
             strokeDasharray: guess ? '5 4' : undefined,
             opacity: lit && !touches ? 0.12 : 0.75,
           },
           markerEnd: guess
             ? undefined
-            : { type: MarkerType.ArrowClosed, width: 13, height: 13, color: touches ? '#334155' : '#94a3b8' },
+            : { type: MarkerType.ArrowClosed, width: 13, height: 13, color: touches ? '#4a4436' : '#a89f8b' },
         } satisfies Edge;
       }),
     [view, selectedId, lit],
@@ -135,7 +141,7 @@ export function TypeScreen({
           <div className="overview-lede is-empty">
             <p>
               No types or database tables were found. This view fills up on its own as your code declares
-              interfaces and types — or the moment a <code>schema.prisma</code> appears.
+              interfaces and types, names database tables in its queries, or gains a <code>schema.prisma</code>.
             </p>
           </div>
         </div>
@@ -167,8 +173,12 @@ export function TypeScreen({
       </div>
 
       <div className="type-canvas">
+        {positions.size === 0 ? (
+          <div className="loading">Laying the shapes out…</div>
+        ) : (
         <ReactFlowProvider>
           <ReactFlow
+            key={layoutRev}
             nodes={nodes}
             edges={edges}
             nodeTypes={nodeTypes}
@@ -184,10 +194,11 @@ export function TypeScreen({
             maxZoom={2.5}
             onNodeClick={(_, node) => onSelect(node.id)}
           >
-            <Background variant={BackgroundVariant.Dots} gap={22} size={1} color="#dbe1ea" />
+            <Background variant={BackgroundVariant.Dots} gap={22} size={1} color="#d9d2bf" />
             <Controls showInteractive={false} />
           </ReactFlow>
         </ReactFlowProvider>
+        )}
       </div>
     </div>
   );
@@ -216,6 +227,13 @@ function TypeCardNode({ data, selected }: NodeProps) {
       </div>
 
       {card.aliasOf ? <div className="tcard-alias">{card.aliasOf}</div> : null}
+
+      {/* A table named in queries but declared nowhere: honest about what we can't see. */}
+      {card.typeKind === 'table' && card.fields.length === 0 ? (
+        <div className="tcard-observed" title="This table is named in the code's queries, but no schema file declares its columns.">
+          named in queries · columns unknown
+        </div>
+      ) : null}
 
       {card.fields.length > 0 ? (
         <ul className="tcard-fields">

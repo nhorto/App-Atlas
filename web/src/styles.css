@@ -1,31 +1,40 @@
 /**
  * App Atlas — visual language.
  *
- * Colour means one thing only: which zone something belongs to. Everything else is
- * greyscale, so a coloured card always carries information.
+ * The tool is an atlas, so it is set like one: warm paper, dark ink, serif display
+ * type, and a terracotta accent used the way a printed map uses red — to mark the
+ * route, and nothing else. Every face here ships with the operating system, because
+ * the app must look the same offline as on.
+ *
+ * Colour still means one thing only: which zone something belongs to. Everything
+ * else is ink on paper, so a coloured card always carries information.
  */
 
 :root {
-  --bg: #f4f6f9;
-  --surface: #ffffff;
-  --ink: #0f172a;
-  --ink-soft: #475569;
-  --ink-faint: #94a3b8;
-  --line: #e2e8f0;
-  --line-strong: #cbd5e1;
-  --accent: #2563eb;
+  --bg: #f4f1e9;
+  --surface: #fdfcf7;
+  --surface-press: #f2eee3;
+  --ink: #26231c;
+  --ink-soft: #5f594b;
+  --ink-faint: #8f8776;
+  --line: #e4dece;
+  --line-strong: #cfc8b3;
+  --accent: #b0452b;
+  --accent-deep: #93361f;
+  --accent-soft: rgba(176, 69, 43, 0.16);
 
-  --zone-ui: #7c5cff;
-  --zone-api: #0ea5e9;
-  --zone-logic: #f59e0b;
-  --zone-data: #10b981;
-  --zone-config: #64748b;
-  --zone-test: #ec4899;
-  --zone-unknown: #94a3b8;
+  --zone-ui: #6a55c4;
+  --zone-api: #2d7ea3;
+  --zone-logic: #c4881c;
+  --zone-data: #37845a;
+  --zone-config: #857c68;
+  --zone-test: #b04f7c;
+  --zone-unknown: #a49c8a;
 
-  --radius: 10px;
-  --shadow: 0 1px 2px rgba(15, 23, 42, 0.06), 0 4px 12px rgba(15, 23, 42, 0.05);
+  --radius: 8px;
+  --shadow: 0 1px 2px rgba(64, 54, 32, 0.05), 0 4px 14px rgba(64, 54, 32, 0.06);
   --font: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  --font-display: 'Iowan Old Style', 'Palatino Linotype', Palatino, Georgia, 'Times New Roman', serif;
   --mono: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace;
 }
 
@@ -55,7 +64,7 @@ button {
 code {
   font-family: var(--mono);
   font-size: 0.92em;
-  background: #f1f5f9;
+  background: #edeade;
   padding: 0.1em 0.35em;
   border-radius: 4px;
 }
@@ -75,13 +84,32 @@ code {
 .topbar {
   grid-area: top;
   display: flex;
-  align-items: center;
+  align-items: stretch;
   justify-content: space-between;
   gap: 16px;
   padding: 0 16px;
   background: var(--surface);
-  border-bottom: 1px solid var(--line);
+  border-bottom: 1px solid var(--line-strong);
   z-index: 5;
+}
+
+/* The wordmark. Set in the display face so the first thing on screen says what
+   kind of object this is: a book about your app, not another dashboard. */
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  align-self: center;
+  font-family: var(--font-display);
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+}
+
+.brand-mark {
+  color: var(--accent);
+  font-size: 12px;
 }
 
 .canvas {
@@ -103,6 +131,7 @@ code {
 .crumbs {
   display: flex;
   align-items: center;
+  align-self: center;
   gap: 2px;
   min-width: 0;
   overflow: hidden;
@@ -119,7 +148,7 @@ code {
 }
 
 .crumb:hover {
-  background: #eef2f7;
+  background: var(--surface-press);
   color: var(--ink);
 }
 
@@ -136,6 +165,7 @@ code {
 .topbar-right {
   display: flex;
   align-items: center;
+  align-self: center;
   gap: 12px;
   flex: none;
 }
@@ -149,6 +179,7 @@ code {
 .scope-picker {
   display: flex;
   align-items: center;
+  align-self: center;
   gap: 6px;
   flex: none;
 }
@@ -179,11 +210,12 @@ code {
 
 /* Shown for a couple of seconds after --watch rebuilds, then it gets out of the way. */
 .live-badge {
+  align-self: center;
   font-size: 11px;
   font-weight: 600;
   letter-spacing: 0.02em;
-  color: #047857;
-  background: rgba(16, 185, 129, 0.14);
+  color: #266344;
+  background: rgba(55, 132, 90, 0.16);
   border-radius: 999px;
   padding: 3px 9px;
   white-space: nowrap;
@@ -206,7 +238,7 @@ kbd {
   padding: 1px 4px;
   margin-left: 3px;
   color: var(--ink-soft);
-  background: #f8fafc;
+  background: var(--surface);
 }
 
 /* ---------- cards on the canvas ---------- */
@@ -238,7 +270,7 @@ kbd {
 .card.is-selected,
 .card.is-focus {
   border-color: var(--accent);
-  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.18), var(--shadow);
+  box-shadow: 0 0 0 3px var(--accent-soft), var(--shadow);
 }
 
 .card-head {
@@ -265,7 +297,7 @@ kbd {
 
 .card-open {
   border: 1px solid var(--line);
-  background: #f8fafc;
+  background: var(--surface-press);
   border-radius: 6px;
   color: var(--ink-soft);
   font-size: 15px;
@@ -370,21 +402,26 @@ kbd {
   place-items: center;
   color: var(--ink-faint);
   font-size: 14px;
+  font-family: var(--font-display);
+  font-style: italic;
   pointer-events: none;
   z-index: 3;
 }
 
+/* Set like the legend of a printed map: small capitals, paper, a hairline frame. */
 .legend {
   position: absolute;
   left: 14px;
   bottom: 14px;
   display: flex;
   gap: 12px;
-  background: rgba(255, 255, 255, 0.92);
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  padding: 6px 10px;
-  font-size: 11px;
+  background: rgba(253, 252, 247, 0.94);
+  border: 1px solid var(--line-strong);
+  border-radius: 6px;
+  padding: 7px 11px;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
   color: var(--ink-soft);
   z-index: 4;
 }
@@ -402,7 +439,7 @@ kbd {
   bottom: 14px;
   font-size: 11.5px;
   color: var(--ink-faint);
-  background: rgba(255, 255, 255, 0.9);
+  background: rgba(253, 252, 247, 0.92);
   border-radius: 999px;
   padding: 5px 14px;
   border: 1px solid var(--line);
@@ -456,7 +493,8 @@ kbd {
 
 .panel h2 {
   margin: 0;
-  font-size: 18px;
+  font-family: var(--font-display);
+  font-size: 19px;
   line-height: 1.25;
   word-break: break-word;
 }
@@ -477,16 +515,16 @@ kbd {
   text-transform: uppercase;
   padding: 2px 7px;
   border-radius: 999px;
-  background: #f1f5f9;
+  background: var(--surface-press);
   color: var(--ink-soft);
 }
 
-.zone-chip.zone-ui { background: rgba(124, 92, 255, 0.12); color: #5b3fd6; }
-.zone-chip.zone-api { background: rgba(14, 165, 233, 0.12); color: #0369a1; }
-.zone-chip.zone-logic { background: rgba(245, 158, 11, 0.14); color: #b45309; }
-.zone-chip.zone-data { background: rgba(16, 185, 129, 0.14); color: #047857; }
-.zone-chip.zone-config { background: rgba(100, 116, 139, 0.14); color: #475569; }
-.zone-chip.zone-test { background: rgba(236, 72, 153, 0.12); color: #be185d; }
+.zone-chip.zone-ui { background: rgba(106, 85, 196, 0.13); color: #503aa8; }
+.zone-chip.zone-api { background: rgba(45, 126, 163, 0.13); color: #205e7c; }
+.zone-chip.zone-logic { background: rgba(196, 136, 28, 0.15); color: #8f6210; }
+.zone-chip.zone-data { background: rgba(55, 132, 90, 0.15); color: #266344; }
+.zone-chip.zone-config { background: rgba(133, 124, 104, 0.16); color: #5f594b; }
+.zone-chip.zone-test { background: rgba(176, 79, 124, 0.13); color: #8c3a60; }
 
 .panel-section {
   padding: 16px 20px;
@@ -495,9 +533,9 @@ kbd {
 
 .panel-section h3 {
   margin: 0 0 4px;
-  font-size: 12px;
+  font-size: 11.5px;
   text-transform: uppercase;
-  letter-spacing: 0.04em;
+  letter-spacing: 0.06em;
   color: var(--ink-faint);
 }
 
@@ -519,18 +557,18 @@ kbd {
 }
 
 .trust-facts {
-  background: #eef2ff;
-  color: #3730a3;
+  background: rgba(106, 85, 196, 0.12);
+  color: #503aa8;
 }
 
 .trust-docs {
-  background: #ecfdf5;
-  color: #047857;
+  background: rgba(55, 132, 90, 0.14);
+  color: #266344;
 }
 
 .trust-ai {
-  background: #fef3c7;
-  color: #92400e;
+  background: rgba(196, 136, 28, 0.16);
+  color: #8f6210;
 }
 
 .summary-text {
@@ -609,7 +647,7 @@ kbd {
 }
 
 .link-list li {
-  border-bottom: 1px solid #f1f5f9;
+  border-bottom: 1px solid var(--line);
 }
 
 .link-list button {
@@ -627,7 +665,7 @@ kbd {
 }
 
 .link-list button:hover {
-  background: #f8fafc;
+  background: var(--surface-press);
 }
 
 .link-name {
@@ -676,7 +714,7 @@ kbd {
 }
 
 .btn-primary:hover {
-  background: #1d4ed8;
+  background: var(--accent-deep);
 }
 
 .btn-ghost {
@@ -701,7 +739,7 @@ kbd {
 .palette-backdrop {
   position: fixed;
   inset: 0;
-  background: rgba(15, 23, 42, 0.35);
+  background: rgba(38, 35, 28, 0.4);
   display: flex;
   justify-content: center;
   padding-top: 14vh;
@@ -713,8 +751,9 @@ kbd {
   height: fit-content;
   max-height: 62vh;
   background: var(--surface);
-  border-radius: 12px;
-  box-shadow: 0 20px 60px rgba(15, 23, 42, 0.28);
+  border: 1px solid var(--line-strong);
+  border-radius: 10px;
+  box-shadow: 0 20px 60px rgba(38, 35, 28, 0.3);
   overflow: hidden;
   display: flex;
   flex-direction: column;
@@ -727,6 +766,8 @@ kbd {
   font-size: 15px;
   outline: none;
   font-family: var(--font);
+  background: var(--surface);
+  color: var(--ink);
 }
 
 .palette-results {
@@ -750,13 +791,7 @@ kbd {
 }
 
 .palette-results button.is-active {
-  background: #eff6ff;
-}
-
-.palette-results .link-path {
-  display: inline;
-  padding: 0;
-  flex: 1;
+  background: var(--surface-press);
 }
 
 .palette-hint {
@@ -775,7 +810,8 @@ kbd {
 }
 
 .fatal h1 {
-  font-size: 20px;
+  font-family: var(--font-display);
+  font-size: 22px;
 }
 
 /* ---------- react flow overrides ---------- */
@@ -795,13 +831,29 @@ kbd {
 
 .react-flow__controls {
   box-shadow: var(--shadow);
-  border-radius: 8px;
+  border: 1px solid var(--line-strong);
+  border-radius: 7px;
   overflow: hidden;
 }
 
+.react-flow__controls-button {
+  background: var(--surface);
+  border-bottom: 1px solid var(--line);
+  color: var(--ink-soft);
+}
+
+.react-flow__controls-button:hover {
+  background: var(--surface-press);
+}
+
+.react-flow__controls-button svg {
+  fill: var(--ink-soft);
+}
+
 .react-flow__minimap {
-  border: 1px solid var(--line);
-  border-radius: 8px;
+  border: 1px solid var(--line-strong);
+  border-radius: 7px;
+  --xy-minimap-background-color: var(--surface);
 }
 
 @media (max-width: 1200px) {
@@ -812,6 +864,11 @@ kbd {
   /* Not enough room for the legend and the hint side by side; the panel says the
      same thing in words, so the hint is the one that goes. */
   .hint {
+    display: none;
+  }
+
+  /* The tabs already say where you are; the wordmark is the first thing to go. */
+  .brand {
     display: none;
   }
 }

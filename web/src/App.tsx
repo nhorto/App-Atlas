@@ -19,7 +19,6 @@ import {
   MiniMap,
   ReactFlow,
   ReactFlowProvider,
-  useNodesInitialized,
   useReactFlow,
   type Edge,
   type Node,
@@ -108,7 +107,20 @@ function AtlasApp() {
   const [scopes, setScopes] = useState<ScopeInfo[]>([]);
   const [scopeId, setScopeId] = useState('');
   const { fitView } = useReactFlow();
-  const nodesInitialized = useNodesInitialized();
+
+  // The URL bar is an input too: pasting a different #view, or the browser's own
+  // back/forward, should move the atlas without needing a reload. Our own writes
+  // use replaceState, which never fires this event, so there is no loop to guard.
+  useEffect(() => {
+    const onHashChange = () => {
+      const next = readHash();
+      setView(next.view);
+      if (next.view === 'map' && next.levelId) setLevelId(next.levelId);
+      setSelectedId(null);
+    };
+    window.addEventListener('hashchange', onHashChange);
+    return () => window.removeEventListener('hashchange', onHashChange);
+  }, []);
 
   // --- which apps there are, in a monorepo ---
   // Asked once, before anything else, because every other request is about one of them.
@@ -254,17 +266,22 @@ function AtlasApp() {
     };
   }, [selectedId, revision]);
 
-  // --- frame each level once React Flow has measured it ---
-  // Fitting too early frames the *previous* level's nodes, so wait for React Flow to
-  // report the current ones as measured. The delayed second call covers the frame
-  // where measurement finishes just after this effect runs.
+  // --- frame each level as soon as it is laid out ---
+  // Not gated on React Flow's own "nodes measured" signal: these nodes carry explicit
+  // width/height from elk, and React Flow never reports pre-sized nodes as measured,
+  // so that signal simply never fires. Our own state is the reliable one — positions
+  // arrive together with the level. The first call runs a frame after the nodes
+  // render; the delayed one covers React Flow syncing its store just after that.
   useEffect(() => {
-    if (view !== 'map' || !nodesInitialized || !level) return;
+    if (view !== 'map' || !level || positions.size === 0) return;
     const options = { padding: 0.2, maxZoom: 1 };
-    void fitView(options);
-    const timer = window.setTimeout(() => void fitView({ ...options, duration: 250 }), 120);
-    return () => window.clearTimeout(timer);
-  }, [view, nodesInitialized, level, fitView]);
+    const frame = requestAnimationFrame(() => void fitView(options));
+    const timer = window.setTimeout(() => void fitView({ ...options, duration: 250 }), 150);
+    return () => {
+      cancelAnimationFrame(frame);
+      window.clearTimeout(timer);
+    };
+  }, [view, level, positions, fitView]);
 
   const go = useCallback((next: ViewName, id?: string | null) => {
     setView(next);
@@ -431,10 +448,10 @@ function AtlasApp() {
         source: edge.fromId,
         target: edge.toId,
         label: touchesSelection && edge.weight > 1 ? String(edge.weight) : undefined,
-        labelBgStyle: { fill: '#ffffff' },
-        labelStyle: { fontSize: 11, fill: '#475569' },
+        labelBgStyle: { fill: '#f4f1e9' },
+        labelStyle: { fontSize: 11, fill: '#5f594b' },
         style: {
-          stroke: touchesSelection ? '#334155' : '#94a3b8',
+          stroke: touchesSelection ? '#4a4436' : '#a89f8b',
           strokeWidth: touchesSelection ? Math.max(1.6, width) : width,
           opacity,
         },
@@ -442,7 +459,7 @@ function AtlasApp() {
           type: MarkerType.ArrowClosed,
           width: 14,
           height: 14,
-          color: touchesSelection ? '#334155' : '#94a3b8',
+          color: touchesSelection ? '#4a4436' : '#a89f8b',
         },
       } satisfies Edge;
     });
@@ -467,6 +484,10 @@ function AtlasApp() {
   return (
     <div className={showPanel ? 'app' : 'app is-wide'}>
       <header className="topbar">
+        <span className="brand">
+          <span className="brand-mark" aria-hidden="true">✦</span>
+          App Atlas
+        </span>
         <nav className="tabs" aria-label="Views">
           {TABS.map((tab) => (
             <button
@@ -604,7 +625,7 @@ function AtlasApp() {
               }}
               onPaneClick={() => setSelectedId(null)}
             >
-              <Background variant={BackgroundVariant.Dots} gap={22} size={1} color="#dbe1ea" />
+              <Background variant={BackgroundVariant.Dots} gap={22} size={1} color="#d9d2bf" />
               <Controls showInteractive={false} />
               <MiniMap
                 pannable
@@ -612,7 +633,7 @@ function AtlasApp() {
                 nodeColor={(node) =>
                   zoneColor(((node.data as { node?: { zone?: Zone } }).node?.zone ?? 'unknown') as Zone)
                 }
-                maskColor="rgba(241,245,249,0.75)"
+                maskColor="rgba(244,241,233,0.78)"
               />
             </ReactFlow>
 
@@ -686,18 +707,18 @@ function writeHash(view: ViewName, levelId: string | null): void {
 function zoneColor(zone: Zone): string {
   switch (zone) {
     case 'ui':
-      return '#7c5cff';
+      return '#6a55c4';
     case 'api':
-      return '#0ea5e9';
+      return '#2d7ea3';
     case 'logic':
-      return '#f59e0b';
+      return '#c4881c';
     case 'data':
-      return '#10b981';
+      return '#37845a';
     case 'config':
-      return '#64748b';
+      return '#857c68';
     case 'test':
-      return '#ec4899';
+      return '#b04f7c';
     default:
-      return '#94a3b8';
+      return '#a49c8a';
   }
 }

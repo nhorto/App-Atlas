@@ -326,6 +326,62 @@ function nestController(cls: ClassDeclaration, ctx: DetectorContext): void {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Supabase Edge Functions — deployed HTTP the rest of the repo never mentions
+// ---------------------------------------------------------------------------
+
+/**
+ * A file under `supabase/functions/<name>/` that calls `Deno.serve(handler)` — or the
+ * older `serve(handler)` from the Deno std library — answers HTTP at
+ * `/functions/v1/<name>` once deployed. No package.json dependency announces this,
+ * so it is gated on the path convention instead: that directory layout *is* the
+ * deployment contract.
+ */
+export const edgeFunctionDetector: BoundaryDetector = {
+  id: 'supabase-edge-functions',
+  enabled: () => true,
+  visit(node, ctx) {
+    if (!Node.isCallExpression(node)) return;
+    const name = edgeFunctionName(ctx.ref.relPath);
+    if (!name) return;
+    const dotted = dottedName(node.getExpression());
+    if (dotted !== 'Deno.serve' && dotted !== 'serve') return;
+
+    const route = `/functions/v1/${name}`;
+    ctx.emit({
+      type: 'endpoint',
+      endpointKind: 'http-route',
+      key: `ANY ${route}`,
+      name: `ANY ${route}`,
+      method: 'ANY',
+      route,
+      framework: 'Supabase Edge Function',
+      // The handler takes every method, and what it does inside is its own business.
+      writes: false,
+      // Supabase verifies the caller's JWT before the function runs unless the
+      // project's config turns that off — a default we can't see from here, hence
+      // likely rather than certain.
+      guards: [
+        {
+          name: 'JWT verified by the platform (verify_jwt default)',
+          how: 'config',
+          provider: 'Supabase',
+          path: ctx.ref.relPath,
+          line: node.getStartLineNumber(),
+          confidence: 'likely',
+        },
+      ],
+      site: ctx.site(node, `${dotted}(handler)`),
+      handlerId: ctx.enclosing(node),
+    });
+  },
+};
+
+function edgeFunctionName(relPath: string): string | null {
+  const match = /(?:^|\/)supabase\/functions\/([^/]+)\//.exec(relPath);
+  return match ? match[1] : null;
+}
+
 function decoratorGuards(decorator: ReturnType<ClassDeclaration['getDecorator']>, ctx: DetectorContext): GuardInfo[] {
   if (!decorator) return [];
   return decorator.getArguments().map((arg) => ({

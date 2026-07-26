@@ -18,7 +18,7 @@
   border: 1px solid var(--line-strong);
   border-radius: 12px;
   background: var(--surface);
-  box-shadow: 0 10px 34px rgba(15, 23, 42, 0.16);
+  box-shadow: 0 10px 34px rgba(64, 54, 32, 0.18);
   overflow: hidden;
 }
 
@@ -28,7 +28,7 @@
 }
 
 .walkthrough.is-warn {
-  border-color: #fbbf24;
+  border-color: #c4881c;
 }
 
 .wt-bar {
@@ -37,7 +37,7 @@
   gap: 14px;
   padding: 9px 12px 9px 15px;
   border-bottom: 1px solid var(--line);
-  background: #f8fafc;
+  background: var(--surface-press);
 }
 
 .wt-where {
@@ -102,8 +102,10 @@
 
 .wt-body h2 {
   margin: 0 0 6px;
-  font-size: 16px;
-  letter-spacing: -0.01em;
+  font-family: var(--font-display);
+  font-size: 17px;
+  font-weight: 600;
+  letter-spacing: 0;
 }
 
 .wt-text {
@@ -115,7 +117,7 @@
 }
 
 .walkthrough.is-warn .wt-text {
-  color: #92400e;
+  color: #8f6210;
 }
 
 /* Somebody else's words, and they look like it. */
@@ -123,7 +125,7 @@
   margin: 11px 0 0;
   padding: 9px 12px;
   border-left: 3px solid var(--line-strong);
-  background: #f8fafc;
+  background: var(--surface-press);
   border-radius: 0 6px 6px 0;
   max-width: 74ch;
 }
@@ -158,7 +160,7 @@
   padding: 10px 12px;
   border: 1px solid var(--line);
   border-radius: 7px;
-  background: #f8fafc;
+  background: var(--surface-press);
   overflow-x: auto;
   font-family: var(--mono);
   font-size: 11.5px;

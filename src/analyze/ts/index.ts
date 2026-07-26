@@ -26,6 +26,7 @@ import type {
   InterfaceDeclaration,
   MethodDeclaration,
   ParameterDeclaration,
+  PropertyAssignment,
   PropertyDeclaration,
   PropertySignature,
   SourceFile,
@@ -357,6 +358,81 @@ function extractFile(ref: SourceFileRef, sf: SourceFile, nodes: AtlasNode[], dec
     functionCount++;
   }
 
+  // --- service objects: an object literal whose properties are functions ---
+  // `export const cellarService = { async getCellar() { … } }` is how a great deal
+  // of real app code — especially agent-written code — organizes its data layer.
+  // The object is not a class, but its methods are functions all the same, and a
+  // map that skips them has a hole where the heart of the app should be.
+  for (const decl of sf.getVariableDeclarations()) {
+    let init = decl.getInitializer();
+    while (init && (Node.isAsExpression(init) || Node.isSatisfiesExpression(init) || Node.isParenthesizedExpression(init))) {
+      init = init.getExpression();
+    }
+    if (!init || !Node.isObjectLiteralExpression(init)) continue;
+    const objName = decl.getName();
+    const statement = decl.getVariableStatement();
+    const isExported = statement?.isExported() ?? false;
+    let sawFunction = false;
+
+    for (const prop of init.getProperties()) {
+      if (Node.isMethodDeclaration(prop)) {
+        const methodName = prop.getName();
+        const id = uniqueId(makeFunctionId(ref.relPath, `${objName}.${methodName}`), usedIds);
+        nodes.push(
+          functionNode({
+            id,
+            name: methodName,
+            fileId,
+            ref,
+            decl: prop,
+            params: prop.getParameters(),
+            returnType: typeTextOf(prop.getReturnTypeNode()?.getText(), () => prop.getReturnType(), prop),
+            isAsync: prop.isAsync(),
+            isExported,
+            docText: jsDocOf(prop),
+            isMethod: true,
+            ownerName: objName,
+          }),
+        );
+        register(id, prop.getStart());
+        declared.names.push(methodName);
+        functionCount++;
+        sawFunction = true;
+      } else if (Node.isPropertyAssignment(prop)) {
+        const inner = prop.getInitializer();
+        if (!inner || !(Node.isArrowFunction(inner) || Node.isFunctionExpression(inner))) continue;
+        const fnExpr = inner as ArrowFunction | FunctionExpression;
+        const methodName = prop.getName();
+        const id = uniqueId(makeFunctionId(ref.relPath, `${objName}.${methodName}`), usedIds);
+        nodes.push(
+          functionNode({
+            id,
+            name: methodName,
+            fileId,
+            ref,
+            decl: prop,
+            params: fnExpr.getParameters(),
+            returnType: typeTextOf(fnExpr.getReturnTypeNode()?.getText(), () => fnExpr.getReturnType(), fnExpr),
+            isAsync: fnExpr.isAsync(),
+            isExported,
+            docText: jsDocOf(prop),
+            isMethod: true,
+            ownerName: objName,
+          }),
+        );
+        // Both the property and the function body should map to this node.
+        register(id, prop.getStart(), fnExpr.getStart());
+        declared.names.push(methodName);
+        functionCount++;
+        sawFunction = true;
+      }
+    }
+
+    // The object itself only earns a mention when it turned out to be a service —
+    // a bag of plain constants stays out of the export list, as before.
+    if (sawFunction && isExported) exportedNames.push(objName);
+  }
+
   // --- classes (a type node, with its methods as function nodes inside) ---
   for (const cls of sf.getClasses()) {
     const name = cls.getName() ?? 'default';
@@ -434,7 +510,7 @@ interface FunctionNodeInput {
   name: string;
   fileId: string;
   ref: SourceFileRef;
-  decl: FunctionDeclaration | VariableDeclaration | MethodDeclaration;
+  decl: FunctionDeclaration | VariableDeclaration | MethodDeclaration | PropertyAssignment;
   params: ParameterDeclaration[];
   returnType: string;
   isAsync: boolean;

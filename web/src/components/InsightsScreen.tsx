@@ -139,6 +139,17 @@ function Meter({ counts }: { counts: [number, number, number] | number[] }) {
 
 // ---------------------------------------------------------------------------
 
+/** "3 companies, 1 of which receives data from you" — without mangling the small cases. */
+function serviceSubtitle(count: number, senders: number): string {
+  const companies = `${count} ${count === 1 ? 'company' : 'companies'}`;
+  if (senders === 0) return `${companies}, none of which receive data from you`;
+  if (senders === count) {
+    if (count === 1) return '1 company, and it receives data from you';
+    return `${companies}, all of which receive data from you`;
+  }
+  return `${companies}, ${senders} of which ${senders === 1 ? 'receives' : 'receive'} data from you`;
+}
+
 function ExternalServices({ services, onReveal }: { services: ServiceInsight[]; onReveal: (id: string) => void }) {
   if (services.length === 0) {
     return (
@@ -152,7 +163,7 @@ function ExternalServices({ services, onReveal }: { services: ServiceInsight[]; 
   return (
     <Card
       title="Where your data goes"
-      subtitle={`${services.length} ${services.length === 1 ? 'company' : 'companies'}, ${senders} of which receive data from you`}
+      subtitle={serviceSubtitle(services.length, senders)}
     >
       <ul className="service-list">
         {services.map((service) => (

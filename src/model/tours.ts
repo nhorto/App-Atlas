@@ -254,8 +254,8 @@ function flowTour(graph: AtlasGraph, endpoint: AtlasNode): Tour | null {
       title: 'Your code answers',
       body:
         handlers.length === 1
-          ? `${first.name} in ${first.path} runs.`
-          : `${countOf(handlers.length, 'piece')} of code answer it, starting with ${first.name} in ${first.path}.`,
+          ? `${nameAndPlace(first)} runs.`
+          : `${countOf(handlers.length, 'piece')} of code answer it, starting with ${nameAndPlace(first)}.`,
       quote: first.summary,
       quoteSource: first.summarySource,
       focusIds: handlers.map((node) => node.id),
@@ -375,13 +375,29 @@ function outputsOf(graph: AtlasGraph, nodes: AtlasNode[]): AtlasNode[] {
 // Phrasing
 // ---------------------------------------------------------------------------
 
+/**
+ * "index.ts in supabase/functions/chat/index.ts" says the file name twice.
+ * When the thing that runs *is* the file, its path is the whole story.
+ */
+function nameAndPlace(node: AtlasNode): string {
+  if (!node.path) return node.name;
+  const base = node.path.split('/').pop() ?? '';
+  return base === node.name || base === `${node.name}.ts` || base === `${node.name}.js`
+    ? node.path
+    : `${node.name} in ${node.path}`;
+}
+
 /** The clause that finishes "What happens when …". */
 function trigger(endpoint: AtlasNode): string {
   const meta = endpoint.meta as unknown as EndpointMeta;
   const route = meta.route ?? endpoint.name;
   switch (meta.endpointKind) {
     case 'http-route':
-      return meta.method === 'PAGE' ? `someone opens ${route}` : `something sends ${meta.method ?? 'a request'} to ${route}`;
+      // "sends ANY to" is analyzer jargon leaking out — a route that accepts any
+      // method is simply called.
+      if (meta.method === 'PAGE') return `someone opens ${route}`;
+      if (!meta.method || meta.method === 'ANY') return `something calls ${route}`;
+      return `something sends ${meta.method} to ${route}`;
     case 'server-action':
       return `the page calls ${route}`;
     // Deliberately not named: `framework` is the convention that *found* the webhook,

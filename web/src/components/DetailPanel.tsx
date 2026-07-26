@@ -525,6 +525,13 @@ function factRows(node: AtlasNode): [string, string][] {
       break;
     case 'type':
       rows.push(['Kind', String(node.meta.typeKind ?? 'type')]);
+      // A table observed in queries was never written down anywhere, so "exported"
+      // and line numbers would be facts about the wrong thing. Say where it was seen.
+      if (node.meta.observed === true) {
+        if (node.meta.provider) rows.push(['Database', String(node.meta.provider)]);
+        if (node.path) rows.push(['First seen in', node.path]);
+        break;
+      }
       rows.push(['Exported', node.meta.isExported ? 'yes' : 'no']);
       if (Array.isArray(node.meta.extends) && (node.meta.extends as string[]).length > 0) {
         rows.push(['Extends', (node.meta.extends as string[]).join(', ')]);

@@ -35,12 +35,25 @@ test('reads Next.js App Router routes off the file system', () => {
     .sort();
 
   assert.deepEqual(paths, [
+    // The Supabase edge function: deployed HTTP that package.json never mentions.
+    'ANY /functions/v1/greet',
     'GET /api/users',
     'PAGE /',
     // The `(app)` route group shapes the folder tree but not the URL.
     'PAGE /dashboard',
     'POST /api/users',
   ]);
+});
+
+test('a Deno.serve file under supabase/functions is a door', () => {
+  const fn = endpoint('ANY /functions/v1/greet');
+  assert.ok(fn, 'the directory convention is the deployment contract');
+  assert.equal(fn.meta.framework, 'Supabase Edge Function');
+  // The platform checks the JWT by default, but a config file we may not see can
+  // turn that off — so the claim must stay "likely", never "certain".
+  const guard = fn.meta.guards.find((g) => g.provider === 'Supabase');
+  assert.ok(guard);
+  assert.equal(guard.confidence, 'likely');
 });
 
 test('finds server actions, which look nothing like an endpoint', () => {
@@ -109,12 +122,32 @@ test('names the doors nothing is guarding, worst first', () => {
 
 test('reads the database out of the client and the schema', () => {
   const stores = atlas.nodes.filter((n) => n.kind === 'store');
-  assert.equal(stores.length, 1);
-  const db = stores[0];
+  assert.equal(stores.length, 2, 'Prisma and Supabase are different databases');
+
+  const db = stores.find((n) => n.meta.client === 'Prisma');
   assert.equal(db.name, 'PostgreSQL', 'schema.prisma names the engine');
-  assert.equal(db.meta.client, 'Prisma');
   assert.deepEqual(db.meta.tables, ['AuditLog', 'Order', 'User']);
   assert.ok(db.meta.reads > 0 && db.meta.writes > 0);
+
+  const supabase = stores.find((n) => n.meta.client === 'Supabase');
+  assert.ok(supabase);
+  assert.deepEqual(supabase.meta.tables, ['page_views'], 'the table name is read out of the query');
+});
+
+test('a table named only in queries still becomes a shape', () => {
+  const observed = atlas.nodes.find((n) => n.kind === 'type' && n.name === 'page_views');
+  assert.ok(observed, 'no schema declares page_views; the .from() call is the evidence');
+  assert.equal(observed.meta.typeKind, 'table');
+  assert.equal(observed.meta.observed, true);
+  assert.deepEqual(observed.meta.fields, [], 'columns are unknowable, and the card must not invent them');
+
+  // The file that queries it references it, so "used in N places" is a fact.
+  const refs = atlas.edges.filter((e) => e.kind === 'references' && e.toId === observed.id);
+  assert.ok(refs.length > 0);
+
+  // Tables a schema already declares must not appear twice.
+  const orders = atlas.nodes.filter((n) => n.kind === 'type' && n.name === 'Order');
+  assert.equal(orders.length, 1);
 });
 
 test('a function that only reads never gets a "writes to" arrow', () => {
@@ -140,14 +173,17 @@ test('names the companies data goes to, from SDKs and from literal URLs', () => 
 test('inventories every environment variable and checks it against .env.example', () => {
   assert.equal(insights.env.exampleFile, '.env.example');
   assert.deepEqual(
-    insights.env.vars.map((v) => v.name),
-    ['RESEND_API_KEY', 'STRIPE_SECRET_KEY', 'STRIPE_WEBHOOK_SECRET'],
+    insights.env.vars.map((v) => v.name).sort(),
+    ['RESEND_API_KEY', 'STRIPE_SECRET_KEY', 'STRIPE_WEBHOOK_SECRET', 'SUPABASE_ANON_KEY', 'SUPABASE_URL'],
   );
   assert.deepEqual(
     insights.env.undocumented.map((v) => v.name).sort(),
-    ['RESEND_API_KEY', 'STRIPE_WEBHOOK_SECRET'],
+    ['RESEND_API_KEY', 'STRIPE_WEBHOOK_SECRET', 'SUPABASE_ANON_KEY', 'SUPABASE_URL'],
   );
-  assert.ok(insights.env.vars.every((v) => v.secret), 'all three look like credentials');
+  const url = insights.env.vars.find((v) => v.name === 'SUPABASE_URL');
+  assert.equal(url.secret, false, 'a URL is a setting, not a credential');
+  const anonKey = insights.env.vars.find((v) => v.name === 'SUPABASE_ANON_KEY');
+  assert.equal(anonKey.secret, true);
   const resendKey = insights.env.vars.find((v) => v.name === 'RESEND_API_KEY');
   assert.equal(resendKey.sites[0].path, 'src/lib/email.ts');
 });
@@ -195,9 +231,9 @@ test('groups the boundary view by family and connects it through the zones', () 
 test('counts the boundary in the headline stats', () => {
   const s = atlas.meta.stats;
   assert.equal(s.endpoints, endpoints.length);
-  assert.equal(s.stores, 1);
+  assert.equal(s.stores, 2);
   assert.equal(s.externalServices, 4);
-  assert.equal(s.envVars, 3);
+  assert.equal(s.envVars, 5);
   // Crons and config are not doors a stranger can knock on.
   assert.equal(s.routes, insights.auth.routes.length);
   assert.equal(s.unprotectedRoutes, insights.auth.openCount);

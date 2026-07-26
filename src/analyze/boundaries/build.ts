@@ -33,6 +33,7 @@ import {
   makeFileId,
   makeServiceId,
   makeStoreId,
+  makeTypeId,
 } from '../../model/types.js';
 import { hashParts } from '../../util/hash.js';
 import { isCatchAllMatcher, matcherMatches } from './auth.js';
@@ -83,9 +84,29 @@ export function buildBoundaryGraph(input: BuildInput): BoundaryGraph {
     nodes.push(serviceNode(service));
     addEdges(edges, flowEdges(service.id, service.meta.sites, service.writes, input.knownNodeIds));
   }
+  // Every table a schema file declares already has a proper card, columns and all.
+  const declaredTables = new Set((input.signals.prisma?.models ?? []).map((model) => model.toLowerCase()));
+
   for (const store of stores.values()) {
     nodes.push(storeNode(store));
     addEdges(edges, storeEdges(store, input.knownNodeIds));
+
+    // Tables the code names in its queries — `.from('cellar_bottles')`, an INSERT —
+    // are the user's actual data even when no schema file is in the repo, which for
+    // a Supabase app is the normal case. Each becomes a shape the data view can
+    // draw. Columns are unknowable from here, so the card says so instead of lying.
+    if (store.meta.storeKind !== 'sql' && store.meta.storeKind !== 'nosql') continue;
+    for (const [table, sites] of store.tableSites) {
+      if (declaredTables.has(table.toLowerCase())) continue;
+      nodes.push(observedTableNode(store, table, sites));
+      addEdges(
+        edges,
+        flowEdges(makeTypeId(store.id, table), sites, false, input.knownNodeIds).map((edge) => ({
+          ...edge,
+          kind: 'references' as const,
+        })),
+      );
+    }
   }
 
   return { nodes, edges };
@@ -380,10 +401,19 @@ interface MergedStore {
   /** Kept apart so a function that only reads never gets a "writes to" arrow. */
   readSites: CodeSite[];
   writeSites: CodeSite[];
+  /** Which call sites named which table, so each table can become a shape of its own. */
+  tableSites: Map<string, CodeSite[]>;
 }
 
 function collectStores(input: BuildInput): Map<string, MergedStore> {
   const merged = new Map<string, MergedStore>();
+
+  const noteTable = (store: MergedStore, table: string | null, site: CodeSite) => {
+    if (!table) return;
+    const sites = store.tableSites.get(table);
+    if (sites) sites.push(site);
+    else store.tableSites.set(table, [site]);
+  };
 
   for (const finding of input.findings) {
     if (finding.type !== 'store') continue;
@@ -399,13 +429,15 @@ function collectStores(input: BuildInput): Map<string, MergedStore> {
         existing.writeSites.push(finding.site);
       }
       if (finding.table && !existing.meta.tables.includes(finding.table)) existing.meta.tables.push(finding.table);
+      noteTable(existing, finding.table, finding.site);
       continue;
     }
-    merged.set(id, {
+    const store: MergedStore = {
       id,
       name: finding.name,
       readSites: finding.operation === 'read' ? [finding.site] : [],
       writeSites: finding.operation === 'write' ? [finding.site] : [],
+      tableSites: new Map(),
       meta: {
         storeKind: finding.storeKind,
         client: finding.client,
@@ -414,7 +446,9 @@ function collectStores(input: BuildInput): Map<string, MergedStore> {
         writes: finding.operation === 'write' ? 1 : 0,
         sites: [finding.site],
       },
-    });
+    };
+    noteTable(store, finding.table, finding.site);
+    merged.set(id, store);
   }
 
   // A Prisma schema lists every table, including ones no code has touched yet.
@@ -521,6 +555,41 @@ const STORE_ZONES: Record<StoreKind, Zone> = {
   unknown: 'data',
 };
 
+/**
+ * A table the code queries by name, with no schema file to read columns from. It
+ * hangs under its store, so drilling into the database shows what lives there.
+ */
+function observedTableNode(store: MergedStore, table: string, sites: CodeSite[]): AtlasNode {
+  const first = sites[0];
+  return {
+    id: makeTypeId(store.id, table),
+    kind: 'type',
+    name: table,
+    label: null,
+    parentId: store.id,
+    language: null,
+    path: first?.path ?? null,
+    startLine: first?.line ?? null,
+    endLine: null,
+    zone: 'data',
+    summary: null,
+    summarySource: null,
+    docHash: null,
+    bodyHash: null,
+    hash: hashParts('observed-table', store.id, table, String(sites.length)),
+    provenance: 'static',
+    meta: {
+      typeKind: 'table',
+      fields: [],
+      isExported: true,
+      extends: [],
+      provider: store.meta.client,
+      /** Named in queries, never declared — the card explains its missing columns. */
+      observed: true,
+    },
+  };
+}
+
 function storeNode(store: MergedStore): AtlasNode {
   return {
     id: store.id,
@@ -570,11 +639,21 @@ function endpointEdges(endpoint: MergedEndpoint, known: Set<string>): EdgeInput[
     });
   }
 
+  // Two guards can live in the same file — a platform default plus an auth call
+  // inside the handler — and an edge id is (kind, from, to), so they must merge
+  // into one edge rather than crash the unique index.
+  const byGuardFile = new Map<string, EdgeInput>();
   for (const guard of endpoint.meta.guards) {
     if (!guard.path) continue;
     const guardId = makeFileId(guard.path);
     if (!known.has(guardId) || guardId === endpoint.id) continue;
-    out.push({
+    const existing = byGuardFile.get(guardId);
+    if (existing) {
+      existing.weight++;
+      if (guard.confidence === 'certain') existing.confidence = 'certain';
+      continue;
+    }
+    byGuardFile.set(guardId, {
       kind: 'protected-by',
       fromId: endpoint.id,
       toId: guardId,
@@ -583,6 +662,7 @@ function endpointEdges(endpoint: MergedEndpoint, known: Set<string>): EdgeInput[
       meta: { guard: guard.name, provider: guard.provider },
     });
   }
+  out.push(...byGuardFile.values());
 
   return out;
 }
