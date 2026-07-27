@@ -261,6 +261,55 @@ this project.
 One piece of good news: **`app-atlas` on npm is unclaimed** (registry returns 404 as of
 this research). The name is available; the search term is not.
 
+### So what would you rename it to?
+
+I checked 70 candidates against the npm registry directly. The headline finding is not
+about any one name:
+
+> **npm's single-word English namespace is exhausted.** Of 70 checked, 47 were taken —
+> including every strong metaphor: `legend`, `cutaway`, `portico`, `lintel`, `threshold`,
+> `sextant`, `astrolabe`, `fathom`, `plumbline`, `sounding`, `waypoint`, `doorway`,
+> `frontdoor`, `everydoor`, `entryway`, `porthole`, `transom`, `jamb`, `vestibule`,
+> `foyer`, `schematic`, `floorplan`, `surveyor`, `cartograph`, `traverse`, `datum`,
+> `lodestar`, `trailhead`, `perimeter`.
+
+So "rename it to one clean evocative word" is not an available option. What is available:
+
+**Free on npm, and worth something:**
+
+| Name | The idea | Problem |
+|---|---|---|
+| `keyplan` | A drafting term: the small orientation diagram showing where the detailed drawing sits in the whole building. Exactly what drill-down + breadcrumbs do. | Obscure; reads as "pricing plan" to some |
+| `groundtruth` | Literally product principle #1 | Collides with the ML sense (labelled training data), which owns the search results |
+| `openings` | Architecture's word for the doors and windows in a building — the ways in | Common English word, so no better for SEO than "atlas" |
+| `exploded-view` | The mechanical drawing that separates the parts so you can see how they fit — instantly clear to a non-engineer | Hyphenated, long to type |
+| `cutplan`, `sectionview`, `boundaryview`, `insidemap`, `whatsinside`, `doorcount`, `waysin`, `frontdoors`, `fixpoint`, `levelset`, `landfall`, `chartroom`, `hatchway`, `soffit`, `doorsill` | — | see below |
+
+**Two that looked strong and then didn't survive checking:**
+
+- **Chartroom** — the room on a ship where the charts live. Free on npm, evocative. Killed
+  by two things: `simonw/chartroom` already exists (50★, a CLI tool, February 2026), and
+  "chartroom" is a common misspelling of "chatroom", so GitHub is full of chat apps under
+  that name. The search problem would be worse than "atlas".
+- **Hatchway** — free on npm, distinctive, a door. Killed by hatchways.io, an existing
+  developer-tools company, plus `django-hatchway` (154★).
+
+**Honest recommendation.** Nothing found beats "App Atlas" enough to pay for a rename.
+The name is accurate, the metaphor is right, the npm package is free, and the alternatives
+are either obscure (`keyplan`), ambiguous (`groundtruth`), or clunky (`exploded-view`).
+The discoverability problem is real but it is a launch problem, and it is solved by the
+tagline and the boundary-view screenshot, not by the noun — nobody searches "atlas" and
+hopes to find this; they search "what are all the routes in my app" or "is my vibe coded
+app secure."
+
+If a rename does happen, do it before any adoption, and the two worth considering are
+**`keyplan`** (precise, professional, uncontested) and **`openings`** (on-thesis, plain
+English, reads well in a sentence: "Openings found 12 unprotected doors").
+
+*Availability checked against the npm registry on 27 July 2026, and against GitHub
+repository search. Domains and trademarks were not checked — do that before committing to
+anything.*
+
 ---
 
 ## What to do with this
