@@ -165,7 +165,53 @@ The analyzer is a plugin interface from day one: a language plugin consumes sour
 ### 5.8 Web app (the lens layer)
 React + **React Flow (@xyflow/react)** for canvas (nodes are real React components — type cards, folder boxes, hover cards are just JSX) + **elkjs** for deterministic hierarchical layout (only mainstream JS engine with proper boxes-inside-boxes support; runs in a web worker) + **d3-sankey** for boundary-view flow bands. Canvas only ever receives the current level's slice of the graph.
 
+## 5.9 Project archetypes (what kind of thing is this repo?)
+
+The five views were designed for a web app, and shipping them in that order to every
+project meant a Python scripts repo opened on a nearly-empty diagram of doors it does
+not have. Framework detection already existed (`detectFrameworks` in
+`src/analyze/project.ts`); nothing downstream consumed it.
+
+So the analyzer now classifies an **archetype** — a different question from which
+framework is in use, since two FastAPI repos can be a service and a library.
+
+| Archetype | Decided by | Home view |
+|---|---|---|
+| `web-app` | screens, or network doors plus a UI framework / interface files | Boundaries |
+| `service` | network doors, no UI | Boundaries |
+| `pipeline` | a `cli` door, a `bin` entry, or a schedule — and nothing answering a URL | Map |
+| `library` | files with exports, and no doors of any kind | Map |
+| `unknown` | none of the above | Map |
+
+Rules that keep this honest:
+
+- **It is a fact, not a guess by a model.** Every input is something the compiler or a
+  manifest told us, and the verdict carries `because` — the signals that produced it —
+  which is rendered on the Overview page. A wrong verdict that shows its reasoning is
+  a bug report; one that hides it is a mystery.
+- **It changes emphasis, defaults and wording. Nothing else.** No view is ever hidden,
+  no fact ever changes, and there are no per-framework screens — that would be a
+  maintenance explosion and would fight the one-atlas-many-lenses design.
+- **Landing is decided once.** A bare URL lands on the archetype's home view; an
+  explicit `#hash` always wins, and a watch-mode rebuild never moves someone.
+- **Tab emphasis comes from the counts, not the archetype**, so a misclassified project
+  still gets an honest tab bar. `unknown` is a real answer, not a failure.
+
 ## 6. The views (v1)
+
+Every view states its own question in a fixed strip under the tabs. Two of them are a
+canvas of boxes joined by lines, so without that line they read as variations on one
+picture rather than as different questions — and the tab labelled "Data" collided with
+both the data-*flow* reading the boundary view owns and the Data *zone* in the map's
+legend. It is called **Data model** for that reason; the URL hash stays `#types`.
+
+| View | Hash | The question it answers |
+|---|---|---|
+| Boundaries | `#boundaries` | What gets into your app, and where it ends up |
+| Overview | `#overview` | What this app is, and where to start reading |
+| Map | `#map` | How your code is organized — the folders and files, and what uses what |
+| Data model | `#types` | What your data looks like — the shapes your app moves around |
+| Security | `#insights` | Who can get in, where your data goes, and what you rely on |
 
 ### 6.1 Boundary view — the home screen
 Left→right (beats the ring: reading order, causality, scales better; rings die past ~10 spokes).
@@ -176,6 +222,35 @@ Left→right (beats the ring: reading order, causality, scales better; rings die
 - Hover a band → its full path highlights. Click → launches a trace walkthrough
 - Below the diagram, one AI paragraph: "Your app takes X in, does Y with it, and stores/sends Z"
 
+**Parameterized by archetype (§5.9).** One view, not three screens — if the
+implementation ever forks, the abstraction is wrong. The geometry never changes,
+because left→right *is* the argument for this view over a ring. Only the vocabulary
+and what counts as a door do:
+
+| Archetype | Left column | Right column |
+|---|---|---|
+| `web-app` | What gets in | Where data goes |
+| `service` | What calls it | Where data goes |
+| `library` | What consumers can call | What it reaches for |
+| `pipeline` | What it reads | What it writes |
+
+A **library's doors are its exported names**, emitted into the atlas as endpoints of
+kind `export` and split into two cards — functions (breaking a caller at runtime) and
+types (breaking them at compile time). They are real graph nodes rather than a
+rendering trick, so the detail panel, tours and `ATLAS.md` get them for free. Two
+rules keep them honest: they are only built for projects classified `library` (on an
+app, every helper would become a door and the picture would say nothing), and `export`
+is deliberately excluded from `isAuthRelevant`, because badging an import
+"unprotected" would be a false alarm in the one place this tool must never cry wolf.
+
+A **pipeline** needs no new detectors — the CLI, file reads, env reads and file
+writes already exist as boundary findings. What it needed was the vocabulary, so the
+same picture reads as an I/O diagram.
+
+The headline follows the same rule: the first count is renamed per archetype
+("3 names in its public API", "2 inputs"), and zero counts drop out rather than
+padding the line with `0 services out · 0 data stores`.
+
 ### 6.2 Architecture map — drill-down
 - Top level: 5–9 modules as nested rounded rectangles with plain-English labels, aggregated arrows ("12 calls") between them
 - Double-click → camera zooms in; siblings collapse to slim tabs at the border (context preserved); files render inside
@@ -183,7 +258,7 @@ Left→right (beats the ring: reading order, causality, scales better; rings die
 - Breadcrumb top-left (`App › User accounts › login.ts`), minimap bottom-right, Cmd-K search top-center
 - Inside a file: its functions and types as rows/cards, each with AI one-liner, params, return type
 
-### 6.3 Type explorer — dbdiagram for your code
+### 6.3 Data model (the type explorer) — dbdiagram for your code
 Types are the "tables" of application code:
 - Type cards: header (name + kind badge), rows = fields with their types
 - Field-level edges to other type cards; elkjs layered left→right layout

@@ -1,16 +1,22 @@
 /**
- * @fileoverview The app shell and its three lenses.
+ * @fileoverview The app shell and its five lenses.
  *
- * The boundary view is the home screen (SPEC.md 6.1): what comes in, what your app is
- * made of, where data goes. The architecture map (6.2) is the drill-down, and the
- * security page (6.6) is the list of answers the map implies. All three share one
- * detail panel, because whatever you click the question is the same: what is this?
+ * Each tab is one question about the same atlas — what gets in (SPEC.md 6.1), what
+ * this app is, how the code is organized (6.2), what the data looks like (6.3), who
+ * can get in (6.6) — and each says its question in a fixed strip under the tabs. They
+ * share one detail panel, because whatever you click the question is the same: what
+ * is this?
+ *
+ * Which one opens first is not fixed. A bare URL lands on the boundary view only when
+ * there is a boundary to show; a project with none goes to the map instead, because
+ * being dropped on an empty diagram reads as "this tool did not work". An explicit
+ * `#hash` always wins over that.
  *
  * The rule this file exists to enforce: the canvas never receives the whole graph —
  * one level of the atlas is on screen at a time, with the connections between the
  * things on screen rolled up into single arrows.
  */
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Background,
   BackgroundVariant,
@@ -40,6 +46,7 @@ import {
 import { layoutLevel, layoutOutsideWorld, MEMBRANE_ID, sizeOf, type Positioned } from './layout';
 import type {
   AtlasNode,
+  AtlasStats,
   BoundaryView,
   InsightsView,
   LevelView,
@@ -67,13 +74,35 @@ type ViewName = 'boundaries' | 'overview' | 'map' | 'types' | 'insights';
 
 // Boundaries stays first: it is the home screen (SPEC.md 6.1) and the thing no other
 // tool does. Overview sits beside it for the reader who wants prose before a diagram.
+//
+// "Data model" and not "Data": the word on its own was claimed three times over — the
+// boundary view answers where data *goes*, the map's legend has a Data *zone*, and
+// this tab is about the shapes data is *in*. Whoever wanted "the data one" had to
+// guess.
 const TABS: { view: ViewName; label: string }[] = [
   { view: 'boundaries', label: 'Boundaries' },
   { view: 'overview', label: 'Overview' },
   { view: 'map', label: 'Map' },
-  { view: 'types', label: 'Data' },
+  { view: 'types', label: 'Data model' },
   { view: 'insights', label: 'Security' },
 ];
+
+/**
+ * The question each view exists to answer, stated on screen.
+ *
+ * Two of these views are a canvas of boxes joined by lines, which made them read as
+ * variations on one picture rather than as different questions. A label alone did not
+ * fix that — "Map" and "Data model" only mean something once you already know what
+ * they contain — so every view now says its question in the same place, in the reader's
+ * words rather than ours.
+ */
+const LEDES: Record<ViewName, string> = {
+  boundaries: 'What gets into your app, and where it ends up.',
+  overview: 'What this app is, and where to start reading.',
+  map: 'How your code is organized — the folders and files, and what uses what.',
+  types: 'What your data looks like — the shapes your app moves around, and how they connect.',
+  insights: 'Who can get in, where your data goes, and what you rely on.',
+};
 
 export function App() {
   return (
@@ -107,6 +136,11 @@ function AtlasApp() {
   const [scopes, setScopes] = useState<ScopeInfo[]>([]);
   const [scopeId, setScopeId] = useState('');
   const { fitView } = useReactFlow();
+
+  // Latches the moment the landing view is settled, one way or the other. Without it,
+  // a watch-mode rebuild — which reloads the overview — would yank someone back to the
+  // home view mid-read, and switching app in a monorepo would too.
+  const landed = useRef(initial.asked);
 
   // The URL bar is an input too: pasting a different #view, or the browser's own
   // back/forward, should move the atlas without needing a reload. Our own writes
@@ -166,6 +200,17 @@ function AtlasApp() {
         setOverview(overviewData);
         setBoundaries(boundaryData);
         setLevelId((current) => current ?? overviewData.rootId);
+        // What kind of project this is decides where a bare URL lands. It cannot be
+        // decided any earlier: the archetype is derived from the doors the analyzer
+        // found, and this is the request that carries them.
+        if (!landed.current) {
+          landed.current = true;
+          const home = homeViewFor(overviewData.meta.stats);
+          if (home !== 'boundaries') {
+            setView(home);
+            writeHash(home, null);
+          }
+        }
         setLoading(false);
       })
       .catch((err: Error) => {
@@ -546,6 +591,7 @@ function AtlasApp() {
   }
 
   const crumbs = level?.breadcrumb ?? [];
+  const quiet = quietViews(overview?.meta.stats);
 
   // The overview page already answers "what is this app?" at full width. Showing the
   // same numbers again in the side panel is just the page twice.
@@ -562,7 +608,14 @@ function AtlasApp() {
           {TABS.map((tab) => (
             <button
               key={tab.view}
-              className={tab.view === view ? 'tab is-current' : 'tab'}
+              className={[
+                'tab',
+                tab.view === view ? 'is-current' : '',
+                quiet.has(tab.view) && tab.view !== view ? 'is-quiet' : '',
+              ]
+                .filter(Boolean)
+                .join(' ')}
+              title={quiet.has(tab.view) ? `${LEDES[tab.view]} Nothing found in this project.` : LEDES[tab.view]}
               onClick={() => go(tab.view, levelId)}
             >
               {tab.label}
@@ -605,6 +658,8 @@ function AtlasApp() {
         </div>
       </header>
 
+      <p className="view-lede">{LEDES[view]}</p>
+
       <main className={view === 'map' ? 'canvas' : 'canvas canvas-page'}>
         {view === 'boundaries' ? (
           boundaries ? (
@@ -613,8 +668,10 @@ function AtlasApp() {
               selectedId={selectedId}
               summary={overview?.app?.summary ?? null}
               summarySource={overview?.app?.summarySource ?? null}
+              archetype={overview?.meta.archetype ?? null}
               onSelect={select}
               onOpenInsights={() => go('insights')}
+              onOpenMap={() => go('map', levelId)}
             />
           ) : (
             <div className="loading">Reading the boundaries…</div>
@@ -759,16 +816,60 @@ function AtlasApp() {
 // The URL is the address of a place in the atlas, so links to one keep working.
 // ---------------------------------------------------------------------------
 
-function readHash(): { view: ViewName; levelId: string | null } {
+/**
+ * `asked` separates "someone opened #boundaries" from "someone opened the app". Only
+ * the second one may be overruled by the archetype, because a link to a view is a
+ * request and a bare URL is not.
+ */
+function readHash(): { view: ViewName; levelId: string | null; asked: boolean } {
   const raw = decodeURIComponent(window.location.hash.replace(/^#/, ''));
-  if (!raw || raw === 'boundaries') return { view: 'boundaries', levelId: null };
-  if (raw === 'overview') return { view: 'overview', levelId: null };
-  if (raw === 'types') return { view: 'types', levelId: null };
-  if (raw === 'insights') return { view: 'insights', levelId: null };
-  if (raw === 'map') return { view: 'map', levelId: null };
-  if (raw.startsWith('map/')) return { view: 'map', levelId: raw.slice(4) };
+  if (!raw) return { view: 'boundaries', levelId: null, asked: false };
+  if (raw === 'boundaries') return { view: 'boundaries', levelId: null, asked: true };
+  if (raw === 'overview') return { view: 'overview', levelId: null, asked: true };
+  // The hash stayed `types` when the tab became "Data model": links in exported
+  // ATLAS.md files and anything anyone has shared still point here.
+  if (raw === 'types') return { view: 'types', levelId: null, asked: true };
+  if (raw === 'insights') return { view: 'insights', levelId: null, asked: true };
+  if (raw === 'map') return { view: 'map', levelId: null, asked: true };
+  if (raw.startsWith('map/')) return { view: 'map', levelId: raw.slice(4), asked: true };
   // Links made by M1 were a bare node id and still mean "show me this on the map".
-  return { view: 'map', levelId: raw };
+  return { view: 'map', levelId: raw, asked: true };
+}
+
+/**
+ * Where a bare URL lands.
+ *
+ * The question is not "which archetype is this" but "is there a boundary worth
+ * showing" — and it is asked with the very predicate that dims the tab, so the landing
+ * page and the tab bar can never disagree. The archetype has already done its work by
+ * this point: it decided what counts as a door, which is why a library with exports
+ * has a boundary at all, and that boundary is the most interesting thing about it.
+ *
+ * A project with nothing on that screen goes to the Map instead. Being dropped on an
+ * empty diagram reads as "this tool did not work", which is the whole reason any of
+ * this exists.
+ */
+function homeViewFor(stats: AtlasStats | undefined): ViewName {
+  return quietViews(stats).has('boundaries') ? 'map' : 'boundaries';
+}
+
+/**
+ * Tabs whose view has nothing in it for this project.
+ *
+ * Read off the counts rather than off the archetype on purpose: a misclassified
+ * project still gets an honest tab bar this way, and the two facts stay independent —
+ * the archetype decides where you land, the counts decide what is worth shouting
+ * about. Nothing is ever hidden. "You have no doors" is a useful answer; it just
+ * should not be the loudest thing on screen for a project that was never going to
+ * have any.
+ */
+function quietViews(stats: AtlasStats | undefined): Set<ViewName> {
+  const quiet = new Set<ViewName>();
+  if (!stats) return quiet;
+  if (stats.endpoints === 0 && stats.services === 0 && stats.stores === 0) quiet.add('boundaries');
+  if (stats.routes === 0 && stats.externalServices === 0 && stats.envVars === 0) quiet.add('insights');
+  if (stats.types === 0) quiet.add('types');
+  return quiet;
 }
 
 function writeHash(view: ViewName, levelId: string | null): void {

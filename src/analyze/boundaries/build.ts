@@ -528,6 +528,9 @@ const ENDPOINT_ZONES: Record<EndpointKind, Zone> = {
   cli: 'config',
   env: 'config',
   'file-read': 'data',
+  // Never reached through this table — an export door takes the zone of the symbol it
+  // opens onto, which is the whole point of it. Present so the map stays total.
+  export: 'logic',
   // A screen is the interface, so it colours as UI rather than as a network door.
   screen: 'ui',
 };

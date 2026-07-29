@@ -54,6 +54,12 @@ export type EndpointKind =
   | 'cli'
   | 'env'
   | 'file-read'
+  // A name another codebase can import. For a library this is the whole boundary —
+  // an exported function is a door, just one reached through the module system
+  // rather than over a network. Deliberately kept out of the auth-coverage count:
+  // an export is not a route, and badging one "unprotected" would be a false alarm
+  // in the one place this tool must never cry wolf.
+  | 'export'
   // A screen in a file-routed native/web app (Expo Router, React Navigation file
   // routes). A way a *person* gets in, not a network door — deliberately kept out of
   // the auth-coverage count so it never dilutes the routes a stranger can reach.
@@ -329,6 +335,24 @@ export interface AtlasStats {
   envVars: number;
 }
 
+/**
+ * What kind of thing a repo is, which is a different question from which framework it
+ * uses. Two Python repos can both be FastAPI and one of them still be a library.
+ *
+ * `unknown` is a real answer and not a failure: a repo with no doors and nothing
+ * exported is a legitimate thing to be, and guessing at it would put the first lie in
+ * the map.
+ */
+export type Archetype = 'web-app' | 'service' | 'library' | 'pipeline' | 'unknown';
+
+export interface ArchetypeVerdict {
+  archetype: Archetype;
+  /** One line in the reader's words — "Something you run", not "pipeline". */
+  label: string;
+  /** The signals that decided it, so a wrong guess can be argued with. */
+  because: string[];
+}
+
 export interface AtlasMeta {
   /** Bumped when the on-disk shape changes incompatibly. */
   formatVersion: number;
@@ -341,6 +365,12 @@ export interface AtlasMeta {
   durationMs: number;
   languages: string[];
   frameworks: string[];
+  /**
+   * What kind of project this is, and why. Optional because atlases written before
+   * this existed are still readable — a missing verdict means "nobody asked yet",
+   * which the UI treats exactly like `unknown`.
+   */
+  archetype?: ArchetypeVerdict;
   stats: AtlasStats;
   /**
    * How the run divided its work: files restored from the cache versus files actually

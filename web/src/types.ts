@@ -240,6 +240,15 @@ export interface AtlasStats {
   envVars: number;
 }
 
+/** What kind of project this is — a different question from which framework it uses. */
+export type Archetype = 'web-app' | 'service' | 'library' | 'pipeline' | 'unknown';
+
+export interface ArchetypeVerdict {
+  archetype: Archetype;
+  label: string;
+  because: string[];
+}
+
 export interface AtlasMeta {
   formatVersion: number;
   toolVersion: string;
@@ -249,6 +258,8 @@ export interface AtlasMeta {
   durationMs: number;
   languages: string[];
   frameworks: string[];
+  /** Absent on atlases analyzed before archetypes existed; treat as `unknown`. */
+  archetype?: ArchetypeVerdict;
   stats: AtlasStats;
   warnings: string[];
 }
@@ -383,8 +394,17 @@ export interface BoundaryFlow {
   weight: number;
 }
 
+/** What the three columns are called for this kind of project. Geometry never changes; words do. */
+export interface BoundaryCaptions {
+  inputs: string;
+  app: string;
+  outputs: string;
+}
+
 export interface BoundaryView {
   appName: string;
+  archetype?: Archetype;
+  captions: BoundaryCaptions;
   inputs: BoundaryCard[];
   zones: BoundaryZone[];
   outputs: BoundaryCard[];

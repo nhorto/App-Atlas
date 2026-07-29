@@ -41,6 +41,20 @@
   box-shadow: inset 0 -2px 0 var(--accent);
 }
 
+/* A view this project has nothing for. Set back rather than removed: "you have no
+   doors" is a real answer and has to stay one click away, but on a library it should
+   not compete with the tabs that do have something to say. Hover restores it fully,
+   so the tab never reads as broken or disabled. */
+.tab.is-quiet {
+  color: var(--ink-faint);
+  opacity: 0.62;
+}
+
+.tab.is-quiet:hover {
+  color: var(--ink);
+  opacity: 1;
+}
+
 /* The project's name, set as a label rather than a button, so it cannot be read
    as a sixth tab. */
 .topbar-title {
@@ -174,6 +188,25 @@
   border: 1px solid var(--line-strong);
   border-radius: 14px;
   background: rgba(253, 252, 247, 0.6);
+}
+
+/* What each column is. Set as a caption rather than a heading — it labels the picture
+   from outside it, the way a figure's axis labels do, and must never compete with the
+   cards it sits above. The words change with the archetype; the geometry never does. */
+.boundary-caption {
+  position: absolute;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  padding-bottom: 4px;
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+  white-space: nowrap;
+  overflow: hidden;
+  pointer-events: none;
 }
 
 .boundary-appname {

@@ -94,12 +94,71 @@ the map in your browser.
 | `--md <path>` | `export` only: where to write the file (default `ATLAS.md`) |
 | `--stdout` | `export` only: print it instead of writing a file |
 
+## It knows what kind of project it is looking at
+
+Most code-visualization tools assume a web app. Most repos are not one. Before any
+view is chosen, App Atlas works out what kind of thing it is reading — from the doors
+the analyzer found, the zones the files fell into, and the frameworks the manifests
+declare — and opens on the view that project actually has a question for:
+
+| It is | Because | It opens on |
+|---|---|---|
+| **An app with a front end** | screens, or routes plus an interface | Boundaries |
+| **A service other things call** | routes, and nothing to look at | Boundaries |
+| **Something you run** | a command-line entry point or a schedule, and nothing answering a URL | Map |
+| **Code other code imports** | exports, and no doors of any kind | Map |
+| **A collection of code** | none of the above | Map |
+
+The verdict and the signals behind it are printed on the Overview page, because a
+guess that steers the tool is one you have to be able to check and disagree with. It
+is derived from the compiler, not from a model.
+
+Nothing is ever hidden by this. A view with nothing in it is set back in the tab bar
+rather than removed, and says what was concluded instead of showing an empty diagram —
+*"This is code other code imports, so nothing here answers a URL."* Being told you
+have no doors is a useful answer; being shown a blank picture is not.
+
 ## The five views
+
+Each one answers a different question about the same atlas, and each says so at the
+top of the screen:
+
+| View | The question it answers |
+|---|---|
+| **Boundaries** | What gets into your app, and where it ends up |
+| **Overview** | What this app is, and where to start reading |
+| **Map** | How your code is organized — the folders and files, and what uses what |
+| **Data model** | What your data looks like — the shapes your app moves around |
+| **Security** | Who can get in, where your data goes, and what you rely on |
 
 ### Boundaries — the home screen
 
 Every door into your app on the left, your app in the middle, everywhere your data
-goes on the right. Band thickness is the number of code paths. It knows about:
+goes on the right. Band thickness is the number of code paths.
+
+**The geometry is fixed; the words change with the kind of project.** Something
+arrives on the left, your code is in the middle, something leaves on the right — that
+reading order is why this beats a ring diagram — but what those columns *are* depends
+on what you built:
+
+| | Left | Right |
+|---|---|---|
+| An app or a service | What gets in | Where data goes |
+| A library | What consumers can call | What it reaches for |
+| A script or pipeline | What it reads | What it writes |
+
+For a library that means its **exported names are the doors** — `Functions you can
+call`, `Types you can import` — because an exported function is a door, just one
+reached through the module system rather than over a network. Public surface versus
+internal is invisible in most codebases and it is the thing that breaks semver. Those
+doors are real nodes in the atlas, so the detail panel, the tours and `ATLAS.md` all
+understand them; and because an import is not a route, they never appear in the auth
+coverage count, where a false alarm would be worse than none.
+
+For a script, the same picture is an I/O diagram: the command line and the files it
+reads on the left, what it writes on the right.
+
+It knows about:
 
 - **Routes and pages** — Next.js App Router and Pages Router, Express, Fastify, Hono,
   Koa, NestJS controllers, tRPC procedures
@@ -144,7 +203,7 @@ from your own docstrings and how much was generated.
 
 This page is also where the **tours** live — see [Guided tours](#guided-tours).
 
-### Data — dbdiagram for your code
+### Data model — dbdiagram for your code
 
 ![Every shape the app moves around, with lines from the field that holds the reference](docs/data-view.png)
 

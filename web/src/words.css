@@ -131,6 +131,7 @@
   grid-template-columns: 1fr;
   grid-template-areas:
     'top'
+    'lede'
     'canvas';
 }
 
@@ -161,6 +162,27 @@
   text-transform: uppercase;
   letter-spacing: 0.08em;
   color: var(--ink-faint);
+}
+
+/* The archetype verdict, set as a line of evidence rather than a badge: the label is
+   a claim and the signals beside it are the reason, so they read in that order. */
+.archetype {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 10px;
+  margin: 14px 0 0;
+  font-size: 13px;
+}
+
+.archetype-label {
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.archetype-because {
+  color: var(--ink-faint);
+  font-size: 12px;
 }
 
 /* The lede is a paragraph, not a widget. It gets the display face and a wide

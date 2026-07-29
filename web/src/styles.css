@@ -76,11 +76,28 @@ code {
 .app {
   display: grid;
   grid-template-columns: 1fr 384px;
-  grid-template-rows: 52px 1fr;
+  grid-template-rows: 52px auto 1fr;
   grid-template-areas:
     'top top'
+    'lede lede'
     'canvas panel';
   height: 100%;
+}
+
+/* One line under the tabs saying what the view you picked is for. It spans both
+   columns rather than sitting inside each screen, because the point is that it is
+   always in the same place: the answer to "what am I looking at" should not have to
+   be hunted for on a screen you do not yet understand. */
+.view-lede {
+  grid-area: lede;
+  margin: 0;
+  padding: 7px 16px 8px;
+  font-size: 12.5px;
+  line-height: 1.35;
+  color: var(--ink-faint);
+  background: var(--surface);
+  border-bottom: 1px solid var(--line);
+  z-index: 4;
 }
 
 .topbar {
