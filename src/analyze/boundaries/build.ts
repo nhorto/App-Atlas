@@ -227,7 +227,94 @@ function collectEndpoints(input: BuildInput): Map<string, MergedEndpoint> {
     });
   }
 
+  addPostgrestDoors(input, add);
+
   return merged;
+}
+
+/** The HTTP verbs PostgREST puts on every table it exposes. */
+const POSTGREST_VERBS: { method: string; writes: boolean }[] = [
+  { method: 'GET', writes: false },
+  { method: 'POST', writes: true },
+  { method: 'PATCH', writes: true },
+  { method: 'DELETE', writes: true },
+];
+
+/**
+ * Supabase's quietest door: it publishes a REST endpoint for every table in the
+ * database, so a migration file is not only a description of where data is kept — it
+ * is a description of a public API surface. Nothing in the repo calls these routes,
+ * which is exactly why they are easy to forget and why they turn up in the data-leak
+ * stories this tool exists to prevent.
+ *
+ * The lock is RLS, and it is readable from the same migrations: a table with row level
+ * security enabled is guarded, a table without it is open to anyone holding the anon
+ * key — which ships to the browser. The guard is only ever `likely`, because a policy
+ * that exists is not necessarily a policy that is correct, and this is the last place
+ * in the tool that should round up.
+ */
+function addPostgrestDoors(input: BuildInput, add: (finding: EndpointFinding) => void): void {
+  const schema = input.signals.sqlSchema;
+  if (!schema) return;
+
+  // Only Supabase fronts Postgres with PostgREST. A repo that keeps plain SQL
+  // migrations under `migrations/` has no such surface, and inventing one would be a
+  // false claim about an app's attack surface — worse than saying nothing.
+  const isSupabase =
+    schema.files.some((file) => file.startsWith('supabase/')) ||
+    input.signals.packages.has('@supabase/supabase-js');
+  if (!isSupabase) return;
+
+  for (const table of schema.tables) {
+    // `storage.objects` and friends belong to Supabase, not to this repo.
+    if (table.name.includes('.') && !table.name.startsWith('public.')) continue;
+    const bare = table.name.replace(/^public\./, '');
+
+    const site: CodeSite = {
+      path: table.path,
+      line: 1,
+      nodeId: null,
+      snippet: table.rlsEnabled
+        ? `${bare} · row level security enabled`
+        : `${bare} · no row level security`,
+    };
+
+    const guards: GuardInfo[] = table.rlsEnabled
+      ? [
+          {
+            name:
+              table.policies.length > 0
+                ? `RLS · ${plural(table.policies.length, 'policy', 'policies')}`
+                : 'RLS · no policy, so nothing is allowed through',
+            how: 'config',
+            provider: 'Supabase',
+            path: table.path,
+            line: table.policies[0]?.line ?? null,
+            confidence: 'likely',
+          },
+        ]
+      : [];
+
+    for (const verb of POSTGREST_VERBS) {
+      add({
+        type: 'endpoint',
+        endpointKind: 'http-route',
+        key: `postgrest ${verb.method} ${bare}`,
+        name: `${verb.method} /rest/v1/${bare}`,
+        method: verb.method,
+        route: `/rest/v1/${bare}`,
+        framework: 'Supabase PostgREST',
+        writes: verb.writes,
+        guards: [...guards],
+        site,
+        handlerId: null,
+      });
+    }
+  }
+}
+
+function plural(n: number, one: string, many: string): string {
+  return `${n} ${n === 1 ? one : many}`;
 }
 
 /**

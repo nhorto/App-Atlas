@@ -29,8 +29,11 @@ const endpoint = (name) => endpoints.find((n) => n.name === name);
 const route = (path) => insights.auth.routes.find((r) => r.route === path || r.name === path);
 
 test('reads Next.js App Router routes off the file system', () => {
+  // Scoped to the routes that come off the file system: PostgREST publishes a door
+  // per table and would otherwise drown the thing this test is about.
   const paths = endpoints
     .filter((n) => n.meta.endpointKind === 'http-route')
+    .filter((n) => n.meta.framework !== 'Supabase PostgREST')
     .map((n) => `${n.meta.method} ${n.meta.route}`)
     .sort();
 
@@ -114,10 +117,24 @@ test('a middleware matcher reaches routes declared in other files', () => {
 
 test('names the doors nothing is guarding, worst first', () => {
   const open = insights.auth.routes.filter((r) => r.protection === 'open');
-  assert.deepEqual(open.map((r) => r.name).sort(), ['/', 'createOrder']);
-  // A writing endpoint with no check is the first thing anyone should see.
-  assert.equal(insights.auth.routes[0].name, 'createOrder');
+  // audit_log has no row level security, so PostgREST publishes four unguarded doors
+  // onto it. They belong here: the anon key that reaches them ships to the browser.
+  assert.deepEqual(open.map((r) => r.name).sort(), [
+    '/',
+    'DELETE /rest/v1/audit_log',
+    'GET /rest/v1/audit_log',
+    'PATCH /rest/v1/audit_log',
+    'POST /rest/v1/audit_log',
+    'createOrder',
+  ]);
+  // A writing endpoint with no check is the first thing anyone should see. Which one
+  // wins the top slot is a tie-break between equally-open writes — `DELETE` on a table
+  // nothing locks is not a smaller problem than `createOrder` — so the property is
+  // what gets pinned here, not the name.
+  assert.equal(insights.auth.routes[0].protection, 'open');
   assert.equal(insights.auth.routes[0].writes, true);
+  const top = insights.auth.routes.slice(0, 5).map((r) => r.name);
+  assert.ok(top.includes('createOrder'), `the code route is still near the top: ${top}`);
 });
 
 test('reads the database out of the client and the schema', () => {
@@ -171,7 +188,9 @@ test('names the companies data goes to, from SDKs and from literal URLs', () => 
 });
 
 test('inventories every environment variable and checks it against .env.example', () => {
-  assert.equal(insights.env.exampleFile, '.env.example');
+  // Both templates are read and their names unioned: a project that splits its
+  // config across two example files has documented what is in either.
+  assert.equal(insights.env.exampleFile, '.env.example and .env.local.example');
   assert.deepEqual(insights.env.vars.map((v) => v.name).sort(), [
     'NEXT_PUBLIC_APP_URL',
     'NEXT_PUBLIC_SUPABASE_ANON_KEY',
@@ -181,12 +200,14 @@ test('inventories every environment variable and checks it against .env.example'
     'SUPABASE_ANON_KEY',
     'SUPABASE_URL',
   ]);
+  // SUPABASE_URL and SUPABASE_ANON_KEY are documented in .env.local.example, so they
+  // must not appear here. Before the fix only the first template was read and both
+  // were reported missing — the badge accusing you of undocumented secrets you had
+  // in fact documented.
   assert.deepEqual(insights.env.undocumented.map((v) => v.name).sort(), [
     'NEXT_PUBLIC_SUPABASE_ANON_KEY',
     'RESEND_API_KEY',
     'STRIPE_WEBHOOK_SECRET',
-    'SUPABASE_ANON_KEY',
-    'SUPABASE_URL',
   ]);
   const url = insights.env.vars.find((v) => v.name === 'SUPABASE_URL');
   assert.equal(url.secret, false, 'a URL is a setting, not a credential');
@@ -323,14 +344,16 @@ test('a table upgraded from observed to declared keeps its usage', () => {
 
 test('row-level security is reported, and unknown is not rounded up to open', () => {
   const t = insights.tables;
-  // 3 Prisma tables + 1 observed (protection unknowable for all four) + 2 SQL tables.
-  assert.equal(t.total, 6);
+  // 3 Prisma tables + 1 observed (protection unknowable for all four) + 3 SQL tables.
+  assert.equal(t.total, 7);
   assert.equal(t.unknown, 4);
-  assert.equal(t.unprotected, 0);
-  // page_views: RLS enabled, zero policies — locked, and listed first.
+  // audit_log: a migration declares it and no migration ever locks it.
+  assert.equal(t.unprotected, 1);
+  // page_views: RLS enabled, zero policies — locked.
   assert.equal(t.locked, 1);
-  assert.equal(t.list[0].name, 'page_views');
-  assert.equal(t.list[0].rls.enabled, true);
+  // Worst first, so the table anyone can read outranks the one that is merely shut.
+  assert.equal(t.list[0].name, 'audit_log');
+  assert.equal(t.list[0].rls.enabled, false);
   assert.equal(t.list[0].rls.policyCount, 0);
 
   const sessions = t.list.find((x) => x.name === 'sessions');

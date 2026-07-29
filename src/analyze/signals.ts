@@ -392,21 +392,53 @@ function readPrismaModels(text: string): SchemaModel[] {
   return models;
 }
 
-/** The variables the author meant you to set — the yardstick for the secrets badge. */
+/**
+ * Any file whose name says "this is the template, not the secrets". Deliberately a
+ * pattern rather than a list: `.env.local.example` and `.env.example.local` are both
+ * common, and so is a leading `env.` with no dot. What must never match is a real
+ * `.env` — that one holds the values, and we do not read it.
+ */
+const ENV_EXAMPLE = /^\.?env\b.*\.?(example|sample|template|defaults|dist)\b.*$/i;
+
+/**
+ * The variables the author meant you to set — the yardstick for the secrets badge.
+ *
+ * Every matching file is read and the names unioned, because a project that splits its
+ * template across `.env.example` and `.env.local.example` has documented the variables
+ * in both. Stopping at the first one made the badge report documented variables as
+ * missing, which is the direction this tool is least allowed to be wrong in.
+ */
 function readEnvExample(root: string): { envExample: Set<string>; envExamplePath: string | null } {
   const names = new Set<string>();
-  for (const candidate of ['.env.example', '.env.sample', '.env.template', '.env.defaults']) {
-    const file = path.join(root, candidate);
-    if (!fs.existsSync(file)) continue;
+  const found: string[] = [];
+
+  let entries: string[];
+  try {
+    entries = fs.readdirSync(root);
+  } catch {
+    return { envExample: names, envExamplePath: null };
+  }
+
+  for (const entry of entries.sort()) {
+    if (!ENV_EXAMPLE.test(entry)) continue;
     try {
+      const file = path.join(root, entry);
+      if (!fs.statSync(file).isFile()) continue;
       for (const line of splitLines(fs.readFileSync(file, 'utf8'))) {
         const match = /^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=/.exec(line);
         if (match) names.add(match[1]);
       }
-      return { envExample: names, envExamplePath: candidate };
+      found.push(entry);
     } catch {
-      /* keep looking */
+      /* keep looking: one unreadable template should not hide the others */
     }
   }
-  return { envExample: names, envExamplePath: null };
+
+  return { envExample: names, envExamplePath: found.length > 0 ? listOf(found) : null };
+}
+
+/** "a", "a and b", "a, b and c" — this ends up in a sentence on screen. */
+function listOf(items: string[]): string {
+  if (items.length === 1) return items[0];
+  return `${items.slice(0, -1).join(', ')} and ${items[items.length - 1]}`;
 }

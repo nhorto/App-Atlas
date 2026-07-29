@@ -325,8 +325,36 @@ def analyze_source(text):
         "calls": calls,
         "subscripts": subscripts,
         "uses": sorted(module_uses),
+        "main": main_guard_line(tree),
         "loc": text.count("\n") + (0 if text.endswith("\n") or not text else 1),
     }
+
+
+def main_guard_line(tree):
+    """The line of a module-level `if __name__ == "__main__":`, or None.
+
+    This is how a Python file says "you run me" — far more common than argparse, and
+    the only such declaration in a script that reads its input from prompts. Only the
+    module level counts: the same test nested inside a function is not an entry point.
+    """
+    for node in tree.body:
+        if not isinstance(node, ast.If):
+            continue
+        test = node.test
+        if not isinstance(test, ast.Compare) or len(test.ops) != 1:
+            continue
+        if not isinstance(test.ops[0], ast.Eq):
+            continue
+        left, right = test.left, test.comparators[0]
+        names = {
+            n.id for n in (left, right) if isinstance(n, ast.Name)
+        }
+        strings = {
+            n.value for n in (left, right) if isinstance(n, ast.Constant) and isinstance(n.value, str)
+        }
+        if "__name__" in names and "__main__" in strings:
+            return node.lineno
+    return None
 
 
 def main():
@@ -341,7 +369,10 @@ def main():
         rel = entry.get("rel") or ""
         record = {"path": rel, "ok": False, "error": None}
         try:
-            with open(entry.get("abs") or "", "r", encoding="utf-8", errors="replace") as handle:
+            # utf-8-sig, not utf-8: a leading BOM is legal in a Python file and common in
+            # anything that has been through a Windows editor, but ast.parse rejects it as
+            # an invalid non-printable character. Reading it off is the whole fix.
+            with open(entry.get("abs") or "", "r", encoding="utf-8-sig", errors="replace") as handle:
                 text = handle.read()
             record.update(analyze_source(text))
             record["ok"] = True

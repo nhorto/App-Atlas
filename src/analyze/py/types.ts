@@ -90,6 +90,8 @@ export interface PyFile {
   calls?: PyCall[];
   subscripts?: PySubscript[];
   uses?: string[];
+  /** Line of a module-level `if __name__ == "__main__":` — this file is meant to be run. */
+  main?: number | null;
 }
 
 export interface PyPayload {
