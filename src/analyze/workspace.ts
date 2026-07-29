@@ -14,6 +14,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import fg from 'fast-glob';
 import { toPosix } from '../util/paths.js';
+import { DEFAULT_IGNORES, SOURCE_GLOB } from './project.js';
 
 export interface Scope {
   /** Stable id, derived from the directory: `apps-web`. Used in URLs and paths. */
@@ -82,12 +83,64 @@ export async function findScopes(root: string): Promise<Scope[]> {
 
   const scopes = [...byDir.values()];
   // One package in a workspace is not a monorepo worth a switcher.
-  return scopes.length > 1 ? scopes.sort(byKindThenName) : [];
+  if (scopes.length < 2) return [];
+
+  return leadWithTheMainApp(scopes.sort(byKindThenName), await measure(root, scopes));
 }
 
 function byKindThenName(a: Scope, b: Scope): number {
   if (a.kind !== b.kind) return a.kind === 'app' ? -1 : 1;
   return a.name.localeCompare(b.name);
+}
+
+/**
+ * Puts the biggest app first, and leaves everything else alphabetical.
+ *
+ * The landing scope is `scopes[0]` everywhere — the CLI, the server and the web app all
+ * take the first one — so the order *is* the answer to "which of these is the project".
+ * Alphabetical made cal.com open on `api-proxy`, 12 files of URL rewriting, while
+ * `apps/web` sat 60 packages down the list and was never shown. Nobody arriving at a
+ * repo of 113 packages means the first one alphabetically.
+ *
+ * Only one scope moves. A switcher sorted by size would be unpredictable to scan; a
+ * switcher that is alphabetical after its first entry is not.
+ */
+function leadWithTheMainApp(scopes: Scope[], files: Map<string, number>): Scope[] {
+  let best = -1;
+  for (let i = 0; i < scopes.length; i++) {
+    if (scopes[i].kind !== 'app') continue;
+    if (best === -1 || (files.get(scopes[i].dir) ?? 0) > (files.get(scopes[best].dir) ?? 0)) best = i;
+  }
+  if (best <= 0) return scopes;
+  return [scopes[best], ...scopes.slice(0, best), ...scopes.slice(best + 1)];
+}
+
+/**
+ * How many source files each scope owns.
+ *
+ * One walk for the whole workspace rather than one per package, and each file counted
+ * against the *longest* directory that contains it, so a package nested inside another
+ * package's tree is not counted twice.
+ *
+ * Deliberately not kept on the `Scope`. It is a rougher number than the one the CLI
+ * prints beside each app — no gitignore, no `--max-files` — and two numbers with the
+ * same name that disagree is the sort of small dishonesty this tool cannot afford.
+ * Ordering is all it is for.
+ */
+async function measure(root: string, scopes: Scope[]): Promise<Map<string, number>> {
+  const dirs = [...scopes].sort((a, b) => b.dir.length - a.dir.length);
+  const counts = new Map<string, number>(dirs.map((scope) => [scope.dir, 0]));
+
+  const files = await fg(
+    dirs.map((scope) => `${scope.dir}/${SOURCE_GLOB}`),
+    { cwd: root, dot: false, onlyFiles: true, followSymbolicLinks: false, suppressErrors: true, ignore: DEFAULT_IGNORES },
+  );
+
+  for (const file of files.map(toPosix)) {
+    const owner = dirs.find((scope) => file.startsWith(`${scope.dir}/`));
+    if (owner) counts.set(owner.dir, (counts.get(owner.dir) ?? 0) + 1);
+  }
+  return counts;
 }
 
 /** Where the workspace says its packages live, whichever tool declared it. */

@@ -43,9 +43,9 @@ export interface DiscoverOptions {
   extraIgnores?: string[];
 }
 
-const SOURCE_GLOB = '**/*.{ts,tsx,mts,cts,js,jsx,mjs,cjs,py,pyi,ipynb}';
+export const SOURCE_GLOB = '**/*.{ts,tsx,mts,cts,js,jsx,mjs,cjs,py,pyi,ipynb}';
 
-const DEFAULT_IGNORES = [
+export const DEFAULT_IGNORES = [
   '**/node_modules/**',
   '**/.git/**',
   '**/.app-atlas/**',

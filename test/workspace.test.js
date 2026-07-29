@@ -21,7 +21,24 @@ test('finds every package in an npm workspace, and sorts apps first', async () =
   const scopes = await findScopes(MONO);
   assert.deepEqual(
     scopes.map((s) => `${s.name}:${s.kind}`),
-    ['api:app', 'web:app', 'ui:library'],
+    ['web:app', 'api:app', 'ui:library'],
+  );
+});
+
+/**
+ * Everything lands on `scopes[0]` — the CLI, the server and the web app all take the
+ * first one — so the order *is* the answer to "which of these is the project".
+ * Alphabetical made cal.com open on `api-proxy`, twelve files of URL rewriting, with
+ * `apps/web` sixty packages down the list and never shown.
+ */
+test('the biggest app leads, and everything after it stays alphabetical', async () => {
+  const scopes = await findScopes(MONO);
+  // `web` has two source files to `api`'s one, and loses on the alphabet.
+  assert.equal(scopes[0].name, 'web');
+  assert.deepEqual(
+    scopes.slice(1).map((s) => s.name),
+    ['api', 'ui'],
+    'only one scope moves — a switcher sorted by size would be unpredictable to scan',
   );
 });
 

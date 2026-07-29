@@ -130,9 +130,19 @@ compiler-derived and cannot be wrong.
       guessing the one Drizzle client points at the one D1 database is right most of
       the time, and wrong prints a false sentence about where data lives.*
 
-- [ ] **13. Land large repos on their main app, not `scopes[0]`** — [#34](https://github.com/nhorto/App-Atlas/issues/34)
+- [x] **13. Land large repos on their main app, not `scopes[0]`** — [#34](https://github.com/nhorto/App-Atlas/issues/34)
       cal.com opens on `api-proxy` out of 113 scopes; `apps/web` is present and never
       shown. Default to the `app`-kind scope with the most files.
+      **Done.** The order *was* the answer — the CLI, the server and the web app all
+      take `scopes[0]` — so the biggest app now leads and everything after it stays
+      alphabetical. Only one scope moves: a switcher sorted by size is unpredictable to
+      scan, one that is alphabetical after its first entry is not. cal.com lands on
+      `apps/web` (991 files) instead of `api-proxy` (12); dub on `apps/web` (3371);
+      midday on `apps/dashboard` (724). Counting costs **245 ms** across cal.com's 113
+      packages — one walk, each file charged to the longest directory containing it so
+      a nested package is not counted twice. The count is deliberately not kept on the
+      scope: it is rougher than the per-app number the CLI prints (no gitignore, no
+      `--max-files`), and two numbers with one name that disagree is its own small lie.
 
 - [ ] **14. Show a group card's members** — [#30](https://github.com/nhorto/App-Atlas/issues/30)
       "Pages · 14 pages" opens one arbitrary page; `memberIds` holds the rest and is
