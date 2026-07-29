@@ -46,6 +46,12 @@ export interface EndpointFinding {
    * Whatever dependencies that router carries reach this route and no other.
    */
   routerVar?: string | null;
+  /**
+   * The class the handler is a method of, when it is one. A class-based view injects
+   * the class's dependencies into every route on it, so the check can be three classes
+   * up the hierarchy and in another file.
+   */
+  handlerOwner?: string | null;
 }
 
 /** A third party the app talks to. */
@@ -185,6 +191,12 @@ export interface AuthAliasFinding {
   name: string;
   /** Every function handed to a `Depends(...)` inside it. */
   depends: string[];
+  /**
+   * For a class: what it inherits from, by name. A controller three levels down from
+   * the class that declares the check says nothing about a caller anywhere in its own
+   * file, and the chain is the only thing that connects them.
+   */
+  bases?: string[];
   path: string;
   line: number;
 }

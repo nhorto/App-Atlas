@@ -58,6 +58,12 @@ export interface PyDef {
   params?: PyParam[];
   returns?: string;
   bases?: string[];
+  /**
+   * Classes only: the names this class body hands to `Depends(...)`, its own
+   * `__init__` included. A controller's auth is written here and nowhere near the
+   * routes it declares.
+   */
+  depends?: string[];
   fields?: PyField[];
   methods?: PyDef[];
   decorators: PyCall[];

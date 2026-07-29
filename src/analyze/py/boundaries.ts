@@ -184,6 +184,9 @@ function detectRoutes(
           // alias imported from `deps.py` is unresolvable from here.
           paramTypes: paramTypeNames(def),
           routerVar: parts.length > 1 ? parts[0] : null,
+          // `AdminBackupController.get_all` — the class is where a class-based view
+          // keeps the dependencies it injects into every route on it.
+          handlerOwner: def.owner ?? null,
         });
       }
     }
@@ -349,17 +352,23 @@ function detectAuthAliases(input: PythonBoundaryInput, findings: BoundaryFinding
     });
   }
 
-  // A router subclass that bakes a dependency into its constructor is the same idea
-  // wearing a class: `class UserAPIRouter(APIRouter)` calling
-  // `super().__init__(dependencies=[Depends(get_current_user)])`. Every route file
-  // that builds one of these is guarded, and none of them mentions a check.
+  // The same idea wearing a class, twice over.
+  //
+  // A router subclass bakes the dependency into its constructor:
+  // `class UserAPIRouter(APIRouter)` calling `super().__init__(dependencies=[…])`.
+  // A class-based view puts it on the class the handlers are methods of:
+  // `class BaseUserController: user: PrivateUser = Depends(get_current_user)`, and the
+  // controller that inherits it three levels down declares routes that mention nobody.
+  //
+  // A class with no dependency of its own is still recorded, as long as it has parents:
+  // it is a link in the chain, and a chain missing one link loses every route below it.
+  // `class Reporting(SignedIn): ...` carries nothing and decides everything.
   for (const def of input.file.defs ?? []) {
-    if (def.kind !== 'class' || !(def.bases ?? []).some((base) => isRouterName(base))) continue;
-    const depends = (input.file.calls ?? [])
-      .filter((call) => (call.scope ?? '').startsWith(`${def.name}.`))
-      .flatMap((call) => dependsTargets(call));
-    if (depends.length === 0) continue;
-    findings.push({ type: 'auth-alias', name: def.name, depends, path: input.file.path, line: def.line });
+    if (def.kind !== 'class') continue;
+    const bases = (def.bases ?? []).map((base) => base.split('.').pop() ?? base).filter(Boolean);
+    const depends = (def.depends ?? []).map((name) => name.split('.').pop() ?? name);
+    if (depends.length === 0 && bases.length === 0) continue;
+    findings.push({ type: 'auth-alias', name: def.name, depends, bases, path: input.file.path, line: def.line });
   }
 
   // …and the other half: which variable in this file was built out of what.

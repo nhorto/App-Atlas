@@ -29,7 +29,7 @@ const guardNames = (name) => (endpoint(name)?.meta.guards ?? []).map((g) => g.na
 
 test('the fixture parsed, so a silent failure cannot pass as a pass', () => {
   assert.deepEqual(atlas.meta.warnings, []);
-  assert.equal(atlas.nodes.filter((n) => n.kind === 'endpoint').length, 4);
+  assert.equal(atlas.nodes.filter((n) => n.kind === 'endpoint').length, 7);
 });
 
 test('a check is recognised by what it does, not by what it is called', () => {
@@ -63,4 +63,44 @@ test('…and not the routes sitting next to it in the same file', () => {
   // `/status` hangs off the plain router. Both routers are declared in one file, which
   // is why this has to be matched by variable rather than by path.
   assert.deepEqual(guardNames('GET /status'), []);
+});
+
+// --- the lock three classes up (found while fixing #37) ---
+
+/**
+ * A class-based view injects the class's dependencies into every route declared on it,
+ * so a controller can be entirely guarded and mention a caller nowhere in its own file.
+ * mealie writes it this way: `AdminBackupController(BaseAdminController)`, and two
+ * links up, `user: PrivateUser = Depends(get_current_user)`. 130 of its 189 routes read
+ * as having no visible check.
+ */
+test('a controller inherits the check its own file never mentions', () => {
+  assert.deepEqual(guardNames('GET /reports'), ['SignedIn → Depends(who_is_asking)']);
+  assert.deepEqual(guardNames('DELETE /reports/{report_id}'), ['SignedIn → Depends(who_is_asking)']);
+});
+
+test('the guard names the class that declares the check, not the one that inherits it', () => {
+  // `Reporting` is a link in the chain and nothing else. Naming it would send a reader
+  // to a file with no check in it.
+  const guard = endpoint('GET /reports').meta.guards[0];
+  assert.equal(guard.how, 'config');
+  assert.equal(guard.confidence, 'likely');
+  assert.equal(guard.path, 'api/gatekeeping.py');
+});
+
+test('a sibling controller with no check in its chain stays open', () => {
+  // `LivenessController(Anyone)` is declared in the same file, the same way, with the
+  // same amount of auth vocabulary in it — none. A rule that read the file instead of
+  // the hierarchy would have to get one of these two wrong.
+  assert.deepEqual(guardNames('GET /live'), []);
+});
+
+test('a dependency the whole hierarchy shares is still not a lock', () => {
+  // `_Controller.tenant = Depends(fetch_tenant)` sits above both controllers. It
+  // fetches and refuses nobody, so it cannot be what makes either of them guarded.
+  const everyGuard = atlas.nodes
+    .filter((n) => n.kind === 'endpoint')
+    .flatMap((n) => n.meta.guards ?? [])
+    .map((g) => g.name);
+  assert.ok(!everyGuard.some((name) => /fetch_tenant/.test(name)), everyGuard.join(' | '));
 });

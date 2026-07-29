@@ -44,16 +44,19 @@ const AUTH_RELEVANT = new Set(['http-route', 'server-action', 'realtime']);
  * would inflate the number that matters and teach people to ignore it.
  *
  * A webhook is the one kind that answers *both* ways. When something in the file
- * verifies a signature, that signature is the lock and the door is not open — which is
- * why a verified webhook sits outside this count. But a route is also called a webhook
- * on the strength of the word in its address, and there the promotion was quietly
- * deleting a door from the only screen that exists to find open doors: `/api/webhooks/x`
- * with nothing verifying anything is a door anyone can post to, and it was leaving the
- * count without ever being reported. So the question asked here is not what the door is
- * called — it is whether anything is checking the caller.
+ * verifies the sender's signature, that signature is the lock, and a door whose lock is
+ * a different shape does not belong in a count of session checks. But a route is also
+ * *called* a webhook on the strength of the word in its address, and there the
+ * promotion was quietly deleting a door from the only screen that exists to find open
+ * doors: `/api/webhooks/x` with nothing verifying anything is a door anyone can post to,
+ * and it was leaving the count without ever being reported once.
+ *
+ * So the exemption is the signature, and only the signature. mealie's `/webhooks/…`
+ * routes turn out to be ordinary CRUD over webhook *subscriptions* — they take a
+ * session like everything else, and they belong in the count like everything else.
  */
 export function isAuthRelevant(meta: EndpointMeta): boolean {
-  if (meta.endpointKind === 'webhook') return meta.guards.length === 0;
+  if (meta.endpointKind === 'webhook') return !meta.verified;
   return AUTH_RELEVANT.has(meta.endpointKind);
 }
 

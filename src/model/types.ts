@@ -251,6 +251,12 @@ export interface EndpointMeta {
    * disagree about the same route. Absent when something *does* check it.
    */
   open?: OpenVerdict;
+  /**
+   * Webhooks only: something in the file checks the sender's signature. That check is
+   * the lock, which is what takes a webhook out of the auth count — being *called* a
+   * webhook does not.
+   */
+  verified?: boolean;
   /** Cron expression, when a scheduler is what knocks. */
   schedule?: string;
   /** Only on the single `env` endpoint. */

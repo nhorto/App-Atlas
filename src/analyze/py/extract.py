@@ -289,6 +289,7 @@ def class_def(node):
         "endLine": end,
         "doc": ast.get_docstring(node),
         "bases": [unparse(b) or "" for b in node.bases],
+        "depends": class_dependencies(node),
         "fields": class_fields(node),
         "decorators": [decorator_info(d) for d in node.decorator_list],
         "methods": methods,
@@ -341,6 +342,42 @@ def scope_at(spans, line):
     return None
 
 
+def depends_targets(node):
+    """Every name handed to a `Depends(...)` anywhere inside this piece of syntax."""
+    out = []
+    for child in ast.walk(node):
+        if not isinstance(child, ast.Call):
+            continue
+        if (dotted(child.func) or "").split(".")[-1] != "Depends":
+            continue
+        for arg in child.args:
+            name = dotted(arg)
+            if name:
+                out.append(name)
+    return out
+
+
+def class_dependencies(node):
+    """What a class body hands to `Depends(...)`, in its own right.
+
+    The class-based-view idiom puts a route's auth on the *class*:
+    `class BaseUserController: user: PrivateUser = Depends(get_current_user)`, and every
+    controller that inherits from it three levels down declares routes that mention no
+    caller at all. Read together with `bases`, this is the only record that they are
+    guarded — mealie writes a hundred and thirty of its routes this way.
+
+    Only the class's own body counts. What its parents contribute is a fact about them,
+    joined where the whole project is in view."""
+    out = []
+    for stmt in node.body:
+        if isinstance(stmt, (ast.Assign, ast.AnnAssign)) and stmt.value is not None:
+            out.extend(depends_targets(stmt.value))
+        # `class UserAPIRouter(APIRouter)` bakes its dependency into the constructor.
+        elif isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef)) and stmt.name == "__init__":
+            out.extend(depends_targets(stmt))
+    return out
+
+
 def dependency_aliases(tree):
     """Module-level `CurrentUser = Annotated[User, Depends(get_current_user)]`.
 
@@ -357,17 +394,7 @@ def dependency_aliases(tree):
         if len(targets) != 1 or not isinstance(targets[0], ast.Name) or stmt.value is None:
             continue
 
-        depends = []
-        for node in ast.walk(stmt.value):
-            if not isinstance(node, ast.Call):
-                continue
-            callee = dotted(node.func) or ""
-            if callee.split(".")[-1] != "Depends":
-                continue
-            for arg in node.args:
-                name = dotted(arg)
-                if name:
-                    depends.append(name)
+        depends = depends_targets(stmt.value)
         if depends:
             out.append({"name": targets[0].id, "depends": depends, "line": stmt.lineno})
     return out

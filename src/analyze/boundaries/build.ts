@@ -332,6 +332,8 @@ interface MergedEndpoint {
   paramTypes: Set<string>;
   /** One `routerKey` for each place this door is registered. */
   routers: Set<string>;
+  /** The classes whose methods answer this door, for class-based views. */
+  owners: Set<string>;
 }
 
 /**
@@ -370,6 +372,7 @@ function collectEndpoints(input: BuildInput): Map<string, MergedEndpoint> {
       if (finding.handlerId) existing.handlerIds.add(finding.handlerId);
       for (const name of finding.paramTypes ?? []) existing.paramTypes.add(name);
       if (finding.routerVar) existing.routers.add(routerKey(finding.site.path, finding.routerVar));
+      if (finding.handlerOwner) existing.owners.add(finding.handlerOwner);
       return;
     }
     merged.set(id, {
@@ -388,6 +391,7 @@ function collectEndpoints(input: BuildInput): Map<string, MergedEndpoint> {
       handlerIds: new Set(finding.handlerId ? [finding.handlerId] : []),
       paramTypes: new Set(finding.paramTypes ?? []),
       routers: new Set(finding.routerVar ? [routerKey(finding.site.path, finding.routerVar)] : []),
+      owners: new Set(finding.handlerOwner ? [finding.handlerOwner] : []),
     });
   };
 
@@ -642,6 +646,7 @@ function applyWebhookPromotion(endpoints: Map<string, MergedEndpoint>, findings:
     endpoint.kind = 'webhook';
     endpoint.meta.endpointKind = 'webhook';
     if (provider) {
+      endpoint.meta.verified = true;
       endpoint.meta.guards.push({
         name: `${provider} signature check`,
         how: 'call',
@@ -753,6 +758,7 @@ function applyDependencyGuards(
   }
 
   const behind = routersBehindACheck(routers, mounts, attached, byName);
+  const inherited = checkInherited(aliases, byName);
 
   for (const endpoint of endpoints.values()) {
     for (const name of endpoint.paramTypes) {
@@ -762,10 +768,63 @@ function applyDependencyGuards(
     for (const key of endpoint.routers) {
       const guard = byRouter.get(key);
       if (guard) pushGuard(endpoint, guard);
-      const inherited = behind.get(byModule(key));
-      if (inherited) pushGuard(endpoint, inherited);
+      const behindTheMount = behind.get(byModule(key));
+      if (behindTheMount) pushGuard(endpoint, behindTheMount);
+    }
+    for (const owner of endpoint.owners) {
+      const guard = inherited(owner);
+      if (guard) pushGuard(endpoint, { ...guard, how: 'config' });
     }
   }
+}
+
+/**
+ * The check a controller inherits: `class AdminBackupController(BaseAdminController)`,
+ * and three classes up, `user: PrivateUser = Depends(get_current_user)`.
+ *
+ * A class-based view injects the class's dependencies into every route declared on it,
+ * so a file of eleven handlers can be entirely guarded and mention a caller nowhere.
+ * mealie writes a hundred and thirty of its routes that way.
+ *
+ * Exactly one declaration of a name or nothing: two classes in a repo sharing a name is
+ * ordinary, and following either would be attributing one team's lock to another's door.
+ */
+function checkInherited(
+  aliases: AuthAliasFinding[],
+  byName: Map<string, GuardInfo>,
+): (className: string) => GuardInfo | null {
+  const declared = new Map<string, AuthAliasFinding[]>();
+  for (const alias of aliases) {
+    if (!alias.bases) continue;
+    const list = declared.get(alias.name);
+    if (list) list.push(alias);
+    else declared.set(alias.name, [alias]);
+  }
+
+  const answers = new Map<string, GuardInfo | null>();
+  const walk = (name: string, seen: Set<string>): GuardInfo | null => {
+    const done = answers.get(name);
+    if (done !== undefined) return done;
+    if (seen.has(name)) return null;
+    seen.add(name);
+
+    let found = byName.get(name) ?? null;
+    if (!found) {
+      const only = declared.get(name);
+      if (only?.length === 1) {
+        for (const base of only[0].bases ?? []) {
+          found = walk(base, seen);
+          if (found) break;
+        }
+      }
+    }
+
+    seen.delete(name);
+    answers.set(name, found);
+    return found;
+  };
+
+  return (className: string) => walk(className, new Set());
 }
 
 /**
@@ -921,6 +980,7 @@ function collectEnv(input: BuildInput): MergedEndpoint | null {
     handlerIds: new Set(sites.map((site) => makeFileId(site.path))),
     paramTypes: new Set(),
     routers: new Set(),
+    owners: new Set(),
   };
 }
 

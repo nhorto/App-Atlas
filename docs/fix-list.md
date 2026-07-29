@@ -318,16 +318,22 @@ door that was never drawn.
       the Node side as `Depends()`, so the one name that mattered had already been
       thrown away.
 
-- [ ] **34. A controller class inherits the check its handlers never mention** —
-      *Tier 2, found while fixing #37.* `mealie` reads **124 of 183 routes** as having
-      no visible check. Its routers are plain, and its handlers are methods of
-      `AdminBackupController(BaseAdminController)`; three classes up the hierarchy,
+- [x] **34. A controller class inherits the check its handlers never mention** —
+      *Tier 2, found while fixing #37.* `mealie` read **130 of 189 routes** as having no
+      visible check. Its routers are plain, and its handlers are methods of
+      `AdminBackupController(BaseAdminController)`; two classes up the hierarchy,
       `BaseUserController` declares `user: PrivateUser = Depends(get_current_user)` as a
-      class attribute. That is the class-based-view idiom (`@controller(router)`), and
-      it is a fifth spelling of "the lock is in the wiring". Needs the class attribute's
-      default (dropped today) and one hop up the base-class chain, resolved repo-wide by
-      name the way aliases already are. Not wrong today, only blank: the headline says
-      *no auth check App Atlas can see*.
+      class attribute. That is the class-based-view idiom (`@controller(router)`), and it
+      is a fifth spelling of "the lock is in the wiring".
+      **Done. mealie: 130 of 189 → 25 of 189**, and the 25 are its deliberately public
+      surface — the login and password-reset routes, `/api/explore/…`, `/api/media/…`,
+      the signup validators and the token-shared recipe links. A class is recorded with
+      its own `Depends(...)` targets *and* its bases, even when it carries nothing
+      itself: a class that only inherits is a link in the chain, and a chain missing one
+      link loses every route below it. The chain is followed by name, repo-wide, one
+      declaration or nothing. The negative case is what keeps it honest — mealie's
+      `BasePublicController` inherits the same `_BaseController`, whose dependencies
+      fetch a session and a locale and refuse nobody, so its routes stay open and say so.
 
 - [x] **27. A door's identity was its address, and its address was wrong** — *Tier 1,
       fixed by #33.* `makeEndpointId` keys on `method + route`, so two files each
