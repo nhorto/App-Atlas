@@ -1,0 +1,15 @@
+# A comment mentioning main = "decoy.ts" that must not be read as config.
+name = "edge-api"
+main = "index.ts"
+compatibility_date = "2026-07-05"
+
+[triggers]
+crons = ["0 8 * * *", "*/15 * * * *"]
+
+[[durable_objects.bindings]]
+name = "ROOM"
+class_name = "ChatRoom"
+
+[[kv_namespaces]]
+binding = "CACHE"
+id = "abc123"

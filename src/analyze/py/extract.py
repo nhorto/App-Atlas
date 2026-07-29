@@ -357,6 +357,81 @@ def main_guard_line(tree):
     return None
 
 
+def notebook_source(raw):
+    """A Jupyter notebook, flattened into the Python it actually is.
+
+    Returns (source, cells, doc). `source` is every code cell joined in order, so the
+    line numbers in it are line numbers in one consistent space that the whole rest of
+    the analyzer can use unchanged. `cells` maps a range of those lines back to the
+    cell it came from, which is the only address that means anything in a notebook —
+    "line 412" is useless to someone looking at a stack of cells.
+
+    Cells that will not parse are replaced with blank lines rather than dropped: a
+    line-magic like `%matplotlib inline` or a shell escape is not Python, and one of
+    them at the top of a notebook must not cost the reader the other sixty cells.
+    """
+    try:
+        nb = json.loads(raw)
+    except Exception:
+        return "", [], None
+
+    lines = []
+    cells = []
+    doc = None
+
+    for index, cell in enumerate(nb.get("cells") or []):
+        source = cell.get("source")
+        if isinstance(source, list):
+            source = "".join(source)
+        elif not isinstance(source, str):
+            continue
+
+        if cell.get("cell_type") == "markdown":
+            # The first markdown cell, before any code, is the notebook's title block.
+            if doc is None and not any(c["type"] == "code" for c in cells):
+                doc = markdown_summary(source)
+            continue
+        if cell.get("cell_type") != "code":
+            continue
+
+        body = [strip_magic(line) for line in source.split("\n")]
+        start = len(lines) + 1
+        lines.extend(body)
+        # One blank line between cells so the last statement of one cell and the first
+        # of the next are never read as a continuation of each other.
+        lines.append("")
+        cells.append({"type": "code", "index": index, "startLine": start, "endLine": len(lines) - 1})
+
+    return "\n".join(lines), cells, doc
+
+
+def strip_magic(line):
+    """IPython's own syntax, blanked so the rest of the cell still parses.
+
+    `%timeit`, `!pip install`, and `??name` are not Python and never were — the kernel
+    rewrites them before execution. Blanking rather than deleting keeps every line
+    number in the cell exactly where the author left it.
+    """
+    stripped = line.lstrip()
+    if not stripped:
+        return line
+    if stripped[0] in "!%?":
+        return ""
+    # `foo?` and `foo??` — IPython's help syntax, legal nowhere else.
+    if stripped.endswith("?") and not stripped.endswith("??="):
+        return ""
+    return line
+
+
+def markdown_summary(text):
+    """The first real sentence of a markdown cell, with its heading marks removed."""
+    for line in text.split("\n"):
+        clean = line.strip().lstrip("#").strip()
+        if clean and not clean.startswith("!["):
+            return clean[:300]
+    return None
+
+
 def main():
     try:
         request = json.loads(sys.stdin.read() or "{}")
@@ -374,7 +449,21 @@ def main():
             # an invalid non-printable character. Reading it off is the whole fix.
             with open(entry.get("abs") or "", "r", encoding="utf-8-sig", errors="replace") as handle:
                 text = handle.read()
+            cells = None
+            if rel.endswith(".ipynb"):
+                text, cells, doc = notebook_source(text)
             record.update(analyze_source(text))
+            if cells is not None:
+                record["cells"] = cells
+                # The code, not the JSON envelope it arrived in. Everything downstream
+                # slices this to hash bodies and show snippets, and a snippet of raw
+                # notebook JSON would be worse than no snippet at all.
+                record["source"] = text
+                # A notebook rarely opens with a docstring, but it very often opens with
+                # a markdown title. That is the author describing their own work, which
+                # is the top rung of the explanation ladder — not something to generate.
+                if not record.get("doc") and doc:
+                    record["doc"] = doc
             record["ok"] = True
         except SyntaxError as err:
             record["error"] = "line %s: %s" % (err.lineno, err.msg)

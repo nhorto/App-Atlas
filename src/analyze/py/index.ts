@@ -28,7 +28,9 @@ import { BATCH_SIZE, extractorPath, findInterpreter, run } from './run.js';
 import type { Interpreter } from './run.js';
 import type { PyDef, PyFile, PyPayload } from './types.js';
 
-const PY_EXTENSIONS = new Set(['.py', '.pyi']);
+// A notebook is Python too — it just keeps its statements in a JSON envelope, which
+// extract.py unwraps. Everything downstream sees ordinary Python.
+const PY_EXTENSIONS = new Set(['.py', '.pyi', '.ipynb']);
 const EXTRACT_TIMEOUT_MS = 120_000;
 
 export const pythonPlugin: LanguagePlugin = {
@@ -116,7 +118,9 @@ export async function analyzePython(ctx: PluginContext): Promise<PluginResult> {
       bucket.nodes.push(shallowFileNode(ref, project.root));
       continue;
     }
-    const text = readText(path.join(project.root, ref.relPath));
+    // A notebook's own bytes are JSON; the Python it contains came back from the
+    // extractor, and that is what every line number in this record counts against.
+    const text = file.source ?? readText(path.join(project.root, ref.relPath));
     texts.set(ref.relPath, text);
     bucket.nodes.push(...buildNodes(ref, file, text));
     declarations.set(ref.relPath, declaredIn(bucket.nodes));
@@ -232,6 +236,9 @@ function buildNodes(ref: SourceFileRef, file: PyFile, text: string): AtlasNode[]
       exportedNames: [] as string[],
       functionCount: 0,
       typeCount: 0,
+      // Notebooks only. A reader looking at a stack of cells cannot use "line 412",
+      // so the cell each line belongs to travels with the file.
+      ...(file.cells ? { cellCount: file.cells.length, cells: file.cells } : {}),
     },
   };
   nodes.push(fileNode);
@@ -243,7 +250,7 @@ function buildNodes(ref: SourceFileRef, file: PyFile, text: string): AtlasNode[]
   for (const def of file.defs ?? []) {
     if (def.kind === 'function') {
       const id = unique(makeFunctionId(ref.relPath, def.name), used);
-      nodes.push(functionNode(id, fileId, ref, def, lines));
+      nodes.push(functionNode(id, fileId, ref, def, lines, cellAt(file, def.line)));
       functionCount++;
       if (!def.name.startsWith('_')) exported.push(def.name);
       continue;
@@ -258,7 +265,7 @@ function buildNodes(ref: SourceFileRef, file: PyFile, text: string): AtlasNode[]
       const methodId = unique(makeFunctionId(ref.relPath, `${def.name}.${method.name}`), used);
       // Methods hang off the class, exactly as they do in the TypeScript analyzer, so
       // the drill-down reads the same whichever language you land in.
-      nodes.push(functionNode(methodId, id, ref, method, lines, def.name));
+      nodes.push(functionNode(methodId, id, ref, method, lines, cellAt(file, method.line), def.name));
       functionCount++;
     }
   }
@@ -269,12 +276,21 @@ function buildNodes(ref: SourceFileRef, file: PyFile, text: string): AtlasNode[]
   return nodes;
 }
 
+/** Which notebook cell a line fell in, or null for an ordinary file. */
+function cellAt(file: PyFile, line: number): number | null {
+  for (const cell of file.cells ?? []) {
+    if (line >= cell.startLine && line <= cell.endLine) return cell.index;
+  }
+  return null;
+}
+
 function functionNode(
   id: string,
   parentId: string,
   ref: SourceFileRef,
   def: PyDef,
   lines: string[],
+  cell: number | null,
   ownerName?: string,
 ): AtlasNode {
   const params: ParamInfo[] = (def.params ?? []).map((p) => ({
@@ -319,6 +335,7 @@ function functionNode(
       ownerName,
       decorators: def.decorators.map((d) => d.text ?? d.callee).filter(Boolean),
       loc: def.endLine - def.line + 1,
+      ...(cell === null ? {} : { cell }),
     },
   };
 }

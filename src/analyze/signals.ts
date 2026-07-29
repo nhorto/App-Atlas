@@ -12,6 +12,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { parseSqlMigrations, type SqlPolicy, type SqlTable } from './sql.js';
+import { readWorkers, type WorkerSignal } from './wrangler.js';
 
 export interface CronSignal {
   schedule: string;
@@ -81,6 +82,8 @@ export interface ProjectSignals {
   /** Repo-relative directory Expo Router treats as the route tree, if there is one. */
   expoRouterDir: string | null;
   crons: CronSignal[];
+  /** Cloudflare Workers and Pages deploys, read out of their wrangler configs. */
+  workers: WorkerSignal[];
   prisma: PrismaSignal | null;
   sqlSchema: SqlSchemaSignal | null;
   /** Variable names documented in `.env.example` and friends. */
@@ -99,6 +102,7 @@ export function readSignals(root: string, packageJson: Record<string, unknown> |
     // through the dependency rather than a config file. Same candidate dirs.
     expoRouterDir: packages.has('expo-router') ? firstExistingDir(root, ['app', 'src/app']) : null,
     crons: readVercelCrons(root),
+    workers: readWorkers(root),
     prisma,
     // When Prisma is present its migrations are generated from schema.prisma, so
     // reading both would declare every table twice.
