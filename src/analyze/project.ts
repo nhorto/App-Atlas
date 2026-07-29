@@ -31,7 +31,14 @@ export interface ProjectInfo {
   frameworks: string[];
   /** What the config files say: routers, crons, the database engine, `.env.example`. */
   signals: ProjectSignals;
-  /** Workspace globs, if this looks like a monorepo. Informational in M1. */
+  /**
+   * Workspace globs, if this looks like a monorepo.
+   *
+   * No warning goes with them any more. It used to say per-app scopes were still to
+   * come, and it was printed at the top of a run that had just listed the apps by name
+   * — a warning that contradicts the screen it is on teaches the reader to skip the
+   * warnings, which is where the real ones live.
+   */
   workspaces: string[];
   /** Extra patterns the caller asked to leave out. Part of the cache fingerprint. */
   ignored: string[];
@@ -125,11 +132,6 @@ export async function discoverProject(rootInput: string, options: DiscoverOption
   const tsConfigPath = findTsConfig(root);
   const signals = readSignals(root, packageJson);
   const workspaces = readWorkspaces(root, packageJson);
-  if (workspaces.length > 0) {
-    warnings.push(
-      `This looks like a monorepo (${workspaces.length} workspace globs). M1 analyzes the whole tree as one atlas; per-app scopes arrive in M5.`,
-    );
-  }
 
   const found = await fg(SOURCE_GLOB, {
     cwd: root,

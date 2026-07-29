@@ -42,6 +42,7 @@ import { detectBoundaries } from '../boundaries/index.js';
 import type { BoundaryFinding } from '../boundaries/types.js';
 import type { FileSlice, LanguagePlugin, PluginContext, PluginResult } from '../plugin.js';
 import type { SourceFileRef } from '../project.js';
+import { appendAll } from '../../util/append.js';
 
 const TS_EXTENSIONS = new Set(['.ts', '.tsx', '.mts', '.cts', '.js', '.jsx', '.mjs', '.cjs']);
 const MAX_TYPE_TEXT = 180;
@@ -106,9 +107,9 @@ export function analyzeTypeScript(ctx: PluginContext): PluginResult {
       staleRefs.push(ref);
       continue;
     }
-    nodes.push(...slice.nodes);
+    appendAll(nodes, slice.nodes);
     mergeEdges(edges, slice.edges);
-    boundaries.push(...slice.boundaries);
+    appendAll(boundaries, slice.boundaries);
     const posKey = normPath(ref.absPath);
     for (const [pos, id] of slice.positions) registered.byPosition.set(`${posKey}|${pos}`, id);
     for (const node of slice.nodes) {
@@ -233,9 +234,9 @@ export function analyzeTypeScript(ctx: PluginContext): PluginResult {
         .filter((edge) => edge.kind === 'imports')
         .map((edge) => edge.toId.slice(FILE_ID_PREFIX.length)),
     });
-    nodes.push(...bucket.nodes);
+    appendAll(nodes, bucket.nodes);
     mergeEdges(edges, sliceEdges);
-    boundaries.push(...bucket.boundaries);
+    appendAll(boundaries, bucket.boundaries);
   }
 
   return { nodes, edges: [...edges.values()], boundaries, warnings, timings, slices, reused };

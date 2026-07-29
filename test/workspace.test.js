@@ -69,6 +69,43 @@ test('a workspace with one package is not a monorepo', async () => {
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
+/**
+ * Sentry declares three workspace packages — `api-docs` and two eslint plugins, sixty
+ * files between them — and its actual application, several thousand Python files, is in
+ * none of them. The switcher offered those three and nothing else, so the tool reported
+ * on sixty files of tooling and called it Sentry.
+ */
+test('the repo itself is a scope when most of the code is not in any package', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'atlas-root-'));
+  fs.writeFileSync(path.join(dir, 'package.json'), JSON.stringify({ name: 'sentinel', workspaces: ['tools/*'] }));
+  fs.mkdirSync(path.join(dir, 'tools', 'lint'), { recursive: true });
+  fs.writeFileSync(path.join(dir, 'tools', 'lint', 'package.json'), JSON.stringify({ name: 'lint' }));
+  fs.writeFileSync(path.join(dir, 'tools', 'lint', 'index.js'), 'export const rule = 1;\n');
+  fs.mkdirSync(path.join(dir, 'tools', 'docs'), { recursive: true });
+  fs.writeFileSync(path.join(dir, 'tools', 'docs', 'package.json'), JSON.stringify({ name: 'docs' }));
+  fs.writeFileSync(path.join(dir, 'tools', 'docs', 'index.js'), 'export const page = 1;\n');
+  fs.mkdirSync(path.join(dir, 'src', 'app'), { recursive: true });
+  for (const name of ['a', 'b', 'c', 'd']) {
+    fs.writeFileSync(path.join(dir, 'src', 'app', `${name}.py`), 'x = 1\n');
+  }
+
+  const scopes = await findScopes(dir);
+  assert.equal(scopes[0].name, 'sentinel', 'the repo leads its own packages');
+  assert.equal(scopes[0].dir, '.');
+  assert.deepEqual(scopes.map((s) => s.name), ['sentinel', 'docs', 'lint']);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+/**
+ * The other half of the rule. Every monorepo has a build script and a config file at
+ * the root, and a scope for those would be one more wrong entry in the list rather than
+ * one less — so the leftovers have to outweigh every package, not merely exist.
+ */
+test('a root with less code than its packages is not a scope', async () => {
+  const scopes = await findScopes(MONO);
+  assert.ok(!scopes.some((s) => s.dir === '.'), scopes.map((s) => s.dir).join(', '));
+});
+
 test('reads pnpm workspaces too', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'atlas-pnpm-'));
   fs.writeFileSync(path.join(dir, 'package.json'), JSON.stringify({ name: 'root', private: true }));

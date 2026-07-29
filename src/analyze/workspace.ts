@@ -85,7 +85,46 @@ export async function findScopes(root: string): Promise<Scope[]> {
   // One package in a workspace is not a monorepo worth a switcher.
   if (scopes.length < 2) return [];
 
-  return leadWithTheMainApp(scopes.sort(byKindThenName), await measure(root, scopes));
+  const files = await measure(root, scopes);
+  const all = includeTheRootWhenItIsTheProject(root, scopes, files);
+  return leadWithTheMainApp(all.sort(byKindThenName), files);
+}
+
+/** Where files belong that no declared package claims. */
+const ROOT = '.';
+
+/**
+ * Adds the repo itself as a scope when most of the code is not in any package.
+ *
+ * A `workspaces` list describes the packages, not the repo. Sentry declares three —
+ * `api-docs` and two eslint plugins, sixty files between them — and its actual
+ * application, several thousand Python files at the root, is in none of them. The
+ * switcher offered those three and nothing else, so the whole tool reported on 60 files
+ * of tooling and called it Sentry, in six tenths of a second, with no warning that
+ * anything had been left out.
+ *
+ * Only when the leftovers outweigh every package. A root that owns less than its
+ * smallest package owns a build script and a config file, and a scope for those would
+ * be one more wrong thing in the list rather than one less.
+ */
+function includeTheRootWhenItIsTheProject(root: string, scopes: Scope[], files: Map<string, number>): Scope[] {
+  const outside = files.get(ROOT) ?? 0;
+  const biggest = Math.max(0, ...scopes.map((scope) => files.get(scope.dir) ?? 0));
+  if (outside <= biggest) return scopes;
+
+  const pkg = readJson(path.join(root, 'package.json'));
+  const declared = typeof pkg?.name === 'string' ? pkg.name : null;
+  return [
+    {
+      id: 'root',
+      name: (declared ?? path.basename(root)).replace(/^@[^/]+\//, ''),
+      dir: ROOT,
+      // Whatever the manifests say, a repo whose own code outweighs all its packages is
+      // the thing somebody means when they name the project.
+      kind: 'app',
+    },
+    ...scopes,
+  ];
 }
 
 function byKindThenName(a: Scope, b: Scope): number {
@@ -116,11 +155,12 @@ function leadWithTheMainApp(scopes: Scope[], files: Map<string, number>): Scope[
 }
 
 /**
- * How many source files each scope owns.
+ * How many source files each scope owns, and how many no package claims at all.
  *
- * One walk for the whole workspace rather than one per package, and each file counted
+ * One walk for the whole repo rather than one per package, and each file counted
  * against the *longest* directory that contains it, so a package nested inside another
- * package's tree is not counted twice.
+ * package's tree is not counted twice. What is left over is charged to `.`, which is
+ * what says whether the repo is its packages or has an application of its own.
  *
  * Deliberately not kept on the `Scope`. It is a rougher number than the one the CLI
  * prints beside each app — no gitignore, no `--max-files` — and two numbers with the
@@ -130,15 +170,20 @@ function leadWithTheMainApp(scopes: Scope[], files: Map<string, number>): Scope[
 async function measure(root: string, scopes: Scope[]): Promise<Map<string, number>> {
   const dirs = [...scopes].sort((a, b) => b.dir.length - a.dir.length);
   const counts = new Map<string, number>(dirs.map((scope) => [scope.dir, 0]));
+  counts.set(ROOT, 0);
 
-  const files = await fg(
-    dirs.map((scope) => `${scope.dir}/${SOURCE_GLOB}`),
-    { cwd: root, dot: false, onlyFiles: true, followSymbolicLinks: false, suppressErrors: true, ignore: DEFAULT_IGNORES },
-  );
+  const files = await fg([SOURCE_GLOB], {
+    cwd: root,
+    dot: false,
+    onlyFiles: true,
+    followSymbolicLinks: false,
+    suppressErrors: true,
+    ignore: DEFAULT_IGNORES,
+  });
 
   for (const file of files.map(toPosix)) {
     const owner = dirs.find((scope) => file.startsWith(`${scope.dir}/`));
-    if (owner) counts.set(owner.dir, (counts.get(owner.dir) ?? 0) + 1);
+    counts.set(owner ? owner.dir : ROOT, (counts.get(owner ? owner.dir : ROOT) ?? 0) + 1);
   }
   return counts;
 }

@@ -11,6 +11,7 @@ import { classifyOpenDoors, tallyOpenDoors } from '../model/exposure.js';
 import { authProviderForPackage } from './boundaries/catalog.js';
 import { countStaleDocs } from '../model/staleness.js';
 import { FORMAT_VERSION, makeAppId, makeEdgeId } from '../model/types.js';
+import { appendAll } from '../util/append.js';
 import { hashParts } from '../util/hash.js';
 import { classifyArchetype } from './archetype.js';
 import { buildBoundaryGraph } from './boundaries/build.js';
@@ -129,11 +130,11 @@ export async function analyzeProject(rootDir: string, options: AnalyzeOptions = 
       hashes: plan?.hashes,
       onProgress: options.onProgress,
     });
-    nodes.push(...result.nodes);
-    edges.push(...result.edges);
-    findings.push(...result.boundaries);
-    warnings.push(...result.warnings);
-    slices.push(...(result.slices ?? []));
+    appendAll(nodes, result.nodes);
+    appendAll(edges, result.edges);
+    appendAll(findings, result.boundaries);
+    appendAll(warnings, result.warnings);
+    appendAll(slices, result.slices ?? []);
     reused += result.reused ?? 0;
     analyzed += claimed.length - (result.reused ?? 0);
   }
@@ -152,11 +153,11 @@ export async function analyzeProject(rootDir: string, options: AnalyzeOptions = 
   // Read before the containment tree is built, because the schema file has to be in
   // the folder tree like any other file for its tables to have somewhere to live.
   const schema = buildSchemaNodes(project.signals.prisma);
-  nodes.push(...schema.nodes);
-  edges.push(...schema.edges);
+  appendAll(nodes, schema.nodes);
+  appendAll(edges, schema.edges);
   const sqlSchema = buildSqlSchemaNodes(project.signals.sqlSchema, project.signals.prisma);
-  nodes.push(...sqlSchema.nodes);
-  edges.push(...sqlSchema.edges);
+  appendAll(nodes, sqlSchema.nodes);
+  appendAll(edges, sqlSchema.edges);
 
   // --- boundaries ---
   // Merged once across every language, so a Python route and a TypeScript route land
@@ -172,8 +173,8 @@ export async function analyzeProject(rootDir: string, options: AnalyzeOptions = 
       references: edges.filter((edge) => edge.kind === 'references'),
       nodeNames: new Map(nodes.map((node) => [node.id, node.name])),
     });
-    nodes.push(...boundary.nodes);
-    edges.push(...boundary.edges);
+    appendAll(nodes, boundary.nodes);
+    appendAll(edges, boundary.edges);
   }
 
   // --- what kind of project this is ---
@@ -184,8 +185,8 @@ export async function analyzeProject(rootDir: string, options: AnalyzeOptions = 
   const archetype = classifyArchetype({ project, nodes });
   if (detectBoundaries && archetype.archetype === 'library') {
     const surface = buildExportDoors({ nodes, appId });
-    nodes.push(...surface.nodes);
-    edges.push(...surface.edges);
+    appendAll(nodes, surface.nodes);
+    appendAll(edges, surface.edges);
   }
 
   // --- containment tree ---
@@ -194,7 +195,7 @@ export async function analyzeProject(rootDir: string, options: AnalyzeOptions = 
   if (schema.filePath) treeFiles.push({ relPath: schema.filePath, zone: 'data' });
   for (const relPath of sqlSchema.filePaths) treeFiles.push({ relPath, zone: 'data' });
   const { modules, parentForFile } = buildModuleTree(treeFiles, appId);
-  nodes.push(...modules);
+  appendAll(nodes, modules);
 
   for (const node of nodes) {
     if (node.kind !== 'file' || !node.path) continue;

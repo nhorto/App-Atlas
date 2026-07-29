@@ -27,6 +27,7 @@ import type { ModuleIndex } from './modules.js';
 import { BATCH_SIZE, extractorPath, findInterpreter, run } from './run.js';
 import type { Interpreter } from './run.js';
 import type { PyDef, PyFile, PyPayload } from './types.js';
+import { appendAll } from '../../util/append.js';
 
 // A notebook is Python too — it just keeps its statements in a JSON envelope, which
 // extract.py unwraps. Everything downstream sees ordinary Python.
@@ -66,9 +67,9 @@ export async function analyzePython(ctx: PluginContext): Promise<PluginResult> {
       stale.push(ref);
       continue;
     }
-    nodes.push(...slice.nodes);
+    appendAll(nodes, slice.nodes);
     for (const edge of slice.edges) edges.set(edge.id, edge);
-    boundaries.push(...slice.boundaries);
+    appendAll(boundaries, slice.boundaries);
     declarations.set(ref.relPath, declaredIn(slice.nodes));
     reused++;
   }
@@ -160,9 +161,9 @@ export async function analyzePython(ctx: PluginContext): Promise<PluginResult> {
     const bucket = buckets.get(ref.relPath);
     if (!bucket) continue;
     const sliceEdges = [...bucket.edges.values()];
-    nodes.push(...bucket.nodes);
+    appendAll(nodes, bucket.nodes);
     for (const edge of sliceEdges) edges.set(edge.id, edge);
-    boundaries.push(...bucket.boundaries);
+    appendAll(boundaries, bucket.boundaries);
     slices.push({
       relPath: ref.relPath,
       hash: ctx.hashes?.get(ref.relPath) ?? hashText(texts.get(ref.relPath) ?? ''),
