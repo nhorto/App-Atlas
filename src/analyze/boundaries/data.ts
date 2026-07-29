@@ -53,6 +53,7 @@ export const storeDetector: BoundaryDetector = {
       supabase(node, dotted, ctx) ||
       mongoose(node, dotted, ctx) ||
       rawSql(node, dotted, ctx) ||
+      keyValue(node, dotted, ctx) ||
       blobWrite(node, dotted, ctx) ||
       browserStorage(node, dotted, ctx) ||
       fileWrite(node, dotted, ctx);
@@ -289,6 +290,65 @@ function tableFromSql(sql: string): string | null {
     /\binto\s+["'`]?(\w+)/i.exec(sql) ??
     /\bupdate\s+["'`]?(\w+)/i.exec(sql);
   return match?.[1] ?? null;
+}
+
+// ---------------------------------------------------------------------------
+// Redis and key–value stores
+// ---------------------------------------------------------------------------
+
+/** Redis commands, split by whether they change anything. */
+const KV_READS = new Set([
+  'get', 'mget', 'hget', 'hgetall', 'hmget', 'exists', 'ttl', 'keys', 'scan', 'smembers',
+  'sismember', 'lrange', 'llen', 'zrange', 'zscore', 'zcard', 'getdel', 'hkeys', 'hvals',
+]);
+const KV_WRITES = new Set([
+  'set', 'mset', 'setex', 'setnx', 'hset', 'hmset', 'del', 'unlink', 'expire', 'incr',
+  'incrby', 'decr', 'decrby', 'sadd', 'srem', 'lpush', 'rpush', 'lpop', 'rpop', 'zadd',
+  'zrem', 'flushall', 'flushdb', 'hincrby', 'hdel', 'persist', 'rename',
+]);
+
+/** Client names that are conventionally the Redis handle, so `redis.get` reads as one. */
+const KV_RECEIVERS = /^(kv|redis|redisClient|cache|cacheClient|client|store)$/i;
+
+/**
+ * `kv.get(key)`, `redis.set(key, value)`.
+ *
+ * A cache is where a surprising amount of an app's real state ends up living —
+ * sessions, rate limits, whole storage layers behind a "just a cache" name — so an app
+ * whose only persistence is Redis should not read as an app with no database.
+ */
+function keyValue(call: CallExpression, dotted: string, ctx: DetectorContext): boolean {
+  const parts = dotted.split('.');
+  const operation = (parts[parts.length - 1] ?? '').toLowerCase();
+  const reads = KV_READS.has(operation);
+  const writes = KV_WRITES.has(operation);
+  if (!reads && !writes) return false;
+
+  const root = parts[0];
+  const pkg = ['@vercel/kv', '@upstash/redis', 'ioredis', 'redis'].find((name) =>
+    ctx.signals.packages.has(name),
+  );
+  if (!pkg) return false;
+
+  // Either the name was imported from the client itself (`import { kv } from
+  // "@vercel/kv"`), built by it, or is one of the handful of names everybody uses.
+  const imported = ctx.imports.get(root);
+  const known =
+    imported?.module === pkg ||
+    ctx.locals.get(root)?.module === pkg ||
+    (KV_RECEIVERS.test(root) && parts.length === 2);
+  if (!known) return false;
+
+  const def = storeForPackage(pkg);
+  emit(ctx, call, {
+    key: 'kv',
+    name: def?.fallbackName ?? 'Redis',
+    client: def?.client ?? pkg,
+    storeKind: 'kv',
+    table: null,
+    operation: writes ? 'write' : 'read',
+  });
+  return true;
 }
 
 // ---------------------------------------------------------------------------

@@ -40,12 +40,61 @@ test('reads Next.js App Router routes off the file system', () => {
   assert.deepEqual(paths, [
     // The Supabase edge function: deployed HTTP that package.json never mentions.
     'ANY /functions/v1/greet',
+    'DELETE /api/orders',
     'GET /api/users',
     'PAGE /',
     // The `(app)` route group shapes the folder tree but not the URL.
     'PAGE /dashboard',
     'POST /api/users',
   ]);
+});
+
+test('follows a check into the helper that performs it', () => {
+  // `DELETE /api/orders` contains no auth call at all; `requireOwner` does the work.
+  // Reporting this route as unprotected would be the most expensive thing this tool
+  // could say, because it is one of the better-guarded routes in the fixture.
+  const orders = endpoint('DELETE /api/orders');
+  assert.ok(orders);
+  const guard = orders.meta.guards.find((g) => g.name.includes('requireOwner'));
+  assert.ok(guard, `no guard found through the helper: ${JSON.stringify(orders.meta.guards)}`);
+  // The label names the helper the reader will actually find in their route file,
+  // and then what it checks with.
+  assert.equal(guard.name, 'requireOwner → auth');
+  // Never `certain`: the reference graph proves the handler mentions the helper, not
+  // that every path through it runs the check.
+  assert.equal(guard.confidence, 'likely');
+  assert.equal(guard.path, 'src/lib/session.ts', 'evidence points at the real check');
+});
+
+test('follows an SDK client through the module that exports it', () => {
+  const stripe = atlas.nodes.find((n) => n.kind === 'service' && n.name === 'Stripe');
+  assert.ok(stripe, 'an app that refunds cards has a payments provider');
+  const paths = stripe.meta.sites.map((s) => s.path);
+  // The construction in the wrapper, and the call in a route that never imports the
+  // package. Before this, only files naming `stripe` directly counted.
+  assert.ok(paths.includes('src/lib/payments.ts'), 'the wrapper builds the client');
+  assert.ok(
+    paths.includes('src/app/api/orders/route.ts'),
+    `the route that charges through it is a Stripe site too: ${paths.join(', ')}`,
+  );
+});
+
+test('ordinary indirection is not a protection claim', () => {
+  // `sendWelcome` is one hop from POST /api/users exactly as `requireOwner` is from
+  // DELETE /api/orders. Only one of the two checks anything, and walking the reference
+  // graph must not turn a mail helper into a lock.
+  const hopped = endpoints.flatMap((n) => n.meta.guards).filter((g) => g.name.includes('→'));
+  assert.ok(hopped.length > 0, 'the walk does find real guards');
+  assert.ok(
+    hopped.every((g) => !/sendWelcome|prisma/.test(g.name)),
+    `a helper that checks nothing became a guard: ${hopped.map((g) => g.name).join(', ')}`,
+  );
+  // GET /api/users is covered by the Clerk matcher and by nothing else — in
+  // particular, not by the `auth()` call in the POST handler beside it.
+  assert.deepEqual(
+    endpoint('GET /api/users').meta.guards.map((g) => g.name),
+    ['clerkMiddleware'],
+  );
 });
 
 test('a Deno.serve file under supabase/functions is a door', () => {

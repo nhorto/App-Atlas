@@ -37,6 +37,8 @@ import {
 } from '../../model/types.js';
 import { hashParts } from '../../util/hash.js';
 import { isCatchAllMatcher, matcherMatches } from './auth.js';
+import { guardThroughHops, reachableGuards, servicesThroughWrappers } from './reach.js';
+import type { ReachedGuard } from './reach.js';
 import type { BoundaryFinding, EndpointFinding, GuardFinding } from './types.js';
 import type { ProjectSignals } from '../signals.js';
 
@@ -51,6 +53,13 @@ export interface BuildInput {
   signals: ProjectSignals;
   /** Every file node id that exists, so we never point an edge at a ghost. */
   knownNodeIds: Set<string>;
+  /**
+   * The `references` edges the language plugins resolved: who mentions whom. Used to
+   * follow a check from the helper it is written in to the handler that runs it.
+   */
+  references?: AtlasEdge[];
+  /** Atlas id → display name, so a hop can be named rather than numbered. */
+  nodeNames?: Map<string, string>;
 }
 
 /** Names that look like a credential rather than a setting. */
@@ -74,14 +83,22 @@ function isSecretName(name: string): boolean {
   return SECRET_PATTERN.test(name);
 }
 
-export function buildBoundaryGraph(input: BuildInput): BoundaryGraph {
+export function buildBoundaryGraph(raw: BuildInput): BoundaryGraph {
   const nodes: AtlasNode[] = [];
   const edges: AtlasEdge[] = [];
+
+  // A call made through a wrapper module is a real call to a real company; it just
+  // took two files to say so. Resolved before anything is merged, so those sites land
+  // on the same box as the direct ones rather than a second one beside it.
+  const input: BuildInput = {
+    ...raw,
+    findings: [...raw.findings, ...servicesThroughWrappers(raw.findings)],
+  };
 
   const endpoints = collectEndpoints(input);
   const guards = input.findings.filter((f): f is GuardFinding => f.type === 'guard');
   applyWebhookPromotion(endpoints, input.findings);
-  applyGuards(endpoints, guards);
+  applyGuards(endpoints, guards, reachableGuards(guards, input.references ?? [], input.nodeNames ?? new Map()));
 
   const envEndpoint = collectEnv(input);
   if (envEndpoint) endpoints.set(envEndpoint.id, envEndpoint);
@@ -420,8 +437,16 @@ function applyWebhookPromotion(endpoints: Map<string, MergedEndpoint>, findings:
  * to it, so a function-scoped guard only counts when it is *that* handler's. When we
  * never resolved a precise handler (a page component, say), a guard anywhere in the
  * file counts — but only as `likely`.
+ *
+ * `reached` carries the same idea one file further out: a handler that calls a helper
+ * which does the checking is protected, and saying otherwise about the best-guarded
+ * routes in a repo is the most expensive mistake this tool can make.
  */
-function applyGuards(endpoints: Map<string, MergedEndpoint>, guards: GuardFinding[]): void {
+function applyGuards(
+  endpoints: Map<string, MergedEndpoint>,
+  guards: GuardFinding[],
+  reached: Map<string, ReachedGuard[]>,
+): void {
   const byFile = new Map<string, GuardFinding[]>();
   const matchers: GuardFinding[] = [];
 
@@ -444,6 +469,10 @@ function applyGuards(endpoints: Map<string, MergedEndpoint>, guards: GuardFindin
         if (!confidence) continue;
         pushGuard(endpoint, { ...guard.guard, confidence });
       }
+    }
+
+    for (const handlerId of endpoint.handlerIds) {
+      for (const hop of reached.get(handlerId) ?? []) pushGuard(endpoint, guardThroughHops(hop));
     }
 
     const route = endpoint.meta.route;

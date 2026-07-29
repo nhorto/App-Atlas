@@ -11,7 +11,7 @@
  * guessed into a brand.
  */
 import { Node } from 'ts-morph';
-import type { CallExpression } from 'ts-morph';
+import type { CallExpression, NewExpression } from 'ts-morph';
 import type { ServiceCategory } from '../../model/types.js';
 import { isInternalHost, serviceForHost, serviceForPackage } from './catalog.js';
 import { dottedName, literalPrefix, literalString, objectProp } from './ast.js';
@@ -57,6 +57,7 @@ export const outboundDetector: BoundaryDetector = {
   id: 'outbound',
   enabled: () => true,
   visit(node, ctx) {
+    if (Node.isNewExpression(node)) return sdkConstruction(node, ctx);
     if (!Node.isCallExpression(node)) return;
     const dotted = dottedName(node.getExpression());
     if (!dotted) return;
@@ -131,11 +132,67 @@ function hostOf(url: string): string | null {
 // Official SDKs
 // ---------------------------------------------------------------------------
 
+/**
+ * `new Stripe(key)` — building a client, which sends nothing on its own.
+ *
+ * Worth reporting anyway, because it is the *only* thing a wrapper module like
+ * `lib/stripe.ts` ever does. Without it an app whose six Stripe calls all go through
+ * that wrapper reports no payments provider at all, while the frameworks list two
+ * inches away names Stripe.
+ */
+function sdkConstruction(node: NewExpression, ctx: DetectorContext): void {
+  const name = dottedName(node.getExpression());
+  if (!name) return;
+  const binding = ctx.imports.get(name.split('.')[0]);
+  if (!binding?.external || HANDLED_AS_STORES.has(binding.module)) return;
+
+  const service = serviceForPackage(binding.module);
+  if (!service) return;
+
+  ctx.emit({
+    type: 'service',
+    name: service.name,
+    category: service.category,
+    package: binding.module,
+    host: null,
+    external: true,
+    writes: false,
+    site: ctx.site(node),
+  });
+
+  const exported = exportedNameOf(node);
+  if (exported) {
+    ctx.emit({ type: 'client-export', exportName: exported, package: binding.module, site: ctx.site(node) });
+  }
+}
+
+/** The name this expression is exported under, when it is exported at all. */
+function exportedNameOf(node: Node): string | null {
+  let current: Node | undefined = node.getParent();
+  while (current) {
+    if (Node.isVariableDeclaration(current)) {
+      const name = current.getNameNode();
+      if (!Node.isIdentifier(name)) return null;
+      return current.getVariableStatement()?.isExported() ? name.getText() : null;
+    }
+    if (Node.isExportAssignment(current)) return 'default';
+    // Anything else between the `new` and a declaration means it is not a plain
+    // exported singleton, and guessing past that would invent a wrapper.
+    if (Node.isFunctionDeclaration(current) || Node.isBlock(current)) return null;
+    current = current.getParent();
+  }
+  return null;
+}
+
 /** `stripe.checkout.sessions.create(...)` — resolve `stripe` back to the package. */
 function sdkCall(call: CallExpression, dotted: string, ctx: DetectorContext): void {
   const root = dotted.split('.')[0];
   const module = moduleFor(root, ctx);
-  if (!module || HANDLED_AS_STORES.has(module)) return;
+  if (!module) {
+    wrapperCall(call, dotted, root, ctx);
+    return;
+  }
+  if (HANDLED_AS_STORES.has(module)) return;
 
   const service = serviceForPackage(module);
   if (!service) return;
@@ -149,6 +206,32 @@ function sdkCall(call: CallExpression, dotted: string, ctx: DetectorContext): vo
     external: true,
     writes: sendsData(dotted, service.category),
     site: ctx.site(call),
+  });
+}
+
+/**
+ * The receiver came from this repo's own code — `import { stripe } from "@/lib/stripe"`.
+ *
+ * Whether that name holds a Stripe client is not answerable from this file, and
+ * guessing from the name would put companies on the map that the app has never heard
+ * of. So the question gets written down, and `reach.ts` answers it against the
+ * `client-export` findings once every file has been read.
+ */
+function wrapperCall(call: CallExpression, dotted: string, root: string, ctx: DetectorContext): void {
+  const binding = ctx.imports.get(root);
+  if (!binding || binding.external) return;
+  // A bare `helper()` says nothing. It is `stripe.checkout.sessions.create` — a name
+  // with an API surface hanging off it — that looks like a client.
+  if (!dotted.includes('.')) return;
+
+  ctx.emit({
+    type: 'wrapper-call',
+    exportName: binding.imported,
+    module: binding.module,
+    dotted,
+    // Most of these turn out to be ordinary helpers and are dropped unread, so the
+    // snippet is the call itself rather than however many lines its arguments run to.
+    site: ctx.site(call, dotted),
   });
 }
 
@@ -169,7 +252,7 @@ function moduleFor(local: string, ctx: DetectorContext): string | null {
  * Sending an email or charging a card is data leaving; listing models is not. The
  * distinction is what makes the "where does my data go" answer worth reading.
  */
-function sendsData(dotted: string, category: ServiceCategory): boolean {
+export function sendsData(dotted: string, category: ServiceCategory): boolean {
   const last = dotted.split('.').pop() ?? '';
   if (/^(send|create|post|upload|track|capture|identify|charge|publish|emit|log)/i.test(last)) return true;
   return category === 'email' || category === 'sms' || category === 'analytics' || category === 'payments';

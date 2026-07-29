@@ -165,6 +165,10 @@ export async function analyzeProject(rootDir: string, options: AnalyzeOptions = 
       appId,
       signals: project.signals,
       knownNodeIds: new Set(nodes.map((n) => n.id)),
+      // What the compiler already resolved about who mentions whom, so a guard written
+      // in a helper can be followed back to the handler that runs it.
+      references: edges.filter((edge) => edge.kind === 'references'),
+      nodeNames: new Map(nodes.map((node) => [node.id, node.name])),
     });
     nodes.push(...boundary.nodes);
     edges.push(...boundary.edges);

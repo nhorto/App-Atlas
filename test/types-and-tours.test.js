@@ -171,9 +171,9 @@ test('the welcome tour answers the questions people ask first', () => {
   assert.equal(welcome.kind, 'welcome');
   assert.ok(welcome.steps.length >= 4);
   assert.ok(
-    // 21, not 9: PostgREST publishes four doors onto each of the three declared
+    // 22, not 10: PostgREST publishes four doors onto each of the three declared
     // tables, and those are ways in whether or not any code in the repo calls them.
-    welcome.steps.some((step) => /21 ways in/.test(step.body)),
+    welcome.steps.some((step) => /22 ways in/.test(step.body)),
     'the doors are counted from the graph, not guessed',
   );
 });

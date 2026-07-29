@@ -100,13 +100,47 @@ export interface WebhookFinding {
   site: CodeSite;
 }
 
+/**
+ * A configured SDK client this file builds and hands to the rest of the app.
+ *
+ * On its own it says only that the app integrates something. Its real job is to be
+ * the other half of a `wrapper-call`: `lib/stripe.ts` is where `new Stripe(...)` is
+ * written, and every actual charge is written somewhere else.
+ */
+export interface ClientExportFinding {
+  type: 'client-export';
+  /** The name the module exports it under. */
+  exportName: string;
+  /** The package the client came from: `stripe`, `resend`, `openai`. */
+  package: string;
+  site: CodeSite;
+}
+
+/**
+ * A call on a name that came from this repo's own code, so whatever is on the other
+ * end of it is a file away. Recorded as a question rather than an answer; `build.ts`
+ * resolves it against the `client-export` findings once every file has been read.
+ */
+export interface WrapperCallFinding {
+  type: 'wrapper-call';
+  /** The name as the exporting module declared it, so an alias still matches. */
+  exportName: string;
+  /** The specifier as written: `@/lib/stripe`, `./stripe`. */
+  module: string;
+  /** The whole dotted call, for deciding whether data is being sent. */
+  dotted: string;
+  site: CodeSite;
+}
+
 export type BoundaryFinding =
   | EndpointFinding
   | ServiceFinding
   | StoreFinding
   | EnvFinding
   | GuardFinding
-  | WebhookFinding;
+  | WebhookFinding
+  | ClientExportFinding
+  | WrapperCallFinding;
 
 /** One import statement, flattened to the name it introduced. */
 export interface ImportBinding {
