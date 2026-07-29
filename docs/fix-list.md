@@ -13,21 +13,40 @@ compiler-derived and cannot be wrong.
 
 ## Tier 1 — the tool says false things
 
-- [ ] **1. Follow one hop from the handler** — [#23](https://github.com/nhorto/App-Atlas/issues/23)
+- [x] **1. Follow one hop from the handler** — [#23](https://github.com/nhorto/App-Atlas/issues/23)
       Guards and outbound calls reached through a local helper or wrapper module are
       invisible. Causes false "no auth check" *and* missing services. Walk the `uses`
       edges the atlas already resolves (depth 2–3, same repo); badge hop-found guards
       `likely`, not `certain`.
       *Repos: taxonomy, daily-briefing, mirrorquiz.*
+      **Done** (`dd9fa2a`). taxonomy's two ownership-checked routes are guarded and
+      Stripe appears with all 6 call sites; daily-briefing's Vercel KV storage layer
+      appears (it needed a Redis reader that never existed); mirrorquiz gains Anthropic
+      and Resend. Guard labels name the helper: `requireOwner → auth`.
 
-- [ ] **2. Detect FastAPI `Annotated[..., Depends(...)]` auth** — [#32](https://github.com/nhorto/App-Atlas/issues/32)
+- [x] **2. Detect FastAPI `Annotated[..., Depends(...)]` auth** — [#32](https://github.com/nhorto/App-Atlas/issues/32)
       `CurrentUser = Annotated[User, Depends(get_current_user)]` used as a parameter
       type. FastAPI's own template reports **21 of 21 routes unprotected**. Needs
       type-alias resolution, so it is separate work from #23.
+      **Done** (`a39a44a`). Decided by shape, not vocabulary: a dependency is a check
+      when it raises or returns a 401/403, so `verify_api_key` reads as well as
+      `get_current_user`. Also covers custom router subclasses
+      (`class UserAPIRouter(APIRouter)` with baked-in dependencies), matched by router
+      *variable* so an open router beside a locked one is not falsely claimed.
+      Validated on three Python repos the tool had never seen: mealie 2% → 36%,
+      Netflix/dispatch found its aliased `CurrentUser` on 35 routes.
+      *The FastAPI template itself is still 0% — but for a different reason, now
+      [#36](https://github.com/nhorto/App-Atlas/issues/36): its `deps.py` does not
+      parse upstream, and we count an unreadable file as unprotected.*
 
-- [ ] **3. Detect higher-order auth wrappers** — [#32](https://github.com/nhorto/App-Atlas/issues/32)
+- [x] **3. Detect higher-order auth wrappers** — [#32](https://github.com/nhorto/App-Atlas/issues/32)
       `export const GET = withWorkspace(async ({ session }) => …)`. dub reports **746 of
       760 unprotected**. The dominant pattern in production Next.js and tRPC.
+      **Done by item 1, with no code of its own** — walking the reference graph finds
+      `withWorkspace → getSession → getServerSession` without anyone writing the name
+      `withWorkspace` down. dub: 746 unguarded of 760 → **373**, of which 179 are
+      pages (item 6's territory). Sampled the rest by hand: password reset and
+      signature-verified callbacks, i.e. genuinely public.
 
 - [ ] **4. Compose router prefixes into route paths** — [#33](https://github.com/nhorto/App-Atlas/issues/33)
       FastAPI doors display as `GET /{id}` when the real address is
@@ -107,6 +126,42 @@ compiler-derived and cannot be wrong.
 - [ ] **21. Fix the self-contradicting archetype reason** — [#28](https://github.com/nhorto/App-Atlas/issues/28)
       NBA's reason reads "no doors of any kind" while the headline above says "14 names
       in its public API".
+
+---
+
+## Found while fixing
+
+Both surfaced by running the fixes against repos the tool had never seen, which is the
+point of doing that rather than only re-checking the repos that produced the list.
+
+- [ ] **25. An unreadable file is counted as unprotected** — [#36](https://github.com/nhorto/App-Atlas/issues/36) — *Tier 1*
+      `fastapi/full-stack-fastapi-template`'s `deps.py` does not parse (a Python 2
+      `except` clause, upstream, verified against raw.githubusercontent). We record the
+      warning **and** print "21 of 21 routes unprotected" — every one of which is
+      guarded, by the alias declared in the file we could not read. The warning and the
+      headline never meet. Auth coverage has to degrade to "I could not read N files",
+      never to zero. Generalizes to any parse failure.
+
+- [ ] **26. Auth applied by ASGI middleware is invisible** — [#37](https://github.com/nhorto/App-Atlas/issues/37) — *Tier 2*
+      `Netflix/dispatch` mounts its routers under a sub-application and checks callers
+      in Starlette middleware. 163 of 198 routes read as open. This is the third
+      mechanism for the same idea — we handle route dependencies and Next.js
+      middleware, and this is how large Python services normally do it.
+
+## How these fixes avoid being fitted to the test repos
+
+Worth writing down, because the failure mode is easy and invisible:
+
+- **#23 names nothing.** It walks the compiler's own reference graph, which is why
+  dub's `withWorkspace` was found without that string appearing anywhere in this repo.
+- **#32 decides by shape.** "Is this dependency a check?" is answered by whether the
+  function turns strangers away with a 401 or 403 — a fact about the code. The fixture
+  in `test/fixtures/pyauth` is deliberately hostile to vocabulary matching: its checker
+  is called `who_is_asking`, and a decoy dependency called `fetch_tenant` is correctly
+  *not* treated as a lock.
+- **Every fix is checked on a repo that did not produce the finding.** mealie,
+  dispatch and a fresh FastAPI template were cloned for exactly this, and two of the
+  three surfaced new bugs rather than confirming the old ones.
 
 ---
 
