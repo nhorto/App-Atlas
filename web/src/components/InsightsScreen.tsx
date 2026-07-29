@@ -395,7 +395,11 @@ function EnvRow({ entry, documented }: { entry: EnvVarInfo; documented: boolean 
     <>
       <span className="env-name mono">{entry.name}</span>
       {entry.secret ? <span className="tag tag-secret">secret</span> : null}
-      {documented ? (
+      {/* A variable the host sets is neither documented nor a lapse, and saying so is
+          the difference between a checklist and a list of things to ignore. */}
+      {entry.platform ? (
+        <span className="badge badge-public">set by the platform</span>
+      ) : documented ? (
         <span className={`badge badge-${entry.documented ? 'protected' : 'open'}`}>
           {entry.documented ? 'documented' : 'undocumented'}
         </span>

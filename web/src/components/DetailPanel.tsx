@@ -297,7 +297,9 @@ function EnvVars({ node }: { node: AtlasNode }) {
   const meta = node.meta as unknown as EndpointMeta;
   const vars = meta.vars ?? [];
   if (vars.length === 0) return null;
-  const undocumented = vars.filter((entry) => !entry.documented).length;
+  // `NODE_ENV` and `PORT` are set by whatever runs the app, so counting them here
+  // would put the reader on a hunt for something nobody forgot.
+  const undocumented = vars.filter((entry) => !entry.documented && !entry.platform).length;
 
   return (
     <Section
@@ -317,7 +319,9 @@ function EnvVars({ node }: { node: AtlasNode }) {
                 {entry.sites.length} {entry.sites.length === 1 ? 'read' : 'reads'}
               </td>
               <td>
-                {meta.envExample ? (
+                {entry.platform ? (
+                  <span className="badge badge-public">set by the platform</span>
+                ) : meta.envExample ? (
                   <span className={`badge badge-${entry.documented ? 'protected' : 'open'}`}>
                     {entry.documented ? 'documented' : 'missing'}
                   </span>

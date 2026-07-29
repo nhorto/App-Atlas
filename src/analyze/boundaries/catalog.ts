@@ -62,16 +62,12 @@ const PACKAGE_SERVICES: Record<string, ServiceDef> = {
   'discord.js': { name: 'Discord', category: 'other' },
   '@octokit/rest': { name: 'GitHub', category: 'other' },
   octokit: { name: 'GitHub', category: 'other' },
-  // auth
+  // auth — hosted only; see the note below about the libraries that are not companies
   '@clerk/nextjs': { name: 'Clerk', category: 'auth' },
   '@clerk/clerk-sdk-node': { name: 'Clerk', category: 'auth' },
   '@clerk/backend': { name: 'Clerk', category: 'auth' },
-  'next-auth': { name: 'NextAuth', category: 'auth' },
-  '@auth/core': { name: 'Auth.js', category: 'auth' },
   '@auth0/nextjs-auth0': { name: 'Auth0', category: 'auth' },
   'auth0': { name: 'Auth0', category: 'auth' },
-  'better-auth': { name: 'Better Auth', category: 'auth' },
-  lucia: { name: 'Lucia', category: 'auth' },
   '@workos-inc/node': { name: 'WorkOS', category: 'auth' },
   // storage
   '@aws-sdk/client-s3': { name: 'Amazon S3', category: 'storage' },
@@ -105,6 +101,21 @@ const PACKAGE_SERVICES: Record<string, ServiceDef> = {
   '@trigger.dev/sdk': { name: 'Trigger.dev', category: 'queue' },
   '@upstash/qstash': { name: 'Upstash QStash', category: 'queue' },
 };
+
+/**
+ * Auth packages that are libraries, not companies (#30).
+ *
+ * `next-auth`, `@auth/core`, `lucia` and `better-auth` run inside the app and keep
+ * their sessions in the app's own database. Nothing about installing one sends a user's
+ * data anywhere, so listing them under "companies you send data to" is false in the one
+ * place a reader is least able to check it — and it sits next to Stripe and OpenAI,
+ * which are true, so it borrows their credibility.
+ *
+ * They stay in `AUTH_PROVIDERS` below, because naming the provider behind a guard is a
+ * different claim and a correct one. Clerk, Auth0 and WorkOS are hosted: your app calls
+ * their servers, so they belong in the catalog above.
+ */
+const IN_PROCESS_AUTH = new Set(['next-auth', '@auth/core', 'lucia', 'better-auth', 'iron-session', 'passport']);
 
 /**
  * The same idea for Python, where the import name is the thing to look up.
@@ -226,6 +237,7 @@ const AUTH_PROVIDERS: { prefix: string; name: string }[] = [
 ];
 
 export function serviceForPackage(pkg: string): ServiceDef | null {
+  if (IN_PROCESS_AUTH.has(pkg)) return null;
   return PACKAGE_SERVICES[pkg] ?? null;
 }
 

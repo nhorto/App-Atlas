@@ -54,6 +54,8 @@ export function classifyOpenDoors(nodes: AtlasNode[], edges: AtlasEdge[]): Map<s
   const open: AtlasNode[] = [];
   const authServices = new Map<string, string>();
   const unreadable = new Map<string, string>();
+  /** Files that import an auth package directly — the fact the mount rule is about. */
+  const authFiles = new Map<string, string>();
 
   for (const node of nodes) {
     switch (node.kind) {
@@ -65,9 +67,16 @@ export function classifyOpenDoors(nodes: AtlasNode[], edges: AtlasEdge[]): Map<s
       case 'service':
         if ((node.meta as unknown as ServiceMeta).category === 'auth') authServices.set(node.id, node.name);
         break;
-      case 'file':
+      case 'file': {
         if (node.meta.unread) unreadable.set(node.id, node.path ?? node.name);
+        // Read from the file's own stamped provider rather than from a service box,
+        // because the two answer different questions. `next-auth` runs inside the app
+        // and is not a company anybody sends data to (#30), so it has no service box —
+        // but it is still exactly what makes a wildcard route the sign-in door.
+        const provider = node.meta.authPackage;
+        if (typeof provider === 'string' && provider) authFiles.set(node.id, provider);
         break;
+      }
       default:
         break;
     }
@@ -78,7 +87,8 @@ export function classifyOpenDoors(nodes: AtlasNode[], edges: AtlasEdge[]): Map<s
   // Only build the lookups the doors we have actually need. On a repo with nothing
   // unreadable and no auth package, both loops below are skipped entirely.
   const importsOf = unreadable.size > 0 ? edgesByKind(edges, 'imports') : null;
-  const authMounts = authServices.size > 0 ? authMountFiles(edges, authServices) : null;
+  const authMounts =
+    authServices.size > 0 || authFiles.size > 0 ? authMountFiles(edges, authServices, authFiles) : null;
 
   for (const node of open) {
     const meta = node.meta as unknown as EndpointMeta;
@@ -260,8 +270,12 @@ function firstUnreadImport(
 }
 
 /** File id → the name of the auth provider whose package that file pulls in. */
-function authMountFiles(edges: AtlasEdge[], authServices: Map<string, string>): Map<string, string> {
-  const mounts = new Map<string, string>();
+function authMountFiles(
+  edges: AtlasEdge[],
+  authServices: Map<string, string>,
+  authFiles: Map<string, string>,
+): Map<string, string> {
+  const mounts = new Map<string, string>(authFiles);
   for (const edge of edges) {
     const provider = authServices.get(edge.toId);
     if (!provider || !edge.fromId.startsWith('file:')) continue;

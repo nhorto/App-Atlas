@@ -210,6 +210,12 @@ export interface EnvVarInfo {
   documented: boolean;
   /** The name looks like a credential rather than a setting. */
   secret: boolean;
+  /**
+   * The runtime or the host sets this one — `NODE_ENV`, `PORT`, `VERCEL_URL`. Nobody
+   * puts them in `.env.example`, so counting them as undocumented turns a section
+   * meant to say "you forgot to write this down" into noise the reader learns to skip.
+   */
+  platform: boolean;
 }
 
 /** meta for kind === 'endpoint' */

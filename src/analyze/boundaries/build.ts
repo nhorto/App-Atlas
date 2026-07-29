@@ -94,6 +94,61 @@ function isSecretName(name: string): boolean {
 }
 
 /**
+ * Variables the runtime or the host sets, which no `.env.example` would ever list.
+ *
+ * On taxonomy, `NODE_ENV` was **100% of the "undocumented" signal** — the section read
+ * "1 variable is read by the code and missing from .env.example", and the one variable
+ * was the one nobody is supposed to write down. A list where the only row is a false
+ * positive teaches the reader that the whole section is noise, which costs more than
+ * the section was ever worth.
+ */
+const PLATFORM_ENV = new Set([
+  'NODE_ENV',
+  'PORT',
+  'HOST',
+  'HOSTNAME',
+  'CI',
+  'TZ',
+  'PWD',
+  'HOME',
+  'PATH',
+  'PYTHONPATH',
+  'NEXT_RUNTIME',
+  'NETLIFY',
+  'RENDER',
+  'DYNO',
+  'K_SERVICE',
+  'AWS_REGION',
+  'AWS_EXECUTION_ENV',
+  // GitHub Actions injects these; `GITHUB_` as a prefix is *not* safe — see below.
+  'GITHUB_ACTIONS',
+  'GITHUB_SHA',
+  'GITHUB_REF',
+  'GITHUB_REF_NAME',
+  'GITHUB_RUN_ID',
+  'GITHUB_WORKSPACE',
+  'GITHUB_REPOSITORY',
+]);
+
+/** Host-injected families, where the whole prefix belongs to the platform. */
+const PLATFORM_ENV_PREFIX = /^(VERCEL_|NEXT_PUBLIC_VERCEL_|CF_PAGES|FLY_|RAILWAY_|RENDER_|AWS_LAMBDA_)/;
+
+/**
+ * Whether the runtime sets this one, rather than the reader forgetting to write it down.
+ *
+ * A name that looks like a credential is never excused, whatever prefix it wears.
+ * `GITHUB_` looked like a safe family — GitHub Actions injects a dozen of them — until
+ * it swallowed taxonomy's `GITHUB_CLIENT_SECRET` and `GITHUB_ACCESS_TOKEN`, which are
+ * the app's own OAuth credentials and the single most important rows on the screen.
+ * Quietly excusing a secret is a far worse error than the noisy `NODE_ENV` row this
+ * rule exists to remove, so the secret test wins outright.
+ */
+function isPlatformName(name: string): boolean {
+  if (isSecretName(name)) return false;
+  return PLATFORM_ENV.has(name) || PLATFORM_ENV_PREFIX.test(name);
+}
+
+/**
  * Whether a finding describes the app someone ships, rather than the code that tests
  * it (#25).
  *
@@ -705,6 +760,7 @@ function collectEnv(input: BuildInput): MergedEndpoint | null {
       sites: sites.sort(compareSites),
       documented: input.signals.envExample.has(name),
       secret: isSecretName(name),
+      platform: isPlatformName(name),
     }))
     .sort((a, b) => a.name.localeCompare(b.name));
 

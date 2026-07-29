@@ -79,6 +79,8 @@ export interface EnvVarInfo {
   sites: CodeSite[];
   documented: boolean;
   secret: boolean;
+  /** The runtime or host sets it — `NODE_ENV`, `PORT`, `VERCEL_URL`. */
+  platform?: boolean;
 }
 
 export interface EndpointMeta {

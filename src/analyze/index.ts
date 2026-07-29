@@ -8,6 +8,7 @@
  */
 import type { Atlas, AtlasEdge, AtlasNode, AtlasStats, EndpointMeta, Zone } from '../model/types.js';
 import { classifyOpenDoors, tallyOpenDoors } from '../model/exposure.js';
+import { authProviderForPackage } from './boundaries/catalog.js';
 import { countStaleDocs } from '../model/staleness.js';
 import { FORMAT_VERSION, makeAppId, makeEdgeId } from '../model/types.js';
 import { hashParts } from '../util/hash.js';
@@ -219,6 +220,25 @@ export async function analyzeProject(rootDir: string, options: AnalyzeOptions = 
   // Drop edges that point at nodes we never created (e.g. a file that failed to parse).
   const known = new Set(nodes.map((n) => n.id));
   const liveEdges = edges.filter((e) => known.has(e.fromId) && known.has(e.toId));
+
+  // Which files bring an auth library in. Stamped here, where the catalog lives, so
+  // that `src/model` can read a plain field instead of importing the analyzer — and so
+  // the fact survives into `atlas.json` for anything reading it later. Kept separate
+  // from the service boxes on purpose: `next-auth` runs inside the app and is not a
+  // company anybody sends data to, but it is still what makes a wildcard route the
+  // door people sign in through.
+  for (const node of nodes) {
+    if (node.kind !== 'file') continue;
+    const imports = node.meta.externalImports;
+    if (!Array.isArray(imports)) continue;
+    for (const pkg of imports) {
+      const provider = typeof pkg === 'string' ? authProviderForPackage(pkg) : null;
+      if (provider) {
+        node.meta.authPackage = provider;
+        break;
+      }
+    }
+  }
 
   // Why each unchecked door is unchecked, written onto the door. Every screen that
   // badges an endpoint then reads one field instead of re-deriving its own answer,

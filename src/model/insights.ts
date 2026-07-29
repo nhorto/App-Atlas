@@ -306,8 +306,11 @@ function buildEnv(meta: EndpointMeta | null): InsightsView['env'] {
     total: vars.length,
     // Secrets first: a missing `.env.example` entry for an API key is a different
     // problem from a missing entry for a feature flag.
+    // Platform variables are excluded, not hidden: they still appear in the full list,
+    // badged as set by the host. What they must not do is inflate a count whose whole
+    // meaning is "you forgot to write these down".
     undocumented: vars
-      .filter((entry) => !entry.documented)
+      .filter((entry) => !entry.documented && !entry.platform)
       .sort((a, b) => Number(b.secret) - Number(a.secret) || a.name.localeCompare(b.name)),
     vars,
   };
