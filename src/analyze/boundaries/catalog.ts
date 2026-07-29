@@ -262,6 +262,36 @@ export function storeForPythonModule(module: string): StoreDef | null {
   return PYTHON_STORES[module.split('.')[0]] ?? null;
 }
 
+/** URL scheme → the engine it names, for a connection string we can actually read. */
+const URL_ENGINES: Record<string, string> = {
+  postgresql: 'PostgreSQL',
+  postgres: 'PostgreSQL',
+  psycopg: 'PostgreSQL',
+  cockroachdb: 'CockroachDB',
+  mysql: 'MySQL',
+  mariadb: 'MariaDB',
+  sqlite: 'SQLite',
+  mssql: 'SQL Server',
+  oracle: 'Oracle',
+  snowflake: 'Snowflake',
+  duckdb: 'DuckDB',
+  bigquery: 'BigQuery',
+  clickhouse: 'ClickHouse',
+  redshift: 'Redshift',
+};
+
+/**
+ * `create_engine("postgresql+psycopg://…")` — the engine, read from the URL.
+ *
+ * SQLAlchemy is the same library whichever database is behind it, so the import says
+ * only "a database". The connection string is the one place the answer is written
+ * down, and it is written down in a form every dialect agrees on.
+ */
+export function engineForDatabaseUrl(url: string): string | null {
+  const scheme = /^([a-z][a-z0-9]*)(\+[a-z0-9_]+)?:/i.exec(url.trim());
+  return scheme ? (URL_ENGINES[scheme[1].toLowerCase()] ?? null) : null;
+}
+
 export function authProviderForPackage(pkg: string): string | null {
   for (const { prefix, name } of AUTH_PROVIDERS) {
     if (pkg === prefix || pkg.startsWith(prefix)) return name;

@@ -49,8 +49,10 @@ import type {
   EndpointFinding,
   GuardFinding,
   RouterBuildFinding,
+  StoreFinding,
 } from './types.js';
 import type { ProjectSignals } from '../signals.js';
+import { appendAll } from '../../util/append.js';
 
 export interface BoundaryGraph {
   nodes: AtlasNode[];
@@ -837,6 +839,8 @@ function collectServices(input: BuildInput): Map<string, MergedService> {
 interface MergedStore {
   id: string;
   name: string;
+  /** True while nothing has named the client — see `nameTheAnonymousDatabase`. */
+  generic?: boolean;
   meta: StoreMeta;
   /** Kept apart so a function that only reads never gets a "writes to" arrow. */
   readSites: CodeSite[];
@@ -910,9 +914,15 @@ function collectStores(input: BuildInput): Map<string, MergedStore> {
 
   const noteTable = (store: MergedStore, table: string | null, site: CodeSite) => {
     if (!table) return;
-    const sites = store.tableSites.get(table);
+    // `session.get(Item, id)` names the model and the migration beside it names the
+    // table, so one table arrives spelled two ways. SQL identifiers do not distinguish
+    // them either, and counting both turns two tables into four.
+    const seen = store.meta.tables.find((known) => known.toLowerCase() === table.toLowerCase());
+    if (!seen) store.meta.tables.push(table);
+    const name = seen ?? table;
+    const sites = store.tableSites.get(name);
     if (sites) sites.push(site);
-    else store.tableSites.set(table, [site]);
+    else store.tableSites.set(name, [site]);
   };
 
   for (const finding of input.findings) {
@@ -924,24 +934,25 @@ function collectStores(input: BuildInput): Map<string, MergedStore> {
       if (finding.operation === 'read') {
         existing.meta.reads++;
         existing.readSites.push(finding.site);
-      } else {
+      } else if (finding.operation === 'write') {
         existing.meta.writes++;
         existing.writeSites.push(finding.site);
       }
-      if (finding.table && !existing.meta.tables.includes(finding.table)) existing.meta.tables.push(finding.table);
       noteTable(existing, finding.table, finding.site);
+      nameTheClient(existing, finding);
       continue;
     }
     const store: MergedStore = {
       id,
       name: finding.name,
+      generic: finding.generic,
       readSites: finding.operation === 'read' ? [finding.site] : [],
       writeSites: finding.operation === 'write' ? [finding.site] : [],
       tableSites: new Map(),
       meta: {
         storeKind: finding.storeKind,
         client: finding.client,
-        tables: finding.table ? [finding.table] : [],
+        tables: [],
         reads: finding.operation === 'read' ? 1 : 0,
         writes: finding.operation === 'write' ? 1 : 0,
         sites: [finding.site],
@@ -951,6 +962,7 @@ function collectStores(input: BuildInput): Map<string, MergedStore> {
     merged.set(id, store);
   }
 
+  nameTheAnonymousDatabase(merged);
   addWorkerBindings(input, merged);
 
   // A Prisma schema lists every table, including ones no code has touched yet.
@@ -963,6 +975,64 @@ function collectStores(input: BuildInput): Map<string, MergedStore> {
 
   for (const store of merged.values()) store.meta.tables.sort();
   return merged;
+}
+
+/**
+ * Keeps a store's client honest when more than one thing writes to it.
+ *
+ * One disk, two languages: naming only whichever file was read first puts "Node fs" on
+ * a box whose evidence is a hundred lines of Python. A placeholder never wins — a
+ * finding that could not name its client yields to one that could.
+ */
+function nameTheClient(store: MergedStore, finding: StoreFinding): void {
+  if (finding.generic) return;
+  if (store.generic) {
+    store.generic = false;
+    store.name = finding.name;
+    store.meta.client = finding.client;
+    return;
+  }
+  const named = store.meta.client.split(' and ');
+  if (named.includes(finding.client) || named.length >= 3) return;
+  store.meta.client = [...named, finding.client].join(' and ');
+}
+
+/**
+ * Gives the queries whose client we never saw the name of the one we did.
+ *
+ * A repo of scripts opens its connection in a helper module and imports the helper, so
+ * the file with `pymysql.connect` and the twenty files with `SELECT` in them are not the
+ * same file — and a per-file detector can only ever see one of them. Left apart they are
+ * two boxes for one database, which reads as an app with two databases.
+ *
+ * Exactly one candidate or nothing: with two named SQL stores in the repo, which one
+ * those queries went to is a guess, and the honest answer is a box that says only
+ * "Database".
+ */
+function nameTheAnonymousDatabase(merged: Map<string, MergedStore>): void {
+  const anonymous = [...merged.values()].filter((store) => store.generic);
+  if (anonymous.length === 0) return;
+  const named = [...merged.values()].filter((store) => !store.generic && store.meta.storeKind === 'sql');
+  if (named.length !== 1) return;
+
+  const target = named[0];
+  for (const store of anonymous) {
+    if (store.meta.storeKind !== 'sql') continue;
+    appendAll(target.meta.sites, store.meta.sites);
+    target.meta.reads += store.meta.reads;
+    target.meta.writes += store.meta.writes;
+    appendAll(target.readSites, store.readSites);
+    appendAll(target.writeSites, store.writeSites);
+    for (const table of store.meta.tables) {
+      if (!target.meta.tables.includes(table)) target.meta.tables.push(table);
+    }
+    for (const [table, sites] of store.tableSites) {
+      const existing = target.tableSites.get(table);
+      if (existing) appendAll(existing, sites);
+      else target.tableSites.set(table, sites);
+    }
+    merged.delete(store.id);
+  }
 }
 
 // ---------------------------------------------------------------------------

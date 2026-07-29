@@ -10,10 +10,19 @@
  * depending on the library it belongs to. `session.query(...)` in an app with no
  * SQLAlchemy is somebody's own helper, and an invented box is worse than a missing one.
  */
-import type { CodeSite, GuardInfo } from '../../model/types.js';
-import { isInternalHost, serviceForHost, serviceForPythonModule, storeForPythonModule } from '../boundaries/catalog.js';
+import type { CodeSite, GuardInfo, StoreKind } from '../../model/types.js';
+import type { StoreDef } from '../boundaries/catalog.js';
+import {
+  engineForDatabaseUrl,
+  isInternalHost,
+  serviceForHost,
+  serviceForPythonModule,
+  storeForPythonModule,
+} from '../boundaries/catalog.js';
+import type { SqlStatement } from '../sql.js';
+import { readSqlStatement } from '../sql.js';
 import type { BoundaryFinding } from '../boundaries/types.js';
-import type { PyCall, PyDef, PyFile, PyImport, PyValue } from './types.js';
+import type { PyBinding, PyCall, PyDef, PyFile, PyImport, PyValue } from './types.js';
 
 /** Decorator suffixes that open an HTTP route, by the framework that spells them. */
 const ROUTE_METHODS = new Set(['get', 'post', 'put', 'patch', 'delete', 'head', 'options']);
@@ -75,7 +84,7 @@ export function detectPythonBoundaries(input: PythonBoundaryInput): BoundaryFind
   detectTasks(input, has, findings, site);
   detectEnv(input, findings, site);
   detectOutbound(input, modules, findings, site);
-  detectStores(input, modules, findings, site);
+  detectStores(input, modules, has, findings, site);
   detectServices(input, findings, site);
   detectGuards(input, findings, site);
   detectAuthAliases(input, findings);
@@ -616,54 +625,520 @@ function hostOf(url: string): string | null {
   }
 }
 
-/** Database work, gated on the project actually depending on the client. */
+/**
+ * Where a Python project's data lives: databases, data files, and the disk.
+ *
+ * Three readings, strongest first. A database call is the strongest because the SQL or
+ * the client names itself; a `pd.read_csv` is next because the call says the format out
+ * loud; a bare `open()` is last because it says only that a file was touched. A line
+ * already read by a stronger rule is not read again — `pd.read_csv(open(path))` is one
+ * dataset being loaded, not a dataset and a file.
+ */
 function detectStores(
+  input: PythonBoundaryInput,
+  modules: Set<string>,
+  has: (name: string) => boolean,
+  findings: BoundaryFinding[],
+  site: (line: number, snippet?: string) => CodeSite,
+): void {
+  const claimed = new Set<number>();
+  for (const line of detectDatabases(input, modules, findings, site)) claimed.add(line);
+  for (const line of detectDataFiles(input, modules, has, findings, site, claimed)) claimed.add(line);
+  detectFiles(input, findings, site, claimed);
+}
+
+/** A store as the finding wants it, before a site is attached. */
+interface StoreTarget {
+  key: string;
+  name: string;
+  client: string;
+  storeKind: StoreKind;
+  generic?: boolean;
+}
+
+function targetFor(def: StoreDef, name?: string): StoreTarget {
+  return { key: def.client.toLowerCase(), name: name ?? def.fallbackName, client: def.client, storeKind: def.storeKind };
+}
+
+/** A database we can prove was used but cannot name. Folded into the real one at merge. */
+const UNNAMED_SQL: StoreTarget = { key: 'sql', name: 'Database', client: 'SQL', storeKind: 'sql', generic: true };
+
+/**
+ * Receivers that are conventionally a database handle.
+ *
+ * The point of the list is what it leaves out. `get` and `all` are ordinary English and
+ * ordinary method names, so "a call whose method is `get`" describes `os.environ.get`
+ * as exactly as it describes `session.get` — and one repo's MySQL box ended up citing
+ * eleven environment lines and not one line of database code. The conclusion was right
+ * and every piece of evidence for it was wrong, which is the failure a reader catches
+ * first and forgives last. On one FastAPI app the same rule counted `form_data.get`,
+ * `payload.get` and — the one that gives the game away — `router.get`, the decorator
+ * that declares an HTTP route.
+ *
+ * Matched a word at a time, because `db_session` is a session and `form_data` is not.
+ */
+const DB_RECEIVERS = /(^|_)(session|sess|db|database|conn|connection|cursor|cur|engine|collection|objects|query|pool|redis|cache|kv|tx|txn)(_|$)/i;
+
+/** Calls that hand back something you then run queries on. */
+const HANDLE_CALLS = /^(connect|connection|cursor|session|Session|begin|client|Client|collection|get_collection|database|get_database|create_engine|create_async_engine|sessionmaker|scoped_session|async_sessionmaker|MongoClient|AsyncIOMotorClient|Redis|StrictRedis|from_url|ConnectionPool|create_pool)$/;
+
+/** Opening a connection is not a read or a write; it is the database being declared. */
+const CONNECTION_CALLS = /^(connect|create_engine|create_async_engine|MongoClient|AsyncIOMotorClient|Redis|StrictRedis|from_url|create_pool|ConnectionPool)$/;
+
+/**
+ * asyncpg's `conn.fetchrow(sql)`, which carries its own query.
+ *
+ * DB-API's `fetchone`/`fetchall` are deliberately absent: they always follow an
+ * `execute`, so counting them would report every query in the repo twice.
+ */
+const FETCH_CALLS = new Set(['fetchval', 'fetchrow']);
+
+/** Redis verbs, used only once the store is already known to be a key–value one. */
+const KV_READS = new Set(['get', 'mget', 'hget', 'hgetall', 'hmget', 'exists', 'ttl', 'keys', 'scan', 'smembers', 'lrange', 'llen', 'zrange']);
+const KV_WRITES = new Set(['set', 'mset', 'setex', 'setnx', 'hset', 'hmset', 'expire', 'incr', 'incrby', 'decr', 'sadd', 'srem', 'lpush', 'rpush', 'zadd', 'flushall', 'flushdb']);
+
+function detectDatabases(
   input: PythonBoundaryInput,
   modules: Set<string>,
   findings: BoundaryFinding[],
   site: (line: number, snippet?: string) => CodeSite,
-): void {
-  let store = null;
-  for (const module of modules) {
-    const found = storeForPythonModule(module);
-    if (found) {
-      store = found;
-      break;
-    }
-  }
-  if (!store) return;
+): number[] {
+  const aliases = moduleAliases(input.file.imports ?? []);
+  const handles = storeHandles(input, aliases, findings, site);
+  const only = onlyStoreInFile(modules);
+  const lines: number[] = [];
+
+  const built = statementsBuiltHere(input.file.bindings ?? []);
+
+  const resolve = (parts: string[]): StoreTarget | null => {
+    const direct = handles.get(parts[0]);
+    if (direct) return direct;
+    // Either end of the chain will do: `db.users.update(...)` is held by its root and
+    // `self.db_session.add(...)` by the segment before the verb.
+    const named = DB_RECEIVERS.test(parts[0]) || (parts.length >= 2 && DB_RECEIVERS.test(parts[parts.length - 2]));
+    // One client in the file makes a conventional receiver unambiguous. Two make it a
+    // coin toss, and the answer would be a real database with another's name on it.
+    return only && named ? only : null;
+  };
 
   for (const call of input.file.calls ?? []) {
     // `session.query(User).limit(n).all()` is one database read written as three
     // chained calls. Only the first link has a plain name; counting the rest would
     // triple every query in the app.
     if (call.callee.includes('()')) continue;
-
     const parts = call.callee.split('.');
     const method = parts[parts.length - 1];
-    const isRead = READ_CALLS.has(method);
-    const isWrite = WRITE_CALLS.has(method);
-    if (!isRead && !isWrite) continue;
-    // A bare `get(...)` or `all(...)` with nothing in front of it is not the database.
     if (parts.length < 2) continue;
+
+    if (method === 'execute' || method === 'executemany') {
+      const statement = literalSql(call.args[0]);
+      const store = resolve(parts);
+      // A literal `SELECT` handed to `.execute()` is a database read whoever opened the
+      // connection. Scripts reach theirs through the project's own helper module, so
+      // requiring the import here would lose every query in the repo that has one.
+      if (!statement && !store) continue;
+      findings.push({
+        type: 'store',
+        ...(store ?? UNNAMED_SQL),
+        table: statement?.table ?? null,
+        // The query built somewhere else: the call is evidence, the direction is not.
+        operation: statement?.operation ?? constructed(call.args[0], built),
+        site: site(call.line, callSnippet(call)),
+      });
+      lines.push(call.line);
+      continue;
+    }
+
+    // `pd.read_sql(query, conn)` and `df.to_sql("orders", engine)` are pandas calls that
+    // land in a database rather than a file.
+    if (method === 'read_sql' || method === 'read_sql_query' || method === 'read_sql_table' || method === 'to_sql') {
+      const writes = method === 'to_sql';
+      const connection = nameArg(call.args[1]);
+      const store = (connection ? handles.get(connection) : null) ?? only ?? UNNAMED_SQL;
+      findings.push({
+        type: 'store',
+        ...store,
+        table: writes ? strArg(call.args[0]) : (literalSql(call.args[0])?.table ?? null),
+        operation: writes ? 'write' : 'read',
+        site: site(call.line, callSnippet(call)),
+      });
+      lines.push(call.line);
+      continue;
+    }
+
+    const store = resolve(parts);
+    if (!store) continue;
+
+    const kv = store.storeKind === 'kv';
+    const isRead = READ_CALLS.has(method) || FETCH_CALLS.has(method) || (kv && KV_READS.has(method));
+    const isWrite = WRITE_CALLS.has(method) || (kv && KV_WRITES.has(method));
+    if (!isRead && !isWrite) continue;
 
     // `User.objects.filter(...)` names its own table; SQLAlchemy names it in the call.
     // Only a class-looking name counts: `session.add(order)` passes a variable, and
     // listing `order` as a table would be a plain lie about the schema.
-    const djangoModel = parts.length >= 3 && parts[1] === 'objects' ? parts[0] : null;
+    const objects = parts.indexOf('objects');
+    const djangoModel = objects > 0 ? parts[objects - 1] : null;
     const table = djangoModel ?? nameArg(call.args[0]);
 
     findings.push({
       type: 'store',
-      key: store.client.toLowerCase(),
-      name: store.fallbackName,
-      client: store.client,
-      storeKind: store.storeKind,
+      ...store,
       table: table && /^[A-Z][A-Za-z0-9_]*$/.test(table) ? table : null,
       operation: isWrite ? 'write' : 'read',
-      site: site(call.line, `${call.callee}(…)`),
+      site: site(call.line, callSnippet(call)),
+    });
+    lines.push(call.line);
+  }
+
+  return lines;
+}
+
+/**
+ * Every local name bound to a database handle, and the connections that opened them.
+ *
+ * Two passes so `cur = conn.cursor()` finds the `conn = pymysql.connect(...)` above it
+ * whichever order the file happens to declare them in.
+ */
+function storeHandles(
+  input: PythonBoundaryInput,
+  aliases: Map<string, string>,
+  findings: BoundaryFinding[],
+  site: (line: number, snippet?: string) => CodeSite,
+): Map<string, StoreTarget> {
+  const handles = new Map<string, StoreTarget>();
+  const bindings = input.file.bindings ?? [];
+  const declared = new Set<number>();
+
+  for (let pass = 0; pass < 3; pass++) {
+    let added = false;
+    for (const binding of bindings) {
+      if (handles.has(binding.name)) continue;
+      const parts = binding.callee.split('.');
+      const last = parts[parts.length - 1];
+      if (!HANDLE_CALLS.test(last)) continue;
+
+      const inherited = handles.get(parts[0]);
+      const module = aliases.get(parts[0]) ?? parts[0];
+      const def = storeForPythonModule(module);
+      const target = inherited ?? (def ? targetFor(def, engineName(binding, def)) : null);
+      if (!target) continue;
+
+      handles.set(binding.name, target);
+      added = true;
+
+      // The connection itself. `sqlite3.connect("app.db")` may be the only line in the
+      // repo that says which database this is, and a store with no read and no write is
+      // still a truer answer than no store at all — the same reading a Worker binding
+      // gets from `wrangler.toml`.
+      if (!inherited && CONNECTION_CALLS.test(last) && !declared.has(binding.line)) {
+        declared.add(binding.line);
+        findings.push({
+          type: 'store',
+          ...target,
+          table: null,
+          operation: null,
+          site: site(binding.line, `${binding.callee}(${openedWith(binding)})`),
+        });
+      }
+    }
+    if (!added) break;
+  }
+
+  return handles;
+}
+
+/**
+ * The engine behind a SQLAlchemy connection, read from its URL.
+ *
+ * SQLAlchemy is the same import whichever database is underneath, so `create_engine`'s
+ * first argument is the only place the answer is written down.
+ */
+function engineName(binding: PyBinding, def: StoreDef): string | undefined {
+  if (def.client !== 'SQLAlchemy' || !binding.arg) return undefined;
+  return engineForDatabaseUrl(binding.arg) ?? undefined;
+}
+
+/**
+ * What to show inside a connection call.
+ *
+ * A path is worth showing — it names the database file. A URL is not: a connection
+ * string carries the password, and the atlas is a file people share.
+ */
+function openedWith(binding: PyBinding): string {
+  const arg = binding.arg;
+  if (!arg || /:\/\//.test(arg)) return '…';
+  return `"${arg}"`;
+}
+
+/** The one store client this file imports, or nothing when it imports several. */
+function onlyStoreInFile(modules: Set<string>): StoreTarget | null {
+  const found = new Map<string, StoreDef>();
+  for (const module of modules) {
+    const def = storeForPythonModule(module);
+    if (def) found.set(def.client, def);
+  }
+  if (found.size !== 1) return null;
+  return targetFor([...found.values()][0]);
+}
+
+/** Local name → the module it came from, for both `import x as y` and `from x import y`. */
+function moduleAliases(imports: PyImport[]): Map<string, string> {
+  const out = new Map<string, string>();
+  for (const imp of imports) {
+    if (imp.level > 0 || !imp.module) continue;
+    if (imp.alias) out.set(imp.alias, imp.module);
+    else if (imp.names.length === 0) out.set(imp.module.split('.')[0], imp.module);
+    for (const [, local] of imp.names) out.set(local, imp.module);
+  }
+  return out;
+}
+
+/** SQLAlchemy 2.0 builds a statement before running it, and the builder names the verb. */
+const STATEMENT_BUILDERS: Record<string, 'read' | 'write'> = {
+  select: 'read',
+  insert: 'write',
+  update: 'write',
+  delete: 'write',
+};
+
+/**
+ * Which way `session.execute(stmt)` moved the data, when the query is not a string.
+ *
+ * Modern SQLAlchemy writes `select(User)` rather than `"SELECT …"`, so the verb is a
+ * function name — either inside the call, or one line up where `stmt = select(User)`
+ * bound it to a name.
+ */
+function constructed(value: PyValue | undefined, built: Map<string, 'read' | 'write'>): 'read' | 'write' | null {
+  if (!value || value.t !== 'name') return null;
+  return builderVerb(value.v) ?? built.get(value.v) ?? null;
+}
+
+function statementsBuiltHere(bindings: PyBinding[]): Map<string, 'read' | 'write'> {
+  const out = new Map<string, 'read' | 'write'>();
+  for (const binding of bindings) {
+    const direction = builderVerb(binding.callee);
+    if (direction) out.set(binding.name, direction);
+  }
+  return out;
+}
+
+/**
+ * The verb in `select`, `sa.select()` or `select().where` alike.
+ *
+ * A statement is almost always refined before it is run, and a call in the middle of a
+ * chain flattens to `select()` — so the trailing parentheses are the normal case here,
+ * not the exception.
+ */
+function builderVerb(callee: string): 'read' | 'write' | undefined {
+  const bare = callee.endsWith('()') ? callee.slice(0, -2) : callee;
+  return STATEMENT_BUILDERS[bare.split('.').pop() ?? ''];
+}
+
+/** A query we can read, from an argument that is a string. An f-string counts too. */
+function literalSql(value: PyValue | undefined): SqlStatement | null {
+  if (!value || value.t !== 'str') return null;
+  return readSqlStatement(value.v, !value.partial);
+}
+
+// ---------------------------------------------------------------------------
+// Data files
+// ---------------------------------------------------------------------------
+
+/**
+ * File formats a library names in its own API, and the box each one becomes.
+ *
+ * The format comes from the call, never from the path: `open(out_path, "w")` and
+ * `open("report.json", "w")` are the same code written two ways, and splitting them
+ * into two boxes would let an inlined string decide what a reader sees.
+ */
+const FILE_FORMATS: Record<string, { key: string; name: string }> = {
+  csv: { key: 'csv-files', name: 'CSV files' },
+  excel: { key: 'excel-files', name: 'Excel files' },
+  parquet: { key: 'parquet-files', name: 'Parquet files' },
+  feather: { key: 'feather-files', name: 'Feather files' },
+  json: { key: 'json-files', name: 'JSON files' },
+  hdf: { key: 'hdf-files', name: 'HDF5 files' },
+  pickle: { key: 'pickle-files', name: 'Saved Python objects' },
+  numpy: { key: 'numpy-files', name: 'NumPy array files' },
+};
+
+/** pandas and polars: `pd.read_csv`, `df.to_parquet`, `df.write_csv`. */
+const FRAME_IO = /^(read|to|write)_(csv|excel|parquet|feather|json|hdf|pickle)$/;
+
+/** NumPy's file API, and the two libraries whose whole job is writing an object out. */
+const ARRAY_IO: Record<string, { format: string; operation: 'read' | 'write' }> = {
+  save: { format: 'numpy', operation: 'write' },
+  savez: { format: 'numpy', operation: 'write' },
+  savez_compressed: { format: 'numpy', operation: 'write' },
+  savetxt: { format: 'numpy', operation: 'write' },
+  load: { format: 'numpy', operation: 'read' },
+  loadtxt: { format: 'numpy', operation: 'read' },
+  genfromtxt: { format: 'numpy', operation: 'read' },
+};
+
+function detectDataFiles(
+  input: PythonBoundaryInput,
+  modules: Set<string>,
+  has: (name: string) => boolean,
+  findings: BoundaryFinding[],
+  site: (line: number, snippet?: string) => CodeSite,
+  claimed: Set<number>,
+): number[] {
+  const frames = has('pandas') || has('polars');
+  const aliases = moduleAliases(input.file.imports ?? []);
+  const lines: number[] = [];
+
+  for (const call of input.file.calls ?? []) {
+    if (claimed.has(call.line)) continue;
+    const method = call.method ?? call.callee.split('.').pop() ?? '';
+    const root = call.callee.split('.')[0];
+    const module = aliases.get(root) ?? root;
+
+    let format: string | null = null;
+    let operation: 'read' | 'write' = 'read';
+    let client = '';
+
+    const frame = frames ? FRAME_IO.exec(method) : null;
+    if (frame) {
+      // `df.to_csv(path)` hangs off a DataFrame, whose name tells us nothing, so the
+      // dependency is the whole gate here.
+      format = frame[2];
+      operation = frame[1] === 'read' ? 'read' : 'write';
+      client = module === 'polars' || has('polars') ? 'polars' : 'pandas';
+    } else if (module === 'numpy' && ARRAY_IO[method]) {
+      format = ARRAY_IO[method].format;
+      operation = ARRAY_IO[method].operation;
+      client = 'NumPy';
+    } else if ((module === 'joblib' || module === 'torch' || module === 'pickle') && (method === 'dump' || method === 'load')) {
+      // `pickle.dump(obj, f)` is handed an already-open file, so the `open` beside it is
+      // the site; `joblib.dump(obj, "model.pkl")` names the path itself and is the site.
+      if (module === 'pickle') continue;
+      format = 'pickle';
+      operation = method === 'dump' ? 'write' : 'read';
+      client = module === 'torch' ? 'PyTorch' : 'joblib';
+    }
+
+    if (!format) continue;
+    const shape = FILE_FORMATS[format];
+    if (!shape) continue;
+
+    findings.push({
+      type: 'store',
+      key: shape.key,
+      name: shape.name,
+      client,
+      storeKind: 'filesystem',
+      table: null,
+      operation,
+      site: site(call.line, callSnippet(call)),
+    });
+    lines.push(call.line);
+  }
+
+  return lines;
+}
+
+// ---------------------------------------------------------------------------
+// Plain files
+// ---------------------------------------------------------------------------
+
+/** pathlib's whole-file API — names distinctive enough to stand on their own. */
+const PATH_IO: Record<string, 'read' | 'write'> = {
+  read_text: 'read',
+  read_bytes: 'read',
+  write_text: 'write',
+  write_bytes: 'write',
+};
+
+/**
+ * `open(path, "w")` and `Path(path).read_text()`.
+ *
+ * No dependency gates this one, the same way browser storage gates nothing on the
+ * TypeScript side: an app whose data is a folder of files is still an app with data,
+ * and for a repo of scripts it is the entire story.
+ */
+function detectFiles(
+  input: PythonBoundaryInput,
+  findings: BoundaryFinding[],
+  site: (line: number, snippet?: string) => CodeSite,
+  claimed: Set<number>,
+): void {
+  for (const call of input.file.calls ?? []) {
+    if (claimed.has(call.line)) continue;
+    const method = call.method ?? '';
+    const builtin = call.callee === 'open';
+    const viaPath = call.callee === 'Path()' || call.callee.endsWith('.Path()');
+
+    let operation: 'read' | 'write' | null = null;
+    if (builtin) operation = writesTo(strArg(call.args[1]) ?? strArg(call.kwargs.mode));
+    else if (PATH_IO[method]) operation = PATH_IO[method];
+    else if (method === 'open' && (viaPath || opensAFile(call))) {
+      // `Path.open` puts the mode first, where the builtin puts the path.
+      operation = writesTo(strArg(call.args[0]) ?? strArg(call.kwargs.mode));
+    }
+    if (!operation) continue;
+
+    findings.push({
+      type: 'store',
+      key: 'filesystem',
+      name: 'Files on disk',
+      client: 'Python',
+      storeKind: 'filesystem',
+      table: null,
+      operation,
+      site: site(call.line, callSnippet(call)),
     });
   }
+}
+
+/** `open(p)` is a read; anything with `w`, `a`, `x` or `+` in its mode is a write. */
+function writesTo(mode: string | null): 'read' | 'write' {
+  return mode && /[wax+]/.test(mode) ? 'write' : 'read';
+}
+
+/** A file mode as Python spells one: `r`, `wb`, `a+`, `rt`. */
+const FILE_MODE = /^(?=[rwxabt+]*[rwxa])[rwxabt+]{1,3}$/;
+
+/**
+ * Whether `something.open(...)` is a file being opened.
+ *
+ * The receiver's name is no help — a `Path`, a `ZipFile` and a `webbrowser` all spell
+ * it `open`, and only one of them is holding a file. The call's own shape decides it:
+ * a mode string or an `encoding=` is the file signature, and `webbrowser.open(url)` has
+ * neither.
+ */
+function opensAFile(call: PyCall): boolean {
+  if (call.kwargs.encoding || call.kwargs.mode) return true;
+  const first = strArg(call.args[0]);
+  return first !== null && FILE_MODE.test(first);
+}
+
+/**
+ * The call as evidence: every argument in its place, the ones we can read quoted.
+ *
+ * Which argument the path was is part of what the reader is checking — `joblib.dump`
+ * takes the object first and the file second, and a snippet that showed only the file
+ * would look like a call that does not exist.
+ */
+function callSnippet(call: PyCall): string {
+  const shown = call.args.slice(0, 3).map((arg) => (arg.t === 'str' && !arg.partial ? `"${clip(arg.v)}"` : '…'));
+  // `Model.objects.filter(project=p)` passes everything by keyword, and rendering it as
+  // `filter()` would show a call that takes no arguments — which is a different call.
+  if (call.args.length > 3 || Object.keys(call.kwargs).length > 0) shown.push('…');
+  return `${calleeText(call)}(${shown.join(', ')})`;
+}
+
+/** `Path()` is what a call in the middle of a chain flattens to; put the verb back. */
+function calleeText(call: PyCall): string {
+  if (!call.callee.endsWith('()')) return call.callee;
+  const head = `${call.callee.slice(0, -2)}(…)`;
+  return call.method ? `${head}.${call.method}` : head;
+}
+
+function clip(text: string): string {
+  const flat = text.replace(/\s+/g, ' ').trim();
+  return flat.length <= 48 ? flat : `${flat.slice(0, 47)}…`;
 }
 
 /** SDKs that are a company by themselves — importing `stripe` is the whole signal. */

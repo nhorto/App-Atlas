@@ -17,6 +17,11 @@ export type PyValue =
 export interface PyCall {
   /** Dotted callee: `app.get`, `os.getenv`, `requests.post`. */
   callee: string;
+  /**
+   * The last segment on its own. `Path(out).write_text(t)` has a call in the middle of
+   * its chain, so `callee` is only `Path()` and the verb is missing from it.
+   */
+  method?: string | null;
   args: PyValue[];
   kwargs: Record<string, PyValue>;
   line: number;
@@ -124,6 +129,21 @@ export interface PyConstant {
   line: number;
 }
 
+/**
+ * `conn = pymysql.connect(...)` — a local name and the call that produced it.
+ *
+ * The Python half of what `ctx.locals` is for the TypeScript detectors: it says what a
+ * receiver *is*, so `conn.execute(...)` can be told apart from every other `.execute`.
+ */
+export interface PyBinding {
+  name: string;
+  /** Dotted callee of the right-hand side: `pymysql.connect`, `conn.cursor`. */
+  callee: string;
+  /** Its first literal string argument — the database file, or the connection URL. */
+  arg: string | null;
+  line: number;
+}
+
 /** `os.environ["KEY"]` and friends — a read that is a subscript, not a call. */
 export interface PySubscript {
   base: string;
@@ -143,6 +163,7 @@ export interface PyFile {
   calls?: PyCall[];
   subscripts?: PySubscript[];
   aliases?: PyAlias[];
+  bindings?: PyBinding[];
   routers?: PyRouter[];
   constants?: PyConstant[];
   uses?: string[];

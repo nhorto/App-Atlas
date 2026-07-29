@@ -70,7 +70,20 @@ export interface StoreFinding {
   client: string;
   storeKind: StoreKind;
   table: string | null;
-  operation: 'read' | 'write';
+  /**
+   * `null` when the code plainly touches this store but which way the data moved is not
+   * on the page — `cur.execute(sql)` with the query built elsewhere. The site is still
+   * evidence; it is only the arrow that is missing, and inventing one would put a write
+   * on a screen somebody reads to find out what writes.
+   */
+  operation: 'read' | 'write' | null;
+  /**
+   * The call proves a database was used but never names the client — a literal `SELECT`
+   * handed to a `.execute()` reached through the project's own helper module. Folded
+   * into the named store at merge time when the project has exactly one; on its own it
+   * would be a second box for the same database.
+   */
+  generic?: boolean;
   site: CodeSite;
 }
 

@@ -85,9 +85,21 @@ def value_of(node):
 
 
 def call_info(node):
-    """The callee and arguments of a call, in the shape the Node side reads."""
+    """The callee and arguments of a call, in the shape the Node side reads.
+
+    `method` is the last segment on its own, because `dotted` cannot always reach it.
+    `Path(out).write_text(text)` has a call in the middle of the chain, so its dotted
+    form is `Path()` and the part that says what happened to the file is gone.
+    """
+    func = node.func
+    method = None
+    if isinstance(func, ast.Attribute):
+        method = func.attr
+    elif isinstance(func, ast.Name):
+        method = func.id
     return {
-        "callee": dotted(node.func) or "",
+        "callee": dotted(func) or "",
+        "method": method,
         "args": [value_of(a) for a in node.args],
         "kwargs": {kw.arg: value_of(kw.value) for kw in node.keywords if kw.arg},
         "line": getattr(node, "lineno", 0),
@@ -343,6 +355,47 @@ def dependency_aliases(tree):
     return out
 
 
+def call_bindings(tree):
+    """Every `name = some_call(...)`, including `with some_call(...) as name`.
+
+    What a name was built from is the difference between a database read and a
+    coincidence. `conn.execute(sql)` is a query when `conn = pymysql.connect(...)`;
+    `os.environ.get("DB_HOST")` is the same shape and touches no database at all.
+    Guessing from the method name alone gave one repo a MySQL box whose evidence was a
+    list of environment lines — the right conclusion citing the wrong code, which a
+    reader checks once and then stops trusting.
+
+    Nested scopes count: connections are opened inside the function that uses them far
+    more often than at module level."""
+    out = []
+
+    def take(target, value):
+        if not isinstance(target, ast.Name) or not isinstance(value, ast.Call):
+            return
+        callee = dotted(value.func)
+        if not callee:
+            return
+        # The first literal string, which for a connection is either the database file
+        # or the URL that names the engine.
+        arg = None
+        for node in list(value.args) + [kw.value for kw in value.keywords]:
+            found = value_of(node)
+            if found.get("t") == "str" and not found.get("partial"):
+                arg = found["v"]
+                break
+        out.append({"name": target.id, "callee": callee, "arg": arg, "line": getattr(value, "lineno", 0)})
+
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Assign) and len(node.targets) == 1:
+            take(node.targets[0], node.value)
+        elif isinstance(node, ast.AnnAssign):
+            take(node.target, node.value)
+        elif isinstance(node, (ast.With, ast.AsyncWith)):
+            for item in node.items:
+                take(item.optional_vars, item.context_expr)
+    return out
+
+
 # The calls that make something routes can be hung off. Apps are here as well as
 # routers because an app is what a router is finally mounted *on*, and Starlette's
 # `app.mount("/api/v1", app=api)` is how a whole FastAPI app becomes a prefix.
@@ -475,6 +528,7 @@ def analyze_source(text):
         "calls": calls,
         "subscripts": subscripts,
         "aliases": dependency_aliases(tree),
+        "bindings": call_bindings(tree),
         "routers": router_variables(tree),
         "constants": path_constants(tree),
         "uses": sorted(module_uses),

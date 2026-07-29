@@ -10,6 +10,7 @@
 import { Node } from 'ts-morph';
 import type { CallExpression, NewExpression } from 'ts-morph';
 import type { StoreKind } from '../../model/types.js';
+import { readSqlStatement } from '../sql.js';
 import { prismaProviderName, storeForPackage } from './catalog.js';
 import { dottedName, literalString } from './ast.js';
 import type { BoundaryDetector, DetectorContext, StoreFinding } from './types.js';
@@ -264,7 +265,8 @@ function rawSql(call: CallExpression, dotted: string, ctx: DetectorContext): boo
   if (!sqlPackage) return false;
 
   const sql = literalString(call.getArguments()[0]) ?? templateSql(call);
-  if (!sql || !/^\s*(select|insert|update|delete|with)\b/i.test(sql)) return false;
+  const statement = sql ? readSqlStatement(sql) : null;
+  if (!statement) return false;
 
   const def = storeForPackage(sqlPackage);
   emit(ctx, call, {
@@ -272,8 +274,8 @@ function rawSql(call: CallExpression, dotted: string, ctx: DetectorContext): boo
     name: def?.fallbackName ?? 'Database',
     client: def?.client ?? sqlPackage,
     storeKind: 'sql',
-    table: tableFromSql(sql),
-    operation: /^\s*select|^\s*with/i.test(sql) ? 'read' : 'write',
+    table: statement.table,
+    operation: statement.operation,
   });
   return true;
 }
@@ -282,14 +284,6 @@ function templateSql(call: CallExpression): string | null {
   const arg = call.getArguments()[0];
   if (arg && Node.isTemplateExpression(arg)) return arg.getText();
   return null;
-}
-
-function tableFromSql(sql: string): string | null {
-  const match =
-    /\bfrom\s+["'`]?(\w+)/i.exec(sql) ??
-    /\binto\s+["'`]?(\w+)/i.exec(sql) ??
-    /\bupdate\s+["'`]?(\w+)/i.exec(sql);
-  return match?.[1] ?? null;
 }
 
 // ---------------------------------------------------------------------------

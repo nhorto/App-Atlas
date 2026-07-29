@@ -98,10 +98,27 @@ compiler-derived and cannot be wrong.
 
 ## Tier 2 — the tool is silent where it should speak
 
-- [ ] **8. Give Python a data story** — [#26](https://github.com/nhorto/App-Atlas/issues/26)
+- [x] **8. Give Python a data story** — [#26](https://github.com/nhorto/App-Atlas/issues/26)
       `pd.read_csv`/`to_csv`, `open()`, `sqlite3.connect`, SQLAlchemy `create_engine`.
       powerfab-dashboard has 124 real sites and detects zero; NBA and handson-ml3 show
       empty read/write columns.
+      **Done.** Three readings, strongest first: a database call, then a library that
+      names its format out loud, then a bare `open()`. A line already read by a stronger
+      rule is not read again, so `pd.read_csv(open(p))` is one dataset rather than a
+      dataset and a file. powerfab lands **134 `open()` sites** it detected none of;
+      NBA gets *CSV files · 6 reads · 1 write*; handson-ml3 gets six boxes across CSV,
+      Excel, JSON, NumPy and joblib, read out of its notebooks.
+      *The format comes from the call, never from the path.* `open("report.json", "w")`
+      and `open(out_path, "w")` are the same code written two ways, and splitting them
+      would let an inlined string decide which box a reader sees.
+      Databases gained the verb every DB-API client actually uses: `execute`, read as
+      SQL. A literal `SELECT` needs no import to be believed — a repo of scripts reaches
+      its connection through a helper module, so the statement is the evidence — and
+      those unnamed queries fold into the one named client at merge time, because two
+      boxes for one database reads as an app with two databases. powerfab's MySQL box
+      went from 5 sites (all of them wrong, see 16) to **102, with 32 real tables**.
+      SQLAlchemy 2.0's `session.execute(select(User))` is read through the builder,
+      inline or bound to a name a line above.
 
 - [ ] **9. Add an `analysis` archetype for notebook projects** — [#28](https://github.com/nhorto/App-Atlas/issues/28)
       NBA and handson-ml3 both fall through to `library` and render as a "public API" of
@@ -158,9 +175,19 @@ compiler-derived and cannot be wrong.
 
 ## Tier 3 — polish and trust papercuts
 
-- [ ] **16. Point a store's evidence at the real call site** — [#26](https://github.com/nhorto/App-Atlas/issues/26)
+- [x] **16. Point a store's evidence at the real call site** — [#26](https://github.com/nhorto/App-Atlas/issues/26)
       powerfab-dashboard's MySQL store is a correct conclusion but its sites are
       `os.environ.get(…)` lines rather than the pymysql code.
+      **Done**, with 8. The old rule read the method name and nothing else, so
+      `os.environ.get("MYSQL_HOST")` was a `get` on something and became database
+      evidence. A receiver now has to be a handle: bound from the client
+      (`conn = pymysql.connect(...)`, `cur = conn.cursor()`), or named like one, matched
+      a word at a time so `db_session` counts and `form_data` does not.
+      *This removed more than it added, and that was the point.* Netflix/dispatch had
+      **1,278 sites** on its database box; 633 of them were never database calls —
+      `form_data.get`, `payload.get`, `scheduler.add`, and 57 `@router.get`/`@router.delete`
+      decorators, the route declarations themselves. Its **entire PostgreSQL box** was
+      five `.get(…)` calls in an AWS SQS plugin: a whole database that does not exist.
 
 - [x] **17. Fix the Boundaries panel's instructions** — [#30](https://github.com/nhorto/App-Atlas/issues/30)
       Describes a `›` button and a breadcrumb that exist only on the Map.
@@ -240,6 +267,33 @@ door that was never drawn.
       quietly reporting 21 doors where the app serves 23. Fixed by composing the
       prefixes *before* the merge rather than after.
 
+- [x] **29. A workspace list describes the packages, not the repo** — *Tier 1.*
+      Sentry declares three workspace packages — `api-docs` and two eslint plugins,
+      sixty files between them — and its application, several thousand Python files at
+      the root, is in none of them. The switcher offered those three and nothing else,
+      so the whole tool reported on sixty files of tooling and called it Sentry, in six
+      tenths of a second, with no warning that anything had been left out.
+      **Done.** The repo is a scope of its own when the code no package claims outweighs
+      every package — a root smaller than its smallest package is a build script, and a
+      scope for that would be one more wrong entry rather than one less. cal.com, dub
+      and midday are untouched. Sentry now reads 5,000 files and shows *Django ORM ·
+      2,901 reads · 588 writes · 289 tables*.
+
+- [x] **30. The tool went quiet on exactly the repos that need it** — *Tier 1.*
+      `nodes.push(...result.nodes)` passes every element as a separate argument, so past
+      a few tens of thousands it overflows the stack. Sentry hit it. Because the CLI
+      catches a failing scope so one bad package cannot cost you the other five, the
+      only sign was the words *could not be read* beside the repo's own name.
+      **Done.** `appendAll` on every project-wide list. The size at which the spread
+      breaks is the engine's, not ours, and it is exactly the size at which somebody
+      most needs a map.
+
+- [x] **31. A warning that contradicted the screen it was printed on** — *Tier 3.*
+      Every monorepo run began with "M1 analyzes the whole tree as one atlas; per-app
+      scopes arrive in M5" — printed directly above the list of per-app scopes. A
+      warning the reader can see is false teaches them to skip the warnings, which is
+      where the real ones live. **Done.** Removed.
+
 - [ ] **28. A webhook is recognised by a path we now know better** — *Tier 3.*
       `isWebhookPath` runs in the Python detector, on the route as its own file spells
       it. A handler at `@router.post("/")` mounted under `prefix="/webhooks"` is typed
@@ -272,6 +326,21 @@ Worth writing down, because the failure mode is easy and invisible:
   prefix we cannot read becomes a visible `…` rather than a shorter address that looks
   finished. Across all sixteen clones exactly **one** door carries that marker, and it
   earns it: mealie builds a prefix out of an f-string.
+- **#26 believes the call, not the name.** A format is only claimed when the library
+  spells it (`read_parquet`), never when a path happens to end in `.parquet`; a database
+  read is only claimed when the SQL says so or the receiver was built by a client we can
+  see. Both rules are about the *shape of the code*, which is why they carried straight
+  from a FastAPI app to a folder of Jupyter notebooks with nothing added for either.
+
+- **#16 removed 633 findings from the repo it was tested against.** The measure of that
+  fix is not what it found — it is what it stopped claiming, and none of what it stopped
+  claiming was specific to Netflix/dispatch. `form_data.get` and `@router.get` are how
+  everybody writes FastAPI.
+
+- **#29 decides by weight, not by name.** "Is the root a scope?" is answered by whether
+  the code outside the declared packages outweighs every package — no list of repos, no
+  guess about what Sentry looks like. cal.com, dub and midday all answer no.
+
 - **#33 also models where the frameworks disagree.** Flask's
   `register_blueprint(bp, url_prefix=…)` *replaces* the blueprint's own prefix where
   FastAPI's `include_router` concatenates. Treating them alike would print

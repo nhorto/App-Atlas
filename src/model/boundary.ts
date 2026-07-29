@@ -382,6 +382,9 @@ function storeDetail(meta: StoreMeta): string {
     parts.push(`${meta.tables.length} ${meta.tables.length === 1 ? 'table' : 'tables'}`);
   }
   if (meta.writes > 0) parts.push(`${meta.writes} ${meta.writes === 1 ? 'write' : 'writes'}`);
+  // A store nothing writes to is still a store something reads, and a card that says
+  // only "pandas" looks like a box we could not finish.
+  else if (meta.reads > 0) parts.push(`${meta.reads} ${meta.reads === 1 ? 'read' : 'reads'}`);
   return parts.join(' · ');
 }
 

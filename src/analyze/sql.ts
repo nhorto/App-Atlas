@@ -439,3 +439,68 @@ function unquote(raw: string): string {
   // analyzer sees (`.from('page_views')`) use the folded form.
   return raw.toLowerCase();
 }
+
+// ---------------------------------------------------------------------------
+// Statements, as opposed to schema
+// ---------------------------------------------------------------------------
+
+/** What a query does and to what, when a call passes the SQL as a string. */
+export interface SqlStatement {
+  operation: 'read' | 'write';
+  /** The first table named, or `null` when the statement never spells one out. */
+  table: string | null;
+}
+
+/**
+ * Reads a query string well enough to say which way the data moved.
+ *
+ * `cur.execute(sql)` is how every DB-API client in Python is used, and the method name
+ * alone says nothing — the verb is inside the string. Anything that is not recognisably
+ * a statement returns `null` rather than a guess, because "this line touches the
+ * database" is a claim, and an f-string that happens to start with a word is not
+ * evidence for it.
+ */
+export function readSqlStatement(sql: string, complete = true): SqlStatement | null {
+  const text = sql.trim();
+  const verb = /^\(?\s*(select|insert|update|delete|replace|with|create|drop|alter|truncate)\b/i.exec(text);
+  if (!verb) return null;
+  const kind = verb[1].toLowerCase();
+  const reads = kind === 'select' || kind === 'with';
+  return { operation: reads ? 'read' : 'write', table: complete ? tableInStatement(text) : null };
+}
+
+/**
+ * The first table a statement names — after `from`, `into`, `update` or `table`.
+ *
+ * Only called on a query we have in full. An f-string arrives with its holes closed up,
+ * so `f"SELECT * FROM {table} LIMIT {n}"` reads as `SELECT * FROM  LIMIT` and this would
+ * answer "limit" with a straight face. The verb survives that; the table does not.
+ */
+function tableInStatement(sql: string): string | null {
+  const name = `("[^"]+"|\`[^\`]+\`|[A-Za-z_][\\w$]*(?:\\.[A-Za-z_][\\w$]*)*)`;
+  const match =
+    new RegExp(`\\bfrom\\s+${name}`, 'i').exec(sql) ??
+    new RegExp(`\\binto\\s+${name}`, 'i').exec(sql) ??
+    new RegExp(`\\b(?:update|table)\\s+(?:if\\s+(?:not\\s+)?exists\\s+)?${name}`, 'i').exec(sql);
+  if (!match) return null;
+  return qualifiedTable(match[1].replace(/`/g, '"'));
+}
+
+/** Schemas every database has, where `public.orders` and `orders` are the same table. */
+const DEFAULT_SCHEMAS = new Set(['public', 'dbo', 'main']);
+
+/**
+ * `public.orders` → `orders`, but `information_schema.columns` keeps its schema.
+ *
+ * Dropping every qualifier turns the catalog a schema-dump script reads into a table
+ * called `columns` sitting in the list beside the app's own — which invites the reader
+ * to go looking for it.
+ */
+function qualifiedTable(raw: string): string | null {
+  const parts = raw.split('.');
+  const table = unquote(parts[parts.length - 1]);
+  if (!table || !/^[a-z_][\w$]*$/i.test(table)) return null;
+  if (parts.length === 1) return table;
+  const schema = unquote(parts[parts.length - 2]);
+  return DEFAULT_SCHEMAS.has(schema) ? table : `${schema}.${table}`;
+}
