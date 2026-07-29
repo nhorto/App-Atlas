@@ -482,4 +482,24 @@ function detectCli(
     });
     return;
   }
+
+  // No argument parser, but `if __name__ == "__main__":` still says this file is meant
+  // to be run rather than imported. It is the oldest and commonest way a Python script
+  // declares itself, and the only one a script that prompts for its input will have —
+  // without it, a folder of runnable scripts reads as a library nobody imports.
+  if (typeof input.file.main === 'number') {
+    findings.push({
+      type: 'endpoint',
+      endpointKind: 'cli',
+      key: `cli ${input.file.path}`,
+      name: input.file.path,
+      method: null,
+      route: null,
+      framework: '__main__',
+      writes: false,
+      guards: [],
+      site: site(input.file.main),
+      handlerId: null,
+    });
+  }
 }

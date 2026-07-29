@@ -153,3 +153,44 @@ test('the whole atlas still answers the questions the views ask of it', { skip }
   const level = graph.getLevel(graph.rootId);
   assert.ok(level.nodes.length > 0, 'the map has something to draw at the top level');
 });
+
+// ---------------------------------------------------------------------------
+// A folder of scripts is not a library (found by running this on a real repo)
+// ---------------------------------------------------------------------------
+
+const SCRIPTS = path.join(here, 'fixtures', 'pyscripts');
+const scripts = (await analyzeProject(SCRIPTS, { followReferences: true, cache: 'off' })).atlas;
+const scriptsReadable =
+  scripts.meta.languages.includes('python') && scripts.nodes.some((n) => n.kind === 'function');
+const skipScripts = scriptsReadable ? false : 'no Python 3.9+ on this machine';
+
+test('`if __name__ == "__main__"` is a command-line door', { skip: skipScripts }, () => {
+  const cli = scripts.nodes.filter(
+    (n) => n.kind === 'endpoint' && n.meta.endpointKind === 'cli',
+  );
+  assert.deepEqual(
+    cli.map((n) => n.name).sort(),
+    ['clean.py', 'report.py'],
+    'both scripts declare themselves runnable without argparse',
+  );
+  assert.ok(
+    cli.every((n) => n.meta.framework === '__main__'),
+    'the guard is named as what made it a door',
+  );
+});
+
+test('a folder of runnable scripts is a pipeline, not a library', { skip: skipScripts }, () => {
+  // The bug this pins: module-level `def`s read as exports, so scripts nobody imports
+  // were classified as code other code imports.
+  assert.equal(scripts.meta.archetype.archetype, 'pipeline');
+});
+
+test('a byte-order mark does not make a file unreadable', { skip: skipScripts }, () => {
+  const clean = scripts.nodes.find((n) => n.kind === 'file' && n.path === 'clean.py');
+  assert.ok(clean, 'the BOM file is on the map');
+  assert.equal(clean.summary, 'Cleans the export.', 'and its docstring was read');
+  assert.ok(
+    scripts.nodes.some((n) => n.kind === 'function' && n.name === 'clean'),
+    'and so were its insides',
+  );
+});
