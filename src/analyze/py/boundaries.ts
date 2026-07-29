@@ -21,6 +21,7 @@ import {
 } from '../boundaries/catalog.js';
 import type { SqlStatement } from '../sql.js';
 import { readSqlStatement } from '../sql.js';
+import { appendAll } from '../../util/append.js';
 import type { BoundaryFinding } from '../boundaries/types.js';
 import type { PyBinding, PyCall, PyDef, PyFile, PyImport, PyValue } from './types.js';
 
@@ -86,7 +87,7 @@ export function detectPythonBoundaries(input: PythonBoundaryInput): BoundaryFind
   detectOutbound(input, modules, findings, site);
   detectStores(input, modules, has, findings, site);
   detectServices(input, findings, site);
-  detectGuards(input, findings, site);
+  detectGuards(input, findings);
   detectAuthAliases(input, findings);
   detectCli(input, has, findings, site);
 
@@ -290,6 +291,33 @@ function detectAuthAliases(input: PythonBoundaryInput, findings: BoundaryFinding
     });
   }
 
+  // A class is named by what it is, and the rejection is inside a method — so nothing
+  // the caller writes (`add_middleware(AuthMiddleware)`, `Depends(AdminOnly())`) can be
+  // matched against the method that does the work. Only the two methods that *are* the
+  // contract count: `dispatch` for a Starlette middleware, `__call__` for a raw ASGI
+  // one or a dependency class. A service class with a method that happens to raise 403
+  // is not offering itself as a lock, and treating it as one would put a check on every
+  // handler that takes it as an argument.
+  for (const def of input.file.defs ?? []) {
+    if (def.kind !== 'class') continue;
+    const contract = (def.methods ?? []).find(
+      (method) => (method.name === 'dispatch' || method.name === '__call__') && typeof method.rejects === 'number',
+    );
+    if (!contract) continue;
+    findings.push({
+      type: 'auth-checker',
+      name: def.name,
+      guard: {
+        name: def.name,
+        how: 'middleware',
+        provider: 'custom',
+        path: input.file.path,
+        line: contract.rejects as number,
+        confidence: 'likely',
+      },
+    });
+  }
+
   // Plenty of dependencies are somebody else's: `Depends(fastapi_users.current_user)`
   // has no definition in this repo to read a 401 out of. There the name is all there
   // is, so it is accepted as the weaker signal it is — still only ever `likely`.
@@ -346,6 +374,10 @@ function detectAuthAliases(input: PythonBoundaryInput, findings: BoundaryFinding
       hasPrefix: router.hasPrefix ?? false,
       prefix: router.prefix ?? null,
       prefixName: router.prefixName ?? null,
+      // `APIRouter(dependencies=[Depends(get_current_user)])`. The router build and the
+      // call that made it are the same line of source, reported twice because one pass
+      // reads assignments and the other reads calls.
+      dependencies: dependsOnLine(input.file, router.line),
     });
   }
 
@@ -399,9 +431,22 @@ function detectRouterMounts(input: PythonBoundaryInput, here: string, findings: 
       childModule: target.module,
       childVar: target.varName,
       overridesPrefix: method === 'register_blueprint',
+      // The check written on the mount rather than on the router:
+      // `api_router.include_router(everything_else, dependencies=[Depends(get_current_user)])`.
+      // One line, and the only record that a hundred and sixty routes are locked.
+      dependencies: dependsTargets(call),
       ...prefixArgs(call, method === 'mount'),
     });
   }
+}
+
+/** The `Depends(...)` targets of whichever call was written on this line. */
+function dependsOnLine(file: PyFile, line: number): string[] {
+  const out: string[] = [];
+  for (const call of file.calls ?? []) {
+    if (call.line === line) appendAll(out, dependsTargets(call));
+  }
+  return out;
 }
 
 /** A bare `include_router(router)`: either imported from somewhere, or built here. */
@@ -1165,38 +1210,47 @@ function detectServices(
 }
 
 /**
- * Auth that guards a whole file rather than one handler — a Django middleware list, or
- * a router created with dependencies attached. Scope `file` on purpose: attributing it
- * to a single handler would be the mistake M2 spent a milestone avoiding.
+ * Auth attached to a whole application rather than to any route on it: an ASGI
+ * middleware.
+ *
+ * `app.add_middleware(AuthMiddleware)` and `@app.middleware("http")` are how a large
+ * Python service normally checks its callers, and neither leaves a mark in any of the
+ * files that declare the routes. What is recorded here is only *what was attached to
+ * which variable* — a middleware that gzips is written exactly like one that turns
+ * strangers away, and telling them apart means reading the thing named, which is
+ * usually in another file.
  */
-function detectGuards(
-  input: PythonBoundaryInput,
-  findings: BoundaryFinding[],
-  site: (line: number, snippet?: string) => CodeSite,
-): void {
+function detectGuards(input: PythonBoundaryInput, findings: BoundaryFinding[]): void {
   for (const call of input.file.calls ?? []) {
-    if (call.callee !== 'APIRouter') continue;
-    const deps = call.kwargs.dependencies;
-    if (!deps || deps.t !== 'list') continue;
-    for (const item of deps.items) {
-      const text = item.t === 'name' ? item.v : null;
-      if (text && /depends/i.test(text)) {
-        findings.push({
-          type: 'guard',
-          guard: {
-            name: text,
-            how: 'call',
-            provider: 'custom',
-            path: input.file.path,
-            line: call.line,
-            confidence: 'likely',
-          },
-          scope: 'file',
-          nodeId: null,
-          matchers: [],
-          sourceId: input.fileId,
-        });
-      }
+    const parts = call.callee.split('.');
+    if (parts.pop() !== 'add_middleware' || parts.length === 0) continue;
+    const named = nameArg(call.args[0]);
+    if (!named) continue;
+    findings.push({
+      type: 'router-guard',
+      varName: parts[parts.length - 1],
+      path: input.file.path,
+      names: [named.split('.').pop() ?? named],
+      how: 'middleware',
+      line: call.line,
+    });
+  }
+
+  // The decorator spelling of the same thing. The function underneath is right here,
+  // so this is the one case where the check can be read on the spot — but it is still
+  // resolved by name in the merge, so that both spellings answer the same question.
+  for (const { def } of everyDef(input.file)) {
+    for (const decorator of def.decorators) {
+      const parts = decorator.callee.split('.');
+      if (parts.pop() !== 'middleware' || parts.length === 0) continue;
+      findings.push({
+        type: 'router-guard',
+        varName: parts[parts.length - 1],
+        path: input.file.path,
+        names: [def.name],
+        how: 'middleware',
+        line: def.line,
+      });
     }
   }
 }

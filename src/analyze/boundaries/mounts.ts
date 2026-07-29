@@ -135,51 +135,35 @@ export function moduleOf(relPath: string): string {
   return withoutExt.replace(/(^|\/)(index|__init__)$/, '');
 }
 
-function routerKey(module: string, varName: string): string {
+/**
+ * How a router is named wherever it is referred to: the file it was built in, as
+ * another file would import it, and the variable it was bound to.
+ *
+ * Exported because the mount graph answers two different questions — what address a
+ * route answers at, and what check stands in front of it — and both have to agree about
+ * which router is which.
+ */
+export function routerKey(module: string, varName: string): string {
   return `${module}\0${varName}`;
 }
 
-class Chains {
+/** Which routers this project builds, indexed the two ways a mount can name one. */
+class Builds {
   /** `module\0var` → the call that built it. */
-  private readonly builds = new Map<string, RouterBuildFinding>();
+  readonly byKey = new Map<string, RouterBuildFinding>();
   /** Variable name → every router built under it, for tail matching. */
   private readonly byVar = new Map<string, RouterBuildFinding[]>();
-  /** `module\0var` of the child → the mounts that hang it somewhere. */
-  private readonly mountedAt = new Map<string, RouterMountFinding[]>();
-  /** Constant name → the values it was given, repo-wide. */
-  private readonly constants = new Map<string, Set<string>>();
-  /** `path\0name` → the value that file gave it, which beats the repo-wide answer. */
-  private readonly localConstants = new Map<string, string>();
-  private readonly memo = new Map<string, Part[]>();
 
-  constructor(builds: RouterBuildFinding[], mounts: RouterMountFinding[], constants: PathConstantFinding[]) {
+  constructor(builds: RouterBuildFinding[]) {
     for (const build of builds) {
       const key = routerKey(moduleOf(build.path), build.varName);
       // Two routers with one name in one file cannot both be right, and picking either
       // would attach somebody's routes to somebody else's prefix.
-      if (this.builds.has(key)) continue;
-      this.builds.set(key, build);
+      if (this.byKey.has(key)) continue;
+      this.byKey.set(key, build);
       const list = this.byVar.get(build.varName);
       if (list) list.push(build);
       else this.byVar.set(build.varName, [build]);
-    }
-
-    for (const constant of constants) {
-      const values = this.constants.get(constant.name);
-      if (values) values.add(constant.value);
-      else this.constants.set(constant.name, new Set([constant.value]));
-      const local = `${constant.path}\0${constant.name}`;
-      // Two assignments to one name in one file is somebody reassigning; neither
-      // spelling is safe to quote, so drop both rather than pick the earlier one.
-      this.localConstants.set(local, this.localConstants.has(local) ? '' : constant.value);
-    }
-
-    for (const mount of mounts) {
-      const child = this.resolveChild(mount);
-      if (!child) continue;
-      const list = this.mountedAt.get(child);
-      if (list) list.push(mount);
-      else this.mountedAt.set(child, [mount]);
     }
   }
 
@@ -190,7 +174,7 @@ class Chains {
    * `app/api/routes/items` has to be able to find `backend/app/api/routes/items.py`.
    * Matching on the tail does that; requiring a single match keeps it from doing more.
    */
-  private resolveChild(mount: RouterMountFinding): string | null {
+  childOf(mount: RouterMountFinding): string | null {
     // A mount with no module names a router built in the mounting file itself.
     if (mount.childModule === null) {
       return mount.childVar === null ? null : routerKey(moduleOf(mount.path), mount.childVar);
@@ -208,8 +192,52 @@ class Chains {
     // `const app = new Hono(); … export const mcpRouter = app` is the ordinary shape,
     // and `export default router` gives no name at all. So the file answers for itself
     // — one router in it means one answer, two means we do not know which.
-    const inFile = [...this.builds.values()].filter(inModule);
+    const inFile = [...this.byKey.values()].filter(inModule);
     return inFile.length === 1 ? routerKey(moduleOf(inFile[0].path), inFile[0].varName) : null;
+  }
+}
+
+/** Child router key → every mount that hangs it under a parent. */
+export function mountGraph(
+  builds: RouterBuildFinding[],
+  mounts: RouterMountFinding[],
+): Map<string, RouterMountFinding[]> {
+  const index = new Builds(builds);
+  const out = new Map<string, RouterMountFinding[]>();
+  for (const mount of mounts) {
+    const child = index.childOf(mount);
+    if (!child) continue;
+    const list = out.get(child);
+    if (list) list.push(mount);
+    else out.set(child, [mount]);
+  }
+  return out;
+}
+
+class Chains {
+  private readonly index: Builds;
+  /** `module\0var` of the child → the mounts that hang it somewhere. */
+  private readonly mountedAt: Map<string, RouterMountFinding[]>;
+  /** Constant name → the values it was given, repo-wide. */
+  private readonly constants = new Map<string, Set<string>>();
+  /** `path\0name` → the value that file gave it, which beats the repo-wide answer. */
+  private readonly localConstants = new Map<string, string>();
+  private readonly memo = new Map<string, Part[]>();
+
+  constructor(builds: RouterBuildFinding[], mounts: RouterMountFinding[], constants: PathConstantFinding[]) {
+    this.index = new Builds(builds);
+    this.mountedAt = mountGraph(builds, mounts);
+
+    for (const constant of constants) {
+      const values = this.constants.get(constant.name);
+      if (values) values.add(constant.value);
+      else this.constants.set(constant.name, new Set([constant.value]));
+      const local = `${constant.path}\0${constant.name}`;
+      // Two assignments to one name in one file is somebody reassigning; neither
+      // spelling is safe to quote, so drop both rather than pick the earlier one.
+      this.localConstants.set(local, this.localConstants.has(local) ? '' : constant.value);
+    }
+
   }
 
   /** Everything in front of a route declared on this router. */
@@ -225,7 +253,7 @@ class Chains {
     if (seen.has(key)) return [];
     seen.add(key);
 
-    const parts = this.chain(key, this.ownPrefix(this.builds.get(key)), seen);
+    const parts = this.chain(key, this.ownPrefix(this.index.byKey.get(key)), seen);
     seen.delete(key);
     this.memo.set(key, parts);
     return parts;

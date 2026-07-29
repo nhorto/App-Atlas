@@ -208,6 +208,11 @@ export interface RouterBuildFinding {
   prefix?: string | null;
   /** The prefix, when it was written as a name we might resolve elsewhere. */
   prefixName?: string | null;
+  /**
+   * Names handed to a `dependencies=[Depends(…)]` on the constructor. Whether any of
+   * them is a *check* is another file's fact, so they are carried as written.
+   */
+  dependencies?: string[];
 }
 
 /**
@@ -250,6 +255,35 @@ export interface RouterMountFinding {
    * this backwards prints an address with a segment in it twice.
    */
   overridesPrefix?: boolean;
+  /**
+   * Names handed to a `dependencies=[Depends(…)]` on the mount itself. A check written
+   * here guards every route under it and appears in none of their files — which is how
+   * a large FastAPI service normally locks its API.
+   */
+  dependencies?: string[];
+  line: number;
+}
+
+/**
+ * A check attached to a router or an app rather than to any one route on it:
+ * `APIRouter(dependencies=[Depends(get_current_user)])`, or an ASGI middleware added
+ * with `app.add_middleware(AuthMiddleware)`.
+ *
+ * Recorded against the variable it was attached to, because that variable is the root
+ * of a subtree: everything mounted under it is behind the check, and nothing outside it
+ * is. Whether the name really checks anything is decided in the merge, against the
+ * checkers the project defines — a middleware that gzips is attached exactly the same
+ * way as one that turns strangers away.
+ */
+export interface RouterGuardFinding {
+  type: 'router-guard';
+  /** The variable it was attached to: `api_router`, `app`. */
+  varName: string;
+  path: string;
+  /** The names it hands off to. */
+  names: string[];
+  /** How it was attached, which is what the reader is shown. */
+  how: 'config' | 'middleware';
   line: number;
 }
 
@@ -296,6 +330,7 @@ export type BoundaryFinding =
   | AuthAliasFinding
   | RouterBuildFinding
   | RouterMountFinding
+  | RouterGuardFinding
   | PathConstantFinding
   | GlobalPrefixFinding;
 

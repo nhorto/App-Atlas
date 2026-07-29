@@ -286,11 +286,36 @@ door that was never drawn.
       excuse every door in it. The template now says *21 of 21 routes behind a file I
       could not read*, and names `app/api/deps.py`.
 
-- [ ] **26. Auth applied by ASGI middleware is invisible** — [#37](https://github.com/nhorto/App-Atlas/issues/37) — *Tier 2*
+- [x] **26. Auth applied by ASGI middleware is invisible** — [#37](https://github.com/nhorto/App-Atlas/issues/37) — *Tier 2*
       `Netflix/dispatch` mounts its routers under a sub-application and checks callers
       in Starlette middleware. 163 of 198 routes read as open. This is the third
       mechanism for the same idea — we handle route dependencies and Next.js
       middleware, and this is how large Python services normally do it.
+      **Done.** The diagnosis was half wrong, and the half that was wrong was the
+      expensive part: dispatch has no auth middleware at all. Its API is locked by
+      `api_router.include_router(rest, dependencies=[Depends(get_current_user)])` — a
+      check handed to the **mount**. Both mechanisms are now read, because both are how
+      a large service normally does it, and both are invisible from the files that
+      declare the routes. A router is behind a check when every mount of it is behind
+      one; a router that also answers at a second, open address stays open. Middleware
+      counts only when the thing attached turns callers away — `add_middleware` is how
+      gzip is attached too, so the evidence is a 401 in the class's `dispatch`, never
+      the word `Auth` in its name. **165 of 200 open → 6**, and those six are the
+      healthcheck, the login route, and four Slack webhooks that verify a signature
+      instead. Underneath it was an extractor bug: `Depends(get_current_user)` reached
+      the Node side as `Depends()`, so the one name that mattered had already been
+      thrown away.
+
+- [ ] **31. A controller class inherits the check its handlers never mention** —
+      *Tier 2, found while fixing #37.* `mealie` reads **124 of 183 routes** as having
+      no visible check. Its routers are plain, and its handlers are methods of
+      `AdminBackupController(BaseAdminController)`; three classes up the hierarchy,
+      `BaseUserController` declares `user: PrivateUser = Depends(get_current_user)` as a
+      class attribute. That is the class-based-view idiom (`@controller(router)`), and
+      it is a fifth spelling of "the lock is in the wiring". Needs the class attribute's
+      default (dropped today) and one hop up the base-class chain, resolved repo-wide by
+      name the way aliases already are. Not wrong today, only blank: the headline says
+      *no auth check App Atlas can see*.
 
 - [ ] **27. A door's identity was its address, and its address was wrong** — *Tier 1,
       fixed by #33.* `makeEndpointId` keys on `method + route`, so two files each

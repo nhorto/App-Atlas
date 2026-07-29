@@ -78,10 +78,28 @@ def value_of(node):
         # An f-string: the literal parts are still the useful half of a URL.
         literal = "".join(p.value for p in node.values if isinstance(p, ast.Constant) and isinstance(p.value, str))
         return {"t": "str", "v": literal, "partial": True} if literal else {"t": "other"}
+    if isinstance(node, ast.Call):
+        text = call_text(node)
+        return {"t": "name", "v": text} if text else {"t": "other"}
     name = dotted(node)
     if name:
         return {"t": "name", "v": name}
     return {"t": "other"}
+
+
+def call_text(node):
+    """A call written as an argument, with the names it was handed.
+
+    `dotted` reduces one to `Depends()`, which is the right answer for a *callee* —
+    `get_db().query` is a query however the handle was made — and the wrong one for an
+    argument. `dependencies=[Depends(get_current_user)]` says nothing at all without the
+    name in the parentheses, and on a large service that one line is where every route's
+    auth is written down."""
+    callee = dotted(node.func)
+    if not callee:
+        return None
+    given = [dotted(arg) for arg in node.args]
+    return "%s(%s)" % (callee, ", ".join(name for name in given if name))
 
 
 def call_info(node):

@@ -39,7 +39,7 @@ import { hashParts } from '../../util/hash.js';
 import { isWorker } from '../wrangler.js';
 import { classifyZone } from '../zones.js';
 import { isCatchAllMatcher, matcherMatches } from './auth.js';
-import { composeRoutePrefixes } from './mounts.js';
+import { composeRoutePrefixes, moduleOf, mountGraph, routerKey as moduleRouterKey } from './mounts.js';
 import { guardThroughHops, reachableGuards, servicesThroughWrappers } from './reach.js';
 import type { ReachedGuard } from './reach.js';
 import type {
@@ -49,6 +49,8 @@ import type {
   EndpointFinding,
   GuardFinding,
   RouterBuildFinding,
+  RouterGuardFinding,
+  RouterMountFinding,
   StoreFinding,
 } from './types.js';
 import type { ProjectSignals } from '../signals.js';
@@ -190,6 +192,7 @@ function describesTheApp(): (finding: BoundaryFinding) => boolean {
         return !isTest(finding.site.path);
       case 'router-build':
       case 'router-mount':
+      case 'router-guard':
       case 'path-constant':
       case 'global-prefix':
         return !isTest(finding.path);
@@ -252,6 +255,8 @@ export function buildBoundaryGraph(raw: BuildInput): BoundaryGraph {
     input.findings.filter((f): f is AuthCheckerFinding => f.type === 'auth-checker'),
     input.findings.filter((f): f is AuthAliasFinding => f.type === 'auth-alias'),
     input.findings.filter((f): f is RouterBuildFinding => f.type === 'router-build'),
+    input.findings.filter((f): f is RouterMountFinding => f.type === 'router-mount'),
+    input.findings.filter((f): f is RouterGuardFinding => f.type === 'router-guard'),
   );
 
   const envEndpoint = collectEnv(input);
@@ -340,6 +345,16 @@ interface MergedEndpoint {
  */
 function routerKey(path: string, varName: string): string {
   return `${path}\0${varName}`;
+}
+
+/**
+ * The same router as the mount graph spells it — by the module another file would
+ * import, rather than by the file on disk. A route knows which file it was written in;
+ * a mount only ever knows the module name it imported.
+ */
+function byModule(key: string): string {
+  const cut = key.indexOf('\0');
+  return moduleRouterKey(moduleOf(key.slice(0, cut)), key.slice(cut + 1));
 }
 
 function collectEndpoints(input: BuildInput): Map<string, MergedEndpoint> {
@@ -712,6 +727,8 @@ function applyDependencyGuards(
   checkers: AuthCheckerFinding[],
   aliases: AuthAliasFinding[],
   routers: RouterBuildFinding[],
+  mounts: RouterMountFinding[],
+  attached: RouterGuardFinding[],
 ): void {
   if (checkers.length === 0) return;
   const byName = new Map(checkers.map((checker) => [checker.name, checker.guard]));
@@ -735,6 +752,8 @@ function applyDependencyGuards(
     if (guard) byRouter.set(routerKey(build.path, build.varName), { ...guard, how: 'config' });
   }
 
+  const behind = routersBehindACheck(routers, mounts, attached, byName);
+
   for (const endpoint of endpoints.values()) {
     for (const name of endpoint.paramTypes) {
       const guard = byName.get(name);
@@ -743,8 +762,97 @@ function applyDependencyGuards(
     for (const key of endpoint.routers) {
       const guard = byRouter.get(key);
       if (guard) pushGuard(endpoint, guard);
+      const inherited = behind.get(byModule(key));
+      if (inherited) pushGuard(endpoint, inherited);
     }
   }
+}
+
+/**
+ * The check written on the mount, not on the route: `api_router.include_router(rest,
+ * dependencies=[Depends(get_current_user)])`, and the ASGI middleware that does the
+ * same job for a whole application.
+ *
+ * Netflix's `dispatch` locks a hundred and sixty-three of its two hundred routes on one
+ * line of `api.py`, and not one of the files those routes live in mentions it — so the
+ * whole API read as wide open. This is the third spelling of the same idea, after a
+ * route's own dependencies and a router built with them, and it is the one a large
+ * Python service reaches for, because it is the only one that cannot be forgotten on a
+ * new file.
+ *
+ * The rule for inheriting a check down the tree is the strict one: a router is behind a
+ * check when it is mounted somewhere *and every mount of it* is behind one. A router
+ * that also answers at a second, open address is not protected, and saying otherwise
+ * about the routes somebody deliberately left open is the most expensive thing this
+ * tool could say.
+ */
+function routersBehindACheck(
+  builds: RouterBuildFinding[],
+  mounts: RouterMountFinding[],
+  attached: RouterGuardFinding[],
+  byName: Map<string, GuardInfo>,
+): Map<string, GuardInfo> {
+  if (mounts.length === 0 && attached.length === 0) return new Map();
+
+  // What a router carries in its own right: the dependencies it was built with, and
+  // any middleware added to it. Both are names until they are looked up here.
+  const own = new Map<string, GuardInfo>();
+  const claim = (path: string, varName: string, names: string[] | undefined, how: 'config' | 'middleware') => {
+    const key = routerKey(moduleOf(path), varName);
+    if (own.has(key)) return;
+    const guard = firstCheck(names, byName);
+    if (guard) own.set(key, { ...guard, how });
+  };
+  for (const build of builds) claim(build.path, build.varName, build.dependencies, 'config');
+  for (const guard of attached) claim(guard.path, guard.varName, guard.names, guard.how);
+
+  const mountedAt = mountGraph(builds, mounts);
+  const answers = new Map<string, GuardInfo | null>();
+
+  const guardFor = (key: string, seen: Set<string>): GuardInfo | null => {
+    const done = answers.get(key);
+    if (done !== undefined) return done;
+    // A router mounted on itself, round however long a loop, tells us nothing.
+    if (seen.has(key)) return null;
+    seen.add(key);
+
+    let found = own.get(key) ?? null;
+    if (!found) {
+      const parents = mountedAt.get(key) ?? [];
+      // A router nobody mounts is a root: whatever it carries is all it has.
+      if (parents.length > 0) {
+        const guards = parents.map((mount) => {
+          const onTheMount = firstCheck(mount.dependencies, byName);
+          // Written in the wiring, not in the handler — which is what `config` says,
+          // and the difference a reader needs when they go looking for it.
+          if (onTheMount) return { ...onTheMount, how: 'config' as const };
+          return guardFor(routerKey(moduleOf(mount.path), mount.hostVar), seen);
+        });
+        found = guards.every((guard) => guard !== null) ? guards[0] : null;
+      }
+    }
+
+    seen.delete(key);
+    answers.set(key, found);
+    return found;
+  };
+
+  const out = new Map<string, GuardInfo>();
+  for (const build of builds) {
+    const key = routerKey(moduleOf(build.path), build.varName);
+    const guard = guardFor(key, new Set());
+    if (guard) out.set(key, { ...guard, confidence: 'likely' });
+  }
+  return out;
+}
+
+/** The first of these names the project knows to be a check, if any of them is. */
+function firstCheck(names: string[] | undefined, byName: Map<string, GuardInfo>): GuardInfo | null {
+  for (const name of names ?? []) {
+    const guard = byName.get(name.split('.').pop() ?? name);
+    if (guard) return guard;
+  }
+  return null;
 }
 
 function guardConfidence(endpoint: MergedEndpoint, guard: GuardFinding): Confidence | null {
