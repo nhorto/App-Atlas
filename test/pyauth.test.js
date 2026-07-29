@@ -54,7 +54,9 @@ test('a dependency that fetches something is not a lock', () => {
 });
 
 test('a router that carries a check guards what is registered on it', () => {
-  assert.deepEqual(guardNames('POST /purge'), ['LockedRouter → Depends(who_is_asking)']);
+  // Named for its full address: `@locked.post("/purge")` on a router built with
+  // `prefix="/admin"` answers at `/admin/purge`, and that is what a reader would type.
+  assert.deepEqual(guardNames('POST /admin/purge'), ['LockedRouter → Depends(who_is_asking)']);
 });
 
 test('…and not the routes sitting next to it in the same file', () => {

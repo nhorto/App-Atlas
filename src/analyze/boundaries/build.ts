@@ -39,6 +39,7 @@ import { hashParts } from '../../util/hash.js';
 import { isWorker } from '../wrangler.js';
 import { classifyZone } from '../zones.js';
 import { isCatchAllMatcher, matcherMatches } from './auth.js';
+import { composeRoutePrefixes } from './mounts.js';
 import { guardThroughHops, reachableGuards, servicesThroughWrappers } from './reach.js';
 import type { ReachedGuard } from './reach.js';
 import type {
@@ -106,6 +107,12 @@ function isSecretName(name: string): boolean {
  * name is a far worse error than listing a fixture, so the heuristic is only allowed
  * to remove things that are not doors. (A library's exported names *are* filtered,
  * but they never pass through here — see `exports.ts`.)
+ *
+ * Router wiring is filtered even though doors are not, because a test that assembles
+ * the app its own way is not a second address the route answers at — it is the same
+ * route, mounted twice, and letting the harness vote turns a known address into an
+ * unknown one. midday's MCP door is mounted at `/mcp` in the app and at `/mcp` under a
+ * different parent in `__tests__`, and reconciling those two produced `…/`.
  */
 function describesTheApp(): (finding: BoundaryFinding) => boolean {
   const zones = new Map<string, Zone>();
@@ -123,6 +130,11 @@ function describesTheApp(): (finding: BoundaryFinding) => boolean {
       case 'service':
       case 'store':
         return !isTest(finding.site.path);
+      case 'router-build':
+      case 'router-mount':
+      case 'path-constant':
+      case 'global-prefix':
+        return !isTest(finding.path);
       default:
         return true;
     }
@@ -133,7 +145,9 @@ export function buildBoundaryGraph(raw: BuildInput): BoundaryGraph {
   const nodes: AtlasNode[] = [];
   const edges: AtlasEdge[] = [];
 
-  const shipped = raw.findings.filter(describesTheApp());
+  // Before anything is merged: a door's identity is its address, and half the address
+  // lives in the file that mounted its router rather than the file that declared it.
+  const shipped = composeRoutePrefixes(raw.findings.filter(describesTheApp()));
 
   // A call made through a wrapper module is a real call to a real company; it just
   // took two files to say so. Resolved before anything is merged, so those sites land

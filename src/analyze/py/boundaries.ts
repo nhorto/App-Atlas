@@ -326,6 +326,7 @@ function detectAuthAliases(input: PythonBoundaryInput, findings: BoundaryFinding
   }
 
   // …and the other half: which variable in this file was built out of what.
+  const here = modulePath(input.file.path);
   for (const router of input.file.routers ?? []) {
     findings.push({
       type: 'router-build',
@@ -333,8 +334,152 @@ function detectAuthAliases(input: PythonBoundaryInput, findings: BoundaryFinding
       varName: router.var,
       path: input.file.path,
       line: router.line,
+      hasPrefix: router.hasPrefix ?? false,
+      prefix: router.prefix ?? null,
+      prefixName: router.prefixName ?? null,
     });
   }
+
+  for (const constant of input.file.constants ?? []) {
+    findings.push({
+      type: 'path-constant',
+      name: constant.name,
+      value: constant.value,
+      path: input.file.path,
+      line: constant.line,
+    });
+  }
+
+  detectRouterMounts(input, here, findings);
+}
+
+/**
+ * `api_router.include_router(items.router, prefix="/x")` — one router hung off another.
+ *
+ * Resolved to a module here rather than in the merge layer because this is the only
+ * place that can see the file's own imports: `items` is a name, and which file it names
+ * depends on a `from … import …` twenty lines above.
+ */
+const MOUNT_CALLS = new Set(['include_router', 'register_blueprint', 'mount']);
+
+function detectRouterMounts(input: PythonBoundaryInput, here: string, findings: BoundaryFinding[]): void {
+  for (const call of input.file.calls ?? []) {
+    const parts = call.callee.split('.');
+    const method = parts.pop();
+    if (!MOUNT_CALLS.has(method ?? '') || parts.length === 0) continue;
+    // `app.mount("/api/v1", app=api)` puts the path first and the thing being mounted
+    // second; the router spellings put the router first and name the path.
+    const child = method === 'mount' ? (call.args[1] ?? call.kwargs.app) : call.args[0];
+    if (!child || child.t !== 'name') continue;
+
+    const segments = child.v.split('.');
+    const name = segments.pop() as string;
+    // `include_router(items.router)` names a module then a variable inside it;
+    // `include_router(router)` names a variable that some import brought in whole.
+    const target =
+      segments.length > 0
+        ? { module: childModulePath(input.file, segments), varName: name }
+        : localRouter(input.file, name, here);
+
+    findings.push({
+      type: 'router-mount',
+      path: input.file.path,
+      // `a.b.include_router(...)` is a mount onto `b`; the route decorator that has to
+      // match it will have written `b` too.
+      hostVar: parts[parts.length - 1],
+      childModule: target.module,
+      childVar: target.varName,
+      overridesPrefix: method === 'register_blueprint',
+      ...prefixArgs(call, method === 'mount'),
+    });
+  }
+}
+
+/** A bare `include_router(router)`: either imported from somewhere, or built here. */
+function localRouter(file: PyFile, name: string, here: string): { module: string | null; varName: string } {
+  const found = importBinding(file, name);
+  return found ? { module: found.base, varName: found.exported } : { module: here, varName: name };
+}
+
+function prefixArgs(
+  call: PyCall,
+  positional: boolean,
+): { hasPrefix: boolean; prefix: string | null; prefixName: string | null; line: number } {
+  const value = positional ? call.args[0] : (call.kwargs.prefix ?? call.kwargs.url_prefix);
+  if (!value) return { hasPrefix: false, prefix: null, prefixName: null, line: call.line };
+  if (value.t === 'str' && !value.partial) {
+    return { hasPrefix: true, prefix: value.v, prefixName: null, line: call.line };
+  }
+  return { hasPrefix: true, prefix: null, prefixName: value.t === 'name' ? value.v : null, line: call.line };
+}
+
+/**
+ * `items` in `include_router(items.router)` → `app/api/routes/items`, by way of the
+ * `from app.api.routes import items` that introduced the name.
+ *
+ * Left absolute-ish on purpose: the dotted name in the source is relative to whatever
+ * directory the app is started from, which nothing in the repo records. The merge layer
+ * matches on the tail, so `app/api/routes/items` still finds
+ * `backend/app/api/routes/items.py`.
+ */
+function childModulePath(file: PyFile, segments: string[]): string | null {
+  const [head, ...rest] = segments;
+  const found = importBinding(file, head);
+  // Here the imported name is itself a module — `from app.api.routes import items`.
+  if (found) return found.base === null ? null : [found.base, found.exported, ...rest].filter(Boolean).join('/');
+
+  // `import app.api.routes` binds only `app`, and the expression that follows spells
+  // the rest of the module out itself — so the dotted name *is* the path.
+  for (const imp of file.imports ?? []) {
+    if (imp.level !== 0 || imp.names.length > 0 || imp.alias !== null) continue;
+    const declared = imp.module.split('.');
+    if (declared[0] === head && declared.every((part, i) => segments[i] === part)) {
+      return segments.join('/');
+    }
+  }
+  return null;
+}
+
+/**
+ * The import that introduced a local name, split into the module it came from and the
+ * name that module knows it by.
+ *
+ * Kept split because `from mealie.routes import router` is genuinely ambiguous — it is
+ * either a variable in `mealie/routes/__init__.py` or a `mealie/routes/router.py` — and
+ * which one it is depends on how the name is then used.
+ */
+function importBinding(file: PyFile, local: string): { base: string | null; exported: string } | null {
+  for (const imp of file.imports ?? []) {
+    if (imp.alias === local && imp.level === 0) {
+      const parts = imp.module.split('.');
+      return { base: parts.slice(0, -1).join('/'), exported: parts[parts.length - 1] };
+    }
+    for (const [exported, bound] of imp.names) {
+      if (bound === local) return { base: importBase(file.path, imp), exported };
+    }
+  }
+  return null;
+}
+
+/** The directory part of an import, with relative dots climbed. */
+function importBase(fromPath: string, imp: PyImport): string | null {
+  if (imp.level === 0) return imp.module.split('.').join('/');
+  // One dot means the file's own package; each extra dot climbs one more. A file that
+  // is not an `__init__` is one level below its package to begin with.
+  const parts = modulePath(fromPath).split('/');
+  const keep = parts.length - (imp.level - 1) - (isPackageInit(fromPath) ? 0 : 1);
+  if (keep < 0) return null;
+  return [...parts.slice(0, keep), ...(imp.module ? imp.module.split('.') : [])].join('/');
+}
+
+function isPackageInit(relPath: string): boolean {
+  return /(^|\/)__init__\.pyi?$/.test(relPath);
+}
+
+/** A file as another file would import it: no extension, no `__init__`. */
+function modulePath(relPath: string): string {
+  const withoutExt = relPath.replace(/\.pyi?$/, '');
+  return isPackageInit(relPath) ? withoutExt.replace(/\/?__init__$/, '') : withoutExt;
 }
 
 function isRouterName(name: string): boolean {

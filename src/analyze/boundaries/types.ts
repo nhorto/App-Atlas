@@ -189,6 +189,85 @@ export interface RouterBuildFinding {
   varName: string;
   path: string;
   line: number;
+  /** A `prefix=` was passed, whether or not we could read what it said. */
+  hasPrefix?: boolean;
+  /** The prefix, when it was written as a literal. */
+  prefix?: string | null;
+  /** The prefix, when it was written as a name we might resolve elsewhere. */
+  prefixName?: string | null;
+}
+
+/**
+ * One router hung off another: `api_router.include_router(items.router, prefix="/x")`,
+ * `app.use('/api', usersRouter)`.
+ *
+ * The route decorator in `items.py` says `/{id}`; this finding is the only record that
+ * the address a customer types is `/api/v1/items/{id}`. Nothing in the file that
+ * declares the route mentions the mount, so no per-file pass can ever see it.
+ */
+export interface RouterMountFinding {
+  type: 'router-mount';
+  /** Where the mount is written. */
+  path: string;
+  /** The variable being mounted *onto* — the parent in the chain. */
+  hostVar: string;
+  /**
+   * The file owning the mounted router, as the importing file spelled it: slashes, no
+   * extension, no `__init__`/`index`. Null when the import could not be followed.
+   *
+   * Not a repo-relative path on purpose. A Python module name is relative to whichever
+   * directory the app is started from, which nothing in the repo records, so the merge
+   * layer matches on the tail — `app/api/routes/items` finds
+   * `backend/app/api/routes/items.py`.
+   */
+  childModule: string | null;
+  /**
+   * The variable the mounted router is bound to in its own file, or null when the
+   * import gave no name to match on — `export default router`. Null resolves only if
+   * that file declares exactly one router.
+   */
+  childVar: string | null;
+  hasPrefix: boolean;
+  prefix: string | null;
+  prefixName: string | null;
+  /**
+   * Whether this mount's prefix *replaces* the child's own rather than sitting in front
+   * of it. Flask works that way — `register_blueprint(bp, url_prefix="/api")` discards
+   * the `url_prefix` the blueprint was built with — where FastAPI concatenates. Getting
+   * this backwards prints an address with a segment in it twice.
+   */
+  overridesPrefix?: boolean;
+  line: number;
+}
+
+/**
+ * A name bound to something that looks like a URL path: `API_V1_STR = "/api/v1"`.
+ *
+ * Only useful for turning a `prefix=SOME_NAME` back into an address, so only names
+ * whose value starts with `/` are worth carrying.
+ */
+export interface PathConstantFinding {
+  type: 'path-constant';
+  name: string;
+  value: string;
+  path: string;
+  line: number;
+}
+
+/**
+ * A prefix the framework applies to every route it serves, declared once and nowhere
+ * near any of them: NestJS's `app.setGlobalPrefix('api')`.
+ *
+ * Not a mount — there is no parent router to hang anything off — so it is carried
+ * separately and applied to every door that framework opened.
+ */
+export interface GlobalPrefixFinding {
+  type: 'global-prefix';
+  /** Only doors this framework opened are affected. */
+  framework: string;
+  prefix: string;
+  path: string;
+  line: number;
 }
 
 export type BoundaryFinding =
@@ -202,7 +281,10 @@ export type BoundaryFinding =
   | WrapperCallFinding
   | AuthCheckerFinding
   | AuthAliasFinding
-  | RouterBuildFinding;
+  | RouterBuildFinding
+  | RouterMountFinding
+  | PathConstantFinding
+  | GlobalPrefixFinding;
 
 /** One import statement, flattened to the name it introduced. */
 export interface ImportBinding {

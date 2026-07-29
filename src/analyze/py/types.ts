@@ -102,6 +102,25 @@ export interface PyRouter {
   var: string;
   /** What built it: `APIRouter`, `UserAPIRouter`. */
   callee: string;
+  /** Whether a `prefix=` was passed at all — separate from whether we could read it. */
+  hasPrefix?: boolean;
+  /** The prefix when it was written as a literal. */
+  prefix?: string | null;
+  /** The prefix when it was written as a name: `prefix=settings.API_V1_STR`. */
+  prefixName?: string | null;
+  line: number;
+}
+
+/**
+ * A module- or class-level name bound to a string that starts with `/` —
+ * `API_V1_STR: str = "/api/v1"`.
+ *
+ * Collected only so that a `prefix=` written as a name can still be turned into the
+ * address it stands for.
+ */
+export interface PyConstant {
+  name: string;
+  value: string;
   line: number;
 }
 
@@ -125,6 +144,7 @@ export interface PyFile {
   subscripts?: PySubscript[];
   aliases?: PyAlias[];
   routers?: PyRouter[];
+  constants?: PyConstant[];
   uses?: string[];
   /** Line of a module-level `if __name__ == "__main__":` — this file is meant to be run. */
   main?: number | null;

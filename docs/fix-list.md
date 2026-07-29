@@ -48,10 +48,20 @@ compiler-derived and cannot be wrong.
       pages (item 6's territory). Sampled the rest by hand: password reset and
       signature-verified callbacks, i.e. genuinely public.
 
-- [ ] **4. Compose router prefixes into route paths** — [#33](https://github.com/nhorto/App-Atlas/issues/33)
+- [x] **4. Compose router prefixes into route paths** — [#33](https://github.com/nhorto/App-Atlas/issues/33)
       FastAPI doors display as `GET /{id}` when the real address is
       `/api/v1/items/{id}`. `APIRouter(prefix=…)` + `include_router(prefix=…)` must be
       composed. Also affects Express `app.use(prefix, router)` and NestJS.
+      **Done.** `boundaries/mounts.ts` assembles the address from the three files that
+      each hold a third of it, before anything is merged. Six mount spellings across
+      both languages: FastAPI `include_router`, Starlette `mount`, Flask
+      `register_blueprint`, Express `use`, Hono `route`, NestJS `setGlobalPrefix`.
+      FastAPI template: every one of 23 routes now reads `/api/v1/…`, resolved through
+      `prefix=settings.API_V1_STR`. mealie 183 routes, 182 fully composed. dispatch 196
+      of 200 at `/api/v1/…`. midday's Hono API 12 doors → **18**, all composed.
+      *The undercount underneath it:* a door's identity is its address, so `GET /` in
+      `items.py` and `GET /` in `users.py` were **one node**. Composing first split them
+      — the FastAPI template went 21 doors → 23 with no new routes written.
 
 - [x] **5. Stop inventing services from tests and variable names** — [#25](https://github.com/nhorto/App-Atlas/issues/25)
       `psf/requests` reports `s call` and `session call` as outside companies. Skip
@@ -159,8 +169,10 @@ compiler-derived and cannot be wrong.
 
 ## Found while fixing
 
-Both surfaced by running the fixes against repos the tool had never seen, which is the
-point of doing that rather than only re-checking the repos that produced the list.
+All of these surfaced by running the fixes against repos the tool had never seen, which
+is the point of doing that rather than only re-checking the repos that produced the
+list. Two of them are bugs the fix-list itself would never have found: nobody reports a
+door that was never drawn.
 
 - [x] **25. An unreadable file is counted as unprotected** — [#36](https://github.com/nhorto/App-Atlas/issues/36) — *Tier 1*
       `fastapi/full-stack-fastapi-template`'s `deps.py` does not parse (a Python 2
@@ -182,6 +194,22 @@ point of doing that rather than only re-checking the repos that produced the lis
       mechanism for the same idea — we handle route dependencies and Next.js
       middleware, and this is how large Python services normally do it.
 
+- [ ] **27. A door's identity was its address, and its address was wrong** — *Tier 1,
+      fixed by #33.* `makeEndpointId` keys on `method + route`, so two files each
+      declaring `@router.get("/")` produced one node. Not a display bug: the count on
+      the Boundaries screen, the auth denominator and the brief were all short by the
+      number of collisions, and nothing anywhere said so. The FastAPI template was
+      quietly reporting 21 doors where the app serves 23. Fixed by composing the
+      prefixes *before* the merge rather than after.
+
+- [ ] **28. A webhook is recognised by a path we now know better** — *Tier 3.*
+      `isWebhookPath` runs in the Python detector, on the route as its own file spells
+      it. A handler at `@router.post("/")` mounted under `prefix="/webhooks"` is typed
+      `http-route`, and after #33 its own name says `/webhooks/…`. Re-checking the kind
+      once the address is composed would settle it. Not a regression — neither spelling
+      was detected before — and the TypeScript side never used the path heuristic at
+      all, so this is one small unification rather than a bug.
+
 ## How these fixes avoid being fitted to the test repos
 
 Worth writing down, because the failure mode is easy and invisible:
@@ -201,6 +229,16 @@ Worth writing down, because the failure mode is easy and invisible:
   it: a route importing `next-auth` and checking nothing is still `worth-a-look`.
 - **#25 removes rather than renames.** The rule is not "which variable names are not
   companies" but "with no destination in the code, say nothing".
+- **#33 follows a link only when exactly one file answers to it**, the same rule the
+  Python import resolver already used. Two candidates means we do not know which, and a
+  prefix we cannot read becomes a visible `…` rather than a shorter address that looks
+  finished. Across all sixteen clones exactly **one** door carries that marker, and it
+  earns it: mealie builds a prefix out of an f-string.
+- **#33 also models where the frameworks disagree.** Flask's
+  `register_blueprint(bp, url_prefix=…)` *replaces* the blueprint's own prefix where
+  FastAPI's `include_router` concatenates. Treating them alike would print
+  `/api/orders/orders/<id>` — a wrong address given with total confidence, which is
+  exactly the failure this whole list exists to stop.
 - **Every fix is checked on a repo that did not produce the finding.** mealie,
   dispatch and a fresh FastAPI template were cloned for exactly this, and two of the
   three surfaced new bugs rather than confirming the old ones. The #24/#25/#29 work

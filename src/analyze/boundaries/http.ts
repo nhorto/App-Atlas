@@ -251,18 +251,139 @@ const SERVER_PACKAGES: { pkg: string; name: string }[] = [
 /** Names people actually give the thing they hang routes off. */
 const ROUTER_NAMES = /^(app|router|server|api|fastify|hono|koa|instance|r)$/i;
 
+/**
+ * What a router is actually built by, as opposed to what it tends to be called.
+ *
+ * Matched loosely on purpose: `new OpenAPIHono()` and `express.Router()` are both
+ * routers, and the wrappers people put around them keep the original name inside.
+ */
+const ROUTER_CALLEE = /express|Router|Hono|Fastify|fastify|Koa|Server/;
+
 export const nodeRoutesDetector: BoundaryDetector = {
   id: 'node-routes',
   enabled: (ctx) => serverFrameworks(ctx).length > 0,
+  fileScan(ctx) {
+    // Which variable in this file is a router, so a `use('/api', …)` elsewhere can find
+    // it. Emitted from the constructor rather than the name: `router` is a convention,
+    // `express.Router()` is a fact.
+    for (const [name, local] of ctx.locals) {
+      if (!ROUTER_CALLEE.test(local.callee)) continue;
+      ctx.emit({
+        type: 'router-build',
+        routerName: local.callee,
+        varName: name,
+        path: ctx.ref.relPath,
+        line: 1,
+        hasPrefix: false,
+        prefix: null,
+        prefixName: null,
+      });
+    }
+  },
   visit(node, ctx) {
     if (Node.isCallExpression(node)) {
       routeCall(node, ctx);
       fastifyRouteObject(node, ctx);
+      routerMount(node, ctx);
+      globalPrefix(node, ctx);
     } else if (Node.isClassDeclaration(node)) {
       nestController(node, ctx);
     }
   },
 };
+
+/**
+ * `app.use('/api/users', usersRouter)` and Hono's `app.route('/api', users)` — the line
+ * that decides what every route in another file is actually called.
+ *
+ * A bare `app.use(thing)` counts too: no prefix of its own, but it is what links a
+ * sub-router to whatever the parent was mounted under. Only identifiers that resolve to
+ * this repo's own code are followed, so `app.use(cors())` and `app.use(morgan)` cannot
+ * turn a logger into a router.
+ */
+function routerMount(call: CallExpression, ctx: DetectorContext): void {
+  const dotted = dottedName(call.getExpression());
+  if (!dotted?.includes('.')) return;
+  const parts = dotted.split('.');
+  const method = parts[parts.length - 1];
+  if (method !== 'use' && method !== 'route') return;
+  const hostVar = parts[parts.length - 2];
+  if (!looksLikeRouter(hostVar, ctx)) return;
+
+  const args = call.getArguments();
+  const prefix = literalString(args[0]);
+  if (prefix !== null && !prefix.startsWith('/')) return;
+  // Hono's `.route(path, app)` takes exactly one; Express's `.use` takes a chain.
+  for (const arg of prefix === null ? args : args.slice(1)) {
+    if (!Node.isIdentifier(arg)) continue;
+    const target = mountTarget(arg.getText(), ctx);
+    if (!target) continue;
+    ctx.emit({
+      type: 'router-mount',
+      path: ctx.ref.relPath,
+      hostVar,
+      childModule: target.module,
+      childVar: target.varName,
+      hasPrefix: prefix !== null,
+      prefix,
+      prefixName: null,
+      line: call.getStartLineNumber(),
+    });
+  }
+}
+
+/**
+ * The file a mounted router lives in, or null when the name is not this repo's.
+ *
+ * A default export gives no name to match on, so the child is left unnamed and the
+ * merge layer accepts it only if that file declares exactly one router — the same "one
+ * candidate or nothing" rule the rest of this resolution uses.
+ */
+function mountTarget(name: string, ctx: DetectorContext): { module: string | null; varName: string | null } | null {
+  const imported = ctx.imports.get(name);
+  if (imported) {
+    if (imported.external) return null;
+    return {
+      module: importedModule(ctx.ref.relPath, imported.module),
+      varName: imported.imported === 'default' || imported.imported === '*' ? null : imported.imported,
+    };
+  }
+  const local = ctx.locals.get(name);
+  if (local && ROUTER_CALLEE.test(local.callee)) return { module: null, varName: name };
+  return null;
+}
+
+/**
+ * `./routes/users` from `src/app.ts` → `src/routes/users`.
+ *
+ * A bare-but-internal specifier (`@/routes/users`) keeps only the part after the alias:
+ * what the alias points at lives in a tsconfig this layer does not read, and the merge
+ * matches on the tail anyway.
+ */
+function importedModule(fromRelPath: string, specifier: string): string {
+  if (!specifier.startsWith('.')) return specifier.replace(/^[@~#]\/?/, '').replace(/\.[^./]+$/, '');
+  const parts = fromRelPath.split('/').slice(0, -1);
+  for (const segment of specifier.replace(/\.[^./]+$/, '').split('/')) {
+    if (segment === '.' || segment === '') continue;
+    if (segment === '..') parts.pop();
+    else parts.push(segment);
+  }
+  return parts.join('/');
+}
+
+/** `app.setGlobalPrefix('api')` — one line that renames every route NestJS serves. */
+function globalPrefix(call: CallExpression, ctx: DetectorContext): void {
+  if (!dottedName(call.getExpression())?.endsWith('.setGlobalPrefix')) return;
+  const prefix = literalString(argAt(call, 0));
+  if (!prefix) return;
+  ctx.emit({
+    type: 'global-prefix',
+    framework: 'NestJS',
+    prefix,
+    path: ctx.ref.relPath,
+    line: call.getStartLineNumber(),
+  });
+}
 
 function serverFrameworks(ctx: DetectorContext): string[] {
   return SERVER_PACKAGES.filter(({ pkg }) => ctx.signals.packages.has(pkg)).map(({ name }) => name);
@@ -299,6 +420,9 @@ function routeCall(call: CallExpression, ctx: DetectorContext): void {
     guards: middlewareGuards(call, ctx),
     site: ctx.site(call, `${dotted}('${route}', …)`),
     handlerId: guessHandlerId(call, ctx),
+    // Which router this hangs off, so whatever prefix that router was mounted under
+    // becomes part of the address before anything is merged.
+    routerVar: holder,
   });
 }
 
@@ -456,8 +580,7 @@ function middlewareGuards(call: CallExpression, ctx: DetectorContext): GuardInfo
 function looksLikeRouter(name: string, ctx: DetectorContext): boolean {
   if (ROUTER_NAMES.test(name)) return true;
   const local = ctx.locals.get(name);
-  if (!local) return false;
-  return /express|Router|Hono|Fastify|fastify|Koa|Server/.test(local.callee);
+  return local ? ROUTER_CALLEE.test(local.callee) : false;
 }
 
 function frameworkFor(name: string, ctx: DetectorContext): string | null {

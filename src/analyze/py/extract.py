@@ -343,13 +343,27 @@ def dependency_aliases(tree):
     return out
 
 
+# The calls that make something routes can be hung off. Apps are here as well as
+# routers because an app is what a router is finally mounted *on*, and Starlette's
+# `app.mount("/api/v1", app=api)` is how a whole FastAPI app becomes a prefix.
+ROUTER_CALLS = {"FastAPI", "Flask", "Starlette", "Quart", "Sanic", "Blueprint"}
+
+
+def is_router_call(callee):
+    last = callee.split(".")[-1]
+    return last.endswith("Router") or last in ROUTER_CALLS
+
+
 def router_variables(tree):
     """Module-level `locked = LockedRouter(prefix="/admin")`.
 
     Which router a route hangs off decides whether that router's dependencies apply to
     it. Two routers in one file is normal — one locked, one deliberately open — so
     knowing only the file would turn a correct claim about four routes into a false one
-    about two of them."""
+    about two of them.
+
+    The `prefix` is the other half of the route's real address. `@router.get("/{id}")`
+    on this router answers at `/admin/{id}`, and the decorator alone never says so."""
     out = []
     for stmt in tree.body:
         if not isinstance(stmt, ast.Assign) or len(stmt.targets) != 1:
@@ -358,8 +372,63 @@ def router_variables(tree):
         if not isinstance(target, ast.Name) or not isinstance(stmt.value, ast.Call):
             continue
         callee = dotted(stmt.value.func) or ""
-        if callee.split(".")[-1].endswith("Router"):
-            out.append({"var": target.id, "callee": callee, "line": stmt.lineno})
+        if not is_router_call(callee):
+            continue
+        router = {"var": target.id, "callee": callee, "line": stmt.lineno}
+        router.update(prefix_of(stmt.value.keywords))
+        out.append(router)
+    return out
+
+
+def prefix_of(keywords):
+    """The `prefix=` of a router call, split by whether we can read it.
+
+    A literal is the address. A name — `prefix=settings.API_V1_STR` — is a promise that
+    there *is* an address we have not read yet, and that is worth keeping: a route shown
+    at `/items/{id}` when it answers at `/api/v1/items/{id}` is a wrong address given
+    confidently, which costs the reader more than an honest gap."""
+    for kw in keywords:
+        # Flask spells it `url_prefix`; the meaning is identical.
+        if kw.arg not in ("prefix", "url_prefix"):
+            continue
+        value = value_of(kw.value)
+        if value.get("t") == "str" and not value.get("partial"):
+            return {"hasPrefix": True, "prefix": value["v"], "prefixName": None}
+        # There is a prefix; we just cannot read it here. `prefixName` is the one lead
+        # worth following — a name might be declared somewhere we *can* read.
+        return {
+            "hasPrefix": True,
+            "prefix": None,
+            "prefixName": value["v"] if value.get("t") == "name" else None,
+        }
+    return {"hasPrefix": False, "prefix": None, "prefixName": None}
+
+
+def path_constants(tree):
+    """Module- and class-level assignments of a string that looks like a URL path.
+
+    `API_V1_STR: str = "/api/v1"` on a settings class is how the most-used FastAPI
+    template in existence writes its API prefix, and nothing else in the repo spells the
+    address out. Only values starting with `/` are collected: the point is to answer
+    "what path is this name", so a name that was never a path is noise, and noise here
+    turns into a collision that makes a real prefix unreadable."""
+    out = []
+
+    def take(stmt):
+        targets = stmt.targets if isinstance(stmt, ast.Assign) else [stmt.target]
+        if len(targets) != 1 or not isinstance(targets[0], ast.Name) or stmt.value is None:
+            return
+        value = value_of(stmt.value)
+        if value.get("t") == "str" and not value.get("partial") and value["v"].startswith("/"):
+            out.append({"name": targets[0].id, "value": value["v"], "line": stmt.lineno})
+
+    for stmt in tree.body:
+        if isinstance(stmt, (ast.Assign, ast.AnnAssign)):
+            take(stmt)
+        elif isinstance(stmt, ast.ClassDef):
+            for member in stmt.body:
+                if isinstance(member, (ast.Assign, ast.AnnAssign)):
+                    take(member)
     return out
 
 
@@ -407,6 +476,7 @@ def analyze_source(text):
         "subscripts": subscripts,
         "aliases": dependency_aliases(tree),
         "routers": router_variables(tree),
+        "constants": path_constants(tree),
         "uses": sorted(module_uses),
         "main": main_guard_line(tree),
         "loc": text.count("\n") + (0 if text.endswith("\n") or not text else 1),
