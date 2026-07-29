@@ -35,6 +35,17 @@ export interface EndpointFinding {
   site: CodeSite;
   /** The atlas node that answers this door. */
   handlerId: string | null;
+  /**
+   * Type names the handler's signature mentions that this file could not resolve. A
+   * FastAPI dependency alias is normally one of them and is declared a file away, so
+   * `build.ts` matches these against the `auth-alias` findings.
+   */
+  paramTypes?: string[];
+  /**
+   * The router variable this door is registered on — `locked` in `@locked.post(…)`.
+   * Whatever dependencies that router carries reach this route and no other.
+   */
+  routerVar?: string | null;
 }
 
 /** A third party the app talks to. */
@@ -132,6 +143,54 @@ export interface WrapperCallFinding {
   site: CodeSite;
 }
 
+/**
+ * A function that turns unauthenticated callers away — it raises or returns a 401 or
+ * a 403. Naming it in a route's dependency list is how a whole family of Python
+ * frameworks spells "you must be signed in".
+ *
+ * Reported by the file that *defines* it; the routes that depend on it are elsewhere,
+ * so the two are matched in `build.ts`.
+ */
+export interface AuthCheckerFinding {
+  type: 'auth-checker';
+  /** The function's name, which is what a dependency list will say. */
+  name: string;
+  guard: GuardInfo;
+}
+
+/**
+ * A name that stands in for a dependency: `CurrentUser = Annotated[User,
+ * Depends(get_current_user)]`. A route that types a parameter with it is checked, and
+ * contains no check you could point at.
+ *
+ * Whether the dependency is really a *check* is not decided here — that depends on
+ * what `get_current_user` does, which is another file's business.
+ */
+export interface AuthAliasFinding {
+  type: 'auth-alias';
+  /** The alias as written, which is what a handler's signature will say. */
+  name: string;
+  /** Every function handed to a `Depends(...)` inside it. */
+  depends: string[];
+  path: string;
+  line: number;
+}
+
+/**
+ * This file builds its router by calling `routerName`. If that name turns out to be a
+ * router that carries a check — `router = UserAPIRouter(prefix="/recipes")` — then
+ * every route the file declares sits behind it, and not one of them says so.
+ */
+export interface RouterBuildFinding {
+  type: 'router-build';
+  /** What built it: `APIRouter`, `UserAPIRouter`. */
+  routerName: string;
+  /** The variable it was bound to, which is what a route decorator names. */
+  varName: string;
+  path: string;
+  line: number;
+}
+
 export type BoundaryFinding =
   | EndpointFinding
   | ServiceFinding
@@ -140,7 +199,10 @@ export type BoundaryFinding =
   | GuardFinding
   | WebhookFinding
   | ClientExportFinding
-  | WrapperCallFinding;
+  | WrapperCallFinding
+  | AuthCheckerFinding
+  | AuthAliasFinding
+  | RouterBuildFinding;
 
 /** One import statement, flattened to the name it introduced. */
 export interface ImportBinding {

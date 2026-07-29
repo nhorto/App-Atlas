@@ -41,6 +41,7 @@ test('reads Next.js App Router routes off the file system', () => {
     // The Supabase edge function: deployed HTTP that package.json never mentions.
     'ANY /functions/v1/greet',
     'DELETE /api/orders',
+    'GET /api/teams',
     'GET /api/users',
     'PAGE /',
     // The `(app)` route group shapes the folder tree but not the URL.

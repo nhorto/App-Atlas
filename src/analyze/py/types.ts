@@ -56,6 +56,12 @@ export interface PyDef {
   fields?: PyField[];
   methods?: PyDef[];
   decorators: PyCall[];
+  /**
+   * Line where this function turns an unauthenticated caller away — a 401 or 403 it
+   * raises or returns. What makes a dependency a check rather than a fetch, read from
+   * the code rather than from the function's name.
+   */
+  rejects?: number | null;
   /** Every identifier mentioned inside, for the reference pass to resolve. */
   uses: string[];
 }
@@ -68,6 +74,34 @@ export interface PyImport {
   /** `[exported name, local name]` pairs from `from x import a as b`. */
   names: [string, string][];
   alias: string | null;
+  line: number;
+}
+
+/**
+ * A module-level name bound to something with a `Depends(...)` in it —
+ * `CurrentUser = Annotated[User, Depends(get_current_user)]`.
+ *
+ * The route that uses it writes only `current_user: CurrentUser`, so this is the only
+ * place the check is visible at all.
+ */
+export interface PyAlias {
+  name: string;
+  /** Every function handed to a `Depends(...)` inside the value. */
+  depends: string[];
+  line: number;
+}
+
+/**
+ * A module-level router: `locked = LockedRouter(prefix="/admin")`.
+ *
+ * Which router a route hangs off decides which dependencies reach it, and one file
+ * having both a locked router and an open one is ordinary.
+ */
+export interface PyRouter {
+  /** The variable, which is what a route decorator will name. */
+  var: string;
+  /** What built it: `APIRouter`, `UserAPIRouter`. */
+  callee: string;
   line: number;
 }
 
@@ -89,6 +123,8 @@ export interface PyFile {
   defs?: PyDef[];
   calls?: PyCall[];
   subscripts?: PySubscript[];
+  aliases?: PyAlias[];
+  routers?: PyRouter[];
   uses?: string[];
   /** Line of a module-level `if __name__ == "__main__":` — this file is meant to be run. */
   main?: number | null;

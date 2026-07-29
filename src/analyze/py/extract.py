@@ -17,6 +17,7 @@ with its error, because one syntax error in one file must not cost the user thei
 import ast
 import builtins
 import json
+import re
 import sys
 
 SCHEMA_VERSION = 1
@@ -176,6 +177,33 @@ def params_of(node):
     return out
 
 
+# The two HTTP statuses that mean "I do not accept who you are". Every framework
+# spells the rejection differently, but all of them end up naming one of these.
+REJECT_STATUS = re.compile(r"\b(401|403|HTTP_401\w*|HTTP_403\w*|UNAUTHORIZED|FORBIDDEN)\b")
+
+
+def rejection_line(node):
+    """The line where this function turns an unauthenticated caller away, if it does.
+
+    This is what makes a dependency a *check* rather than a fetch, and it is a fact
+    about the code instead of a fact about the name — so a project whose guard is
+    called `verify_api_key` or `tenant_from_header` is read as correctly as one that
+    calls it `get_current_user`. Names are a weak second signal, applied elsewhere;
+    this is the strong one."""
+    for child in ast.walk(node):
+        if isinstance(child, ast.Raise) and child.exc is not None:
+            if REJECT_STATUS.search(unparse(child.exc) or ""):
+                return child.lineno
+        # Flask's `abort(401)` and Starlette's `return Response(status_code=403)`
+        # reject without raising anything the AST calls an exception.
+        elif isinstance(child, ast.Call):
+            callee = dotted(child.func) or ""
+            if callee.split(".")[-1] in ("abort", "Response", "JSONResponse", "HTTPException"):
+                if REJECT_STATUS.search(unparse(child) or ""):
+                    return child.lineno
+    return None
+
+
 def function_def(node, owner=None):
     start, end = span(node)
     return {
@@ -189,6 +217,7 @@ def function_def(node, owner=None):
         "params": params_of(node),
         "returns": unparse(node.returns) or "",
         "decorators": [decorator_info(d) for d in node.decorator_list],
+        "rejects": rejection_line(node),
         "uses": names_used(node),
     }
 
@@ -282,6 +311,58 @@ def scope_at(spans, line):
     return None
 
 
+def dependency_aliases(tree):
+    """Module-level `CurrentUser = Annotated[User, Depends(get_current_user)]`.
+
+    FastAPI's own project template writes every route's auth this way, and a handler
+    whose signature reads `current_user: CurrentUser` contains no visible check at
+    all. The alias *is* the check. Without reading it, twenty-one guarded routes are
+    reported as twenty-one open ones — which is not an imprecise answer, it is the
+    opposite of the true one."""
+    out = []
+    for stmt in tree.body:
+        if not isinstance(stmt, (ast.Assign, ast.AnnAssign)):
+            continue
+        targets = stmt.targets if isinstance(stmt, ast.Assign) else [stmt.target]
+        if len(targets) != 1 or not isinstance(targets[0], ast.Name) or stmt.value is None:
+            continue
+
+        depends = []
+        for node in ast.walk(stmt.value):
+            if not isinstance(node, ast.Call):
+                continue
+            callee = dotted(node.func) or ""
+            if callee.split(".")[-1] != "Depends":
+                continue
+            for arg in node.args:
+                name = dotted(arg)
+                if name:
+                    depends.append(name)
+        if depends:
+            out.append({"name": targets[0].id, "depends": depends, "line": stmt.lineno})
+    return out
+
+
+def router_variables(tree):
+    """Module-level `locked = LockedRouter(prefix="/admin")`.
+
+    Which router a route hangs off decides whether that router's dependencies apply to
+    it. Two routers in one file is normal — one locked, one deliberately open — so
+    knowing only the file would turn a correct claim about four routes into a false one
+    about two of them."""
+    out = []
+    for stmt in tree.body:
+        if not isinstance(stmt, ast.Assign) or len(stmt.targets) != 1:
+            continue
+        target = stmt.targets[0]
+        if not isinstance(target, ast.Name) or not isinstance(stmt.value, ast.Call):
+            continue
+        callee = dotted(stmt.value.func) or ""
+        if callee.split(".")[-1].endswith("Router"):
+            out.append({"var": target.id, "callee": callee, "line": stmt.lineno})
+    return out
+
+
 def analyze_source(text):
     tree = ast.parse(text)
     spans = scope_index(tree)
@@ -324,6 +405,8 @@ def analyze_source(text):
         "defs": defs,
         "calls": calls,
         "subscripts": subscripts,
+        "aliases": dependency_aliases(tree),
+        "routers": router_variables(tree),
         "uses": sorted(module_uses),
         "main": main_guard_line(tree),
         "loc": text.count("\n") + (0 if text.endswith("\n") or not text else 1),

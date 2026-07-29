@@ -30,8 +30,14 @@ const GUARD_DECORATORS: Record<string, string> = {
   auth_required: 'auth check',
 };
 
-/** Function names that, when a route depends on one, are checking the caller. */
-const GUARD_HINTS = /^(get_)?(current_user|current_active_user|authenticated_user|require_user|verify_token|get_user|require_auth|check_auth|auth_user)$/;
+/**
+ * Function names that, when a route depends on one, are checking the caller rather
+ * than fetching it a resource. `get_db` and `get_session` are deliberately outside
+ * this: a database handle is not a lock, and calling one would be the sort of
+ * rounding-up that makes the whole security screen worthless.
+ */
+const GUARD_HINTS =
+  /^((get_|require_|verify_|check_|ensure_)?(current_)?(active_)?(user|superuser|admin|auth|token|principal|identity)|authenticated_user|auth_user)$/;
 
 const HTTP_CLIENTS = new Set(['requests', 'httpx', 'aiohttp', 'urllib']);
 const WRITE_METHODS = new Set(['post', 'put', 'patch', 'delete', 'send', 'stream']);
@@ -72,6 +78,7 @@ export function detectPythonBoundaries(input: PythonBoundaryInput): BoundaryFind
   detectStores(input, modules, findings, site);
   detectServices(input, findings, site);
   detectGuards(input, findings, site);
+  detectAuthAliases(input, findings);
   detectCli(input, has, findings, site);
 
   return findings;
@@ -160,6 +167,10 @@ function detectRoutes(
           guards: guardsFor(def, input.file.path),
           site: site(decorator.line, decorator.text),
           handlerId: input.nodeIdForScope(scope),
+          // The signature is where FastAPI declares a route's dependencies, and an
+          // alias imported from `deps.py` is unresolvable from here.
+          paramTypes: paramTypeNames(def),
+          routerVar: parts.length > 1 ? parts[0] : null,
         });
       }
     }
@@ -216,26 +227,137 @@ function guardsFor(def: PyDef, path: string): GuardInfo[] {
     }
   }
 
-  // FastAPI: `user = Depends(get_current_user)` in the signature. It can be written as
-  // a default, as an annotation, or inside `Annotated[...]`, so both halves are read.
-  // The name of the dependency is the only evidence there is, so this stays `likely` —
-  // a `get_current_user` that returns None for a stranger is not a check.
+  // A `Depends(...)` in the signature is not read here. Whether the thing depended on
+  // is a *check* is a fact about that function, usually in another file, so it is
+  // decided once in `build.ts` against every checker the project defines — which also
+  // keeps one route from collecting two names for the same lock.
+  return guards;
+}
+
+/** Every bare name a signature's annotations mention, alias candidates included. */
+function paramTypeNames(def: PyDef): string[] {
+  const names = new Set<string>();
   for (const param of def.params ?? []) {
-    const match = /Depends\(\s*([A-Za-z_][\w.]*)/.exec(`${param.type} ${param.default ?? ''}`);
-    const target = match?.[1]?.split('.').pop() ?? '';
-    if (target && GUARD_HINTS.test(target)) {
-      guards.push({
-        name: `Depends(${target})`,
+    for (const match of `${param.type} ${param.default ?? ''}`.matchAll(/[A-Za-z_]\w*/g)) {
+      names.add(match[0]);
+    }
+  }
+  return [...names];
+}
+
+/**
+ * The two halves of Python's "auth lives in the signature" idiom, each reported by the
+ * file that can see it and joined in `build.ts`:
+ *
+ *   - a function that rejects strangers with a 401 or a 403, which is what makes a
+ *     dependency a check;
+ *   - `CurrentUser = Annotated[User, Depends(get_current_user)]`, a name that carries
+ *     that check wherever it is used as a type.
+ *
+ * The first is decided by what the function does. The second only records what it
+ * depends on — whether that dependency checks anything is not this file's business,
+ * and it is usually not even this file.
+ */
+function detectAuthAliases(input: PythonBoundaryInput, findings: BoundaryFinding[]): void {
+  for (const { def } of everyDef(input.file)) {
+    // A route handler that returns 403 to the wrong user is doing its job, not
+    // offering itself as a dependency. Only things other code can depend on count.
+    if (def.decorators.some((d) => ROUTE_METHODS.has(d.callee.split('.').pop() ?? ''))) continue;
+    // A name that looks like a check is a weak second signal, kept because plenty of
+    // guards delegate the actual 401 to a library we never see. Both stay `likely`.
+    const rejects = typeof def.rejects === 'number';
+    if (!rejects && !GUARD_HINTS.test(def.name)) continue;
+    findings.push({
+      type: 'auth-checker',
+      name: def.name,
+      guard: {
+        name: def.name,
         how: 'call',
         provider: 'custom',
-        path,
-        line: def.line,
+        path: input.file.path,
+        line: rejects ? (def.rejects as number) : def.line,
         confidence: 'likely',
+      },
+    });
+  }
+
+  // Plenty of dependencies are somebody else's: `Depends(fastapi_users.current_user)`
+  // has no definition in this repo to read a 401 out of. There the name is all there
+  // is, so it is accepted as the weaker signal it is — still only ever `likely`.
+  for (const call of input.file.calls ?? []) {
+    for (const target of dependsTargets(call)) {
+      if (!GUARD_HINTS.test(target)) continue;
+      findings.push({
+        type: 'auth-checker',
+        name: target,
+        guard: {
+          name: `Depends(${target})`,
+          how: 'call',
+          provider: 'custom',
+          path: input.file.path,
+          line: call.line,
+          confidence: 'likely',
+        },
       });
     }
   }
 
-  return guards;
+  for (const alias of input.file.aliases ?? []) {
+    findings.push({
+      type: 'auth-alias',
+      name: alias.name,
+      depends: alias.depends.map((name) => name.split('.').pop() ?? name),
+      path: input.file.path,
+      line: alias.line,
+    });
+  }
+
+  // A router subclass that bakes a dependency into its constructor is the same idea
+  // wearing a class: `class UserAPIRouter(APIRouter)` calling
+  // `super().__init__(dependencies=[Depends(get_current_user)])`. Every route file
+  // that builds one of these is guarded, and none of them mentions a check.
+  for (const def of input.file.defs ?? []) {
+    if (def.kind !== 'class' || !(def.bases ?? []).some((base) => isRouterName(base))) continue;
+    const depends = (input.file.calls ?? [])
+      .filter((call) => (call.scope ?? '').startsWith(`${def.name}.`))
+      .flatMap((call) => dependsTargets(call));
+    if (depends.length === 0) continue;
+    findings.push({ type: 'auth-alias', name: def.name, depends, path: input.file.path, line: def.line });
+  }
+
+  // …and the other half: which variable in this file was built out of what.
+  for (const router of input.file.routers ?? []) {
+    findings.push({
+      type: 'router-build',
+      routerName: router.callee.split('.').pop() ?? router.callee,
+      varName: router.var,
+      path: input.file.path,
+      line: router.line,
+    });
+  }
+}
+
+function isRouterName(name: string): boolean {
+  return /Router$/.test(name.split('.').pop() ?? '');
+}
+
+/** The functions a `Depends(...)` anywhere in this call hands off to. */
+function dependsTargets(call: PyCall): string[] {
+  const out: string[] = [];
+  for (const value of [...call.args, ...Object.values(call.kwargs)]) {
+    const items = value.t === 'list' ? value.items : [value];
+    for (const item of items) {
+      const text = item.t === 'name' ? item.v : null;
+      const match = text ? /^Depends\((.+)\)$/.exec(text) : null;
+      if (match) out.push(match[1].split('.').pop() ?? match[1]);
+    }
+  }
+  if (call.callee.split('.').pop() === 'Depends') {
+    for (const arg of call.args) {
+      if (arg.t === 'name') out.push(arg.v.split('.').pop() ?? arg.v);
+    }
+  }
+  return out;
 }
 
 /** Celery tasks and scheduled jobs: code that runs without anyone knocking. */
