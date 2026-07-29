@@ -19,6 +19,8 @@ import path from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 import {
+  atlasDbPath,
+  AtlasStore,
   cleanLabel,
   cleanParagraph,
   cleanSentence,
@@ -27,6 +29,7 @@ import {
   markStaleDocs,
   parseJsonReply,
   analyzeProject,
+  writeTheWords,
 } from '../dist/node/index.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -150,6 +153,31 @@ test('a second pass over unchanged code sends nothing', async () => {
 
   const app = second.nodes.find((n) => n.kind === 'app');
   assert.match(app.summary, /takes in web requests/, 'the cached text should still be applied');
+});
+
+test('--no-ai keeps the words already written instead of throwing them away', async () => {
+  // Someone analyzes once with a backend, then re-runs offline — on a plane, in CI,
+  // or just to save a call. The second run must not strip the plain-English names
+  // back to folder names: those words are already paid for and sitting on disk.
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'atlas-noai-'));
+  try {
+    fs.cpSync(FIXTURE, dir, { recursive: true });
+    const { atlas: first } = await analyzeProject(dir, { followReferences: true, cache: 'off' });
+    const report = await enrichAtlas({ atlas: first, backend: stubBackend(), cache: new Map() });
+
+    const store = AtlasStore.open(atlasDbPath(dir));
+    store.writeExplanations(report.additions);
+    store.close();
+
+    const { atlas: second } = await analyzeProject(dir, { followReferences: true, cache: 'off' });
+    assert.equal(second.nodes.find((n) => n.kind === 'app').summary, null, 'a bare analysis has no words yet');
+
+    const offline = await writeTheWords({ root: dir, atlas: second, enabled: false, quiet: true });
+    assert.ok(offline.reusedFromCache > 0, 'the cache should be applied even with AI off');
+    assert.match(second.nodes.find((n) => n.kind === 'app').summary, /takes in web requests/);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test('reports what is missing without starting a backend', async () => {

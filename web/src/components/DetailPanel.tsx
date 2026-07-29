@@ -378,8 +378,9 @@ function TypesUsed({ types, onReveal }: { types: AtlasNode[]; onReveal: (id: str
 }
 
 function typeChipNote(type: AtlasNode, fields: number): string {
-  const kind = String(type.meta.typeKind ?? 'type');
-  if (fields > 0) return `${kind} · ${fields}`;
+  const kind = typeWord(type.meta.typeKind);
+  // A bare "interface · 17" leaves the reader to guess what was counted.
+  if (fields > 0) return `${kind} · ${fields} ${fields === 1 ? 'field' : 'fields'}`;
   return kind;
 }
 
@@ -509,7 +510,7 @@ function kindWord(node: AtlasNode): string {
     case 'function':
       return String(node.meta.isMethod) === 'true' ? 'Method' : 'Function';
     case 'type':
-      return String(node.meta.typeKind ?? 'Type');
+      return typeWord(node.meta.typeKind);
     case 'app':
       return 'App';
     case 'zone':
@@ -545,9 +546,19 @@ function endpointWord(kind: string): string {
       return 'Configuration';
     case 'file-read':
       return 'File read';
+    case 'screen':
+      return 'Screen';
     default:
       return 'Endpoint';
   }
+}
+
+/**
+ * `type-alias` is what the compiler calls it, and nowhere else in this app does the
+ * reader have to meet a hyphenated internal name. The Data view already says "type".
+ */
+function typeWord(kind: unknown): string {
+  return kind === 'type-alias' ? 'type' : String(kind ?? 'type');
 }
 
 function factRows(node: AtlasNode): [string, string][] {
@@ -560,7 +571,7 @@ function factRows(node: AtlasNode): [string, string][] {
       if (node.startLine) rows.push(['Lines', `${node.startLine}–${node.endLine ?? node.startLine}`]);
       break;
     case 'type':
-      rows.push(['Kind', String(node.meta.typeKind ?? 'type')]);
+      rows.push(['Kind', typeWord(node.meta.typeKind)]);
       // A table observed in queries was never written down anywhere, so "exported"
       // and line numbers would be facts about the wrong thing. Say where it was seen.
       if (node.meta.observed === true) {
@@ -589,11 +600,19 @@ function factRows(node: AtlasNode): [string, string][] {
       break;
     case 'endpoint': {
       const meta = node.meta as unknown as EndpointMeta;
-      if (meta.method) rows.push(['Kind', meta.method]);
+      // "SCREEN" as a method is the chip above repeating itself; GET and POST are not.
+      if (meta.method && meta.endpointKind !== 'screen') rows.push(['Kind', meta.method]);
       if (meta.route) rows.push([meta.endpointKind === 'cron' ? 'Runs' : 'Path', meta.route]);
       if (meta.schedule) rows.push(['Schedule', meta.schedule]);
       rows.push(['Found by', meta.framework]);
-      if (meta.endpointKind !== 'env') {
+      if (meta.endpointKind === 'screen') {
+        // The security page leaves screens out of the auth list on purpose: a screen
+        // opens inside an app someone already installed, not over the network. Saying
+        // "nothing found" here would report two dozen holes the same page denies, and
+        // a reader who clicks one card should not be told the opposite of the count.
+        rows.push(['Auth', 'not graded — opened from inside the app']);
+        rows.push(['Writes data', meta.writes ? 'yes' : 'no']);
+      } else if (meta.endpointKind !== 'env') {
         rows.push([
           'Protected by',
           meta.guards.length === 0

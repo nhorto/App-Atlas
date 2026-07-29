@@ -58,7 +58,7 @@ function withAiOptions(command: Command): Command {
   return command
     // Deliberately not `--ai <backend>`: commander reads `--no-ai` as the negation of
     // an `ai` option, so the two would fight over the same destination.
-    .option('--no-ai', 'skip plain-English descriptions — docstrings and compiler facts only')
+    .option('--no-ai', "don't write new descriptions — keeps the ones already written")
     .option('--ai-backend <id>', `which backend to use: ${BACKEND_IDS.join(', ')}`, 'auto')
     .option('--ai-model <name>', "override the backend's default model")
     .option('--ai-max-files <number>', 'cap on files described in one pass', '400')

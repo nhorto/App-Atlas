@@ -5,6 +5,8 @@
  *   npm run build:node && npm test
  */
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import test from 'node:test';
@@ -208,4 +210,28 @@ test('every node carries the metadata later milestones need', () => {
   assert.equal(atlas.meta.formatVersion, 3);
   assert.deepEqual(atlas.meta.frameworks.sort(), ['Express', 'React']);
   assert.equal(atlas.meta.stats.files, 4);
+});
+
+test('a docstring written on Windows keeps its paragraphs, not its carriage returns', async () => {
+  // The detail panel sets white-space: pre-wrap, where a browser counts a lone \r as
+  // another line break — so every docstring came out double-spaced on Windows. The
+  // fixture is written here rather than committed, because git rewrites line endings
+  // on checkout and a committed CRLF file would prove nothing on CI.
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'atlas-crlf-'));
+  try {
+    fs.mkdirSync(path.join(dir, 'src'));
+    fs.writeFileSync(
+      path.join(dir, 'src', 'thing.ts'),
+      ['/**', ' * @fileoverview First line.', ' *', ' * Second paragraph.', ' */', 'export const x = 1;', ''].join('\r\n'),
+    );
+    fs.writeFileSync(path.join(dir, 'package.json'), '{"name":"crlf","version":"1.0.0"}\n');
+
+    const { atlas: crlf } = await analyzeProject(dir, { followReferences: false, cache: 'off' });
+    const file = crlf.nodes.find((n) => n.kind === 'file' && n.name === 'thing.ts');
+    assert.ok(file.summary, 'the docstring is read');
+    assert.ok(!file.summary.includes('\r'), 'no carriage return survives into the atlas');
+    assert.equal(file.summary, 'First line.\n\nSecond paragraph.');
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 });

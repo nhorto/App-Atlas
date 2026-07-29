@@ -264,7 +264,21 @@ function TypeCardNode({ data, selected }: NodeProps) {
                 .join(', ')}`
             : ''}
         </div>
-      ) : null}
+      ) : (
+        // A shape nothing reaches for is a finding, not a hole in the card. Left blank
+        // it reads as an oversight; said out loud it is a table the database writes on
+        // its own, or a leftover nobody has deleted yet.
+        <div
+          className="tcard-usage is-unused"
+          title={
+            card.typeKind === 'table'
+              ? 'A migration declares this table, but no query in this repo names it. The database may write it on its own — or nothing may use it at all.'
+              : 'App Atlas found no reference to this anywhere in the project. Something outside the repo could still use it.'
+          }
+        >
+          nothing here uses it
+        </div>
+      )}
     </div>
   );
 }

@@ -947,8 +947,18 @@ function typeTextOf(written: string | undefined, infer: () => Type, at: Node): s
 function jsDocOf(node: Node): string | null {
   const docs = (node as unknown as { getJsDocs?: () => { getDescription(): string }[] }).getJsDocs?.();
   if (!docs || docs.length === 0) return null;
-  const text = docs[docs.length - 1].getDescription().trim();
+  const text = unixLines(docs[docs.length - 1].getDescription()).trim();
   return text.length > 0 ? text : null;
+}
+
+/**
+ * A docstring written on Windows arrives with its carriage returns still attached, and
+ * the panel that shows it sets `white-space: pre-wrap` — where a browser treats a lone
+ * `\r` as another line break. Every paragraph in every docstring came out double-spaced
+ * on half the machines this tool runs on. The line ending is not part of the sentence.
+ */
+function unixLines(text: string): string {
+  return text.replace(/\r\n?/g, '\n');
 }
 
 /**
@@ -969,7 +979,7 @@ export function extractFileDoc(text: string): string | null {
   const aboveImports = /^(import\b|export\b|['"]use (client|server|strict)['"])/.test(after);
   if (!tagged && !aboveImports) return null;
 
-  const cleaned = raw
+  const cleaned = unixLines(raw)
     .split('\n')
     .map((line) => line.replace(/^\s*\*\s?/, ''))
     .join('\n')

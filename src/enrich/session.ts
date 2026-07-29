@@ -53,8 +53,6 @@ export async function writeTheWords(options: WordsOptions): Promise<EnrichReport
     if (!quiet) console.log(line);
   };
 
-  if (!options.enabled) return null;
-
   const store = AtlasStore.open(atlasDbPath(root));
   try {
     if (options.refresh) store.clearExplanations();
@@ -63,6 +61,18 @@ export async function writeTheWords(options: WordsOptions): Promise<EnrichReport
     // Pass one: apply everything already paid for. On a repeat run this is usually
     // the whole job, and it happens without starting a process or opening a socket.
     const cached = await enrichAtlas({ atlas, backend: null, cache, maxFiles: options.maxFiles });
+
+    // `--no-ai` means "don't call out to a model", not "forget the words you already
+    // have". Re-reading the cache costs nothing and needs no network, and skipping it
+    // meant an offline re-analysis silently replaced every plain-English name with the
+    // folder name it was written to replace.
+    if (!options.enabled) {
+      if (cached.reusedFromCache > 0) {
+        say(pc.dim(`  ${cached.reusedFromCache} explanations reused from earlier runs — no AI was run.`));
+      }
+      return cached;
+    }
+
     if (cached.pendingItems === 0) {
       if (cached.reusedFromCache > 0) {
         say(pc.dim(`  ${cached.reusedFromCache} explanations reused from earlier runs — nothing new to write.`));
