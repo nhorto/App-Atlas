@@ -78,6 +78,18 @@ export function classifyZone(relPath: string): Zone {
 
   if (ext === '.py' || ext === '.pyi') return classifyPythonZone(lower, base);
 
+  // A notebook is where the analysis itself lives, whatever it is named. The Python
+  // filename conventions do not apply — nobody calls a notebook `models.py`.
+  //
+  // Nor do the test conventions: `test.ipynb` in a data repo is a scratchpad, not a
+  // suite, and `test_model.ipynb` is usually someone testing a model rather than
+  // testing code. Reading either as `test` would dim the very work the reader came
+  // for, so notebooks are never classified that way on their name alone.
+  if (ext === '.ipynb') {
+    if (DATA_HINTS.some((r) => r.test(lower))) return 'data';
+    return 'logic';
+  }
+
   if (TEST_HINTS.some((r) => r.test(lower))) return 'test';
   if (CONFIG_NAMES.has(base) || /\.config\.[cm]?[jt]s$/.test(base)) return 'config';
   if (DATA_HINTS.some((r) => r.test(lower))) return 'data';

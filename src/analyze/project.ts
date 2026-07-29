@@ -42,7 +42,7 @@ export interface DiscoverOptions {
   extraIgnores?: string[];
 }
 
-const SOURCE_GLOB = '**/*.{ts,tsx,mts,cts,js,jsx,mjs,cjs,py,pyi}';
+const SOURCE_GLOB = '**/*.{ts,tsx,mts,cts,js,jsx,mjs,cjs,py,pyi,ipynb}';
 
 const DEFAULT_IGNORES = [
   '**/node_modules/**',
@@ -61,6 +61,7 @@ const DEFAULT_IGNORES = [
   '**/coverage/**',
   '**/vendor/**',
   '**/__pycache__/**',
+  '**/.ipynb_checkpoints/**',
   '**/*.min.js',
   '**/*.bundle.js',
 ];
@@ -221,6 +222,10 @@ function detectFrameworks(pkg: Record<string, unknown> | null, signals: ProjectS
   if (signals.nextPagesDir && !signals.nextAppDir) out.add('Next.js Pages Router');
   if (signals.expoRouterDir) out.add('Expo Router');
   if (signals.crons.length > 0) out.add('Vercel Cron');
+  // A wrangler config is the only place a Cloudflare deploy is written down; the
+  // dependency list often does not mention it at all.
+  if (signals.workers.some((w) => !w.isPages && w.entry)) out.add('Cloudflare Workers');
+  if (signals.workers.some((w) => w.isPages)) out.add('Cloudflare Pages');
   for (const [dep, label] of Object.entries(PYTHON_FRAMEWORKS)) {
     if (signals.pythonPackages.has(dep)) out.add(label);
   }

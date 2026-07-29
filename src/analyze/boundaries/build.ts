@@ -228,8 +228,69 @@ function collectEndpoints(input: BuildInput): Map<string, MergedEndpoint> {
   }
 
   addPostgrestDoors(input, add);
+  addWorkerDoors(input, add);
 
   return merged;
+}
+
+/**
+ * A Cloudflare Worker answers requests on the open internet, and nothing in the repo
+ * calls it — the platform does, which is why only `wrangler.toml` knows it exists.
+ * Without this the archetype would state, in writing, that an app deployed to the edge
+ * has no network surface.
+ *
+ * A Worker has no route table: one script answers every path on its domain, so the
+ * door is the script rather than a URL pattern, and `/*` is the honest way to draw it.
+ * Pages deploys are deliberately not doors — they answer URLs too, but with static
+ * files, and no code in this repo runs on the request.
+ */
+function addWorkerDoors(input: BuildInput, add: (finding: EndpointFinding) => void): void {
+  for (const worker of input.signals.workers) {
+    if (worker.isPages || !worker.entry) continue;
+    const label = worker.name ?? worker.entry;
+
+    add({
+      type: 'endpoint',
+      endpointKind: 'http-route',
+      key: `worker ${worker.configPath}`,
+      name: `ANY /* (${label})`,
+      method: 'ANY',
+      route: '/*',
+      framework: 'Cloudflare Workers',
+      writes: true,
+      guards: [],
+      site: {
+        path: worker.configPath,
+        line: 1,
+        nodeId: null,
+        snippet: `main = "${worker.entry}"`,
+      },
+      // The entry file is the handler, so the door hangs off real code and the map can
+      // walk from it into whatever the Worker calls.
+      handlerId: input.knownNodeIds.has(`file:${worker.entry}`) ? `file:${worker.entry}` : null,
+    });
+
+    for (const schedule of worker.crons) {
+      add({
+        type: 'endpoint',
+        endpointKind: 'cron',
+        key: `worker-cron ${worker.configPath} ${schedule}`,
+        name: `${schedule} (${label})`,
+        method: 'CRON',
+        route: null,
+        framework: 'Cloudflare Workers',
+        writes: true,
+        guards: [],
+        site: {
+          path: worker.configPath,
+          line: 1,
+          nodeId: null,
+          snippet: `crons = ["${schedule}"]`,
+        },
+        handlerId: input.knownNodeIds.has(`file:${worker.entry}`) ? `file:${worker.entry}` : null,
+      });
+    }
+  }
 }
 
 /** The HTTP verbs PostgREST puts on every table it exposes. */

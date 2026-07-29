@@ -92,6 +92,22 @@ export interface PyFile {
   uses?: string[];
   /** Line of a module-level `if __name__ == "__main__":` — this file is meant to be run. */
   main?: number | null;
+  /** Notebooks only: which range of the flattened source came from which cell. */
+  cells?: PyNotebookCell[];
+  /** Notebooks only: the code cells joined — the text every line number refers to. */
+  source?: string;
+}
+
+/**
+ * One cell of a notebook, and the lines it occupies in the flattened source. "Line 412"
+ * means nothing to someone looking at a stack of cells; "cell 12" is the address they
+ * can actually navigate to.
+ */
+export interface PyNotebookCell {
+  type: string;
+  index: number;
+  startLine: number;
+  endLine: number;
 }
 
 export interface PyPayload {
