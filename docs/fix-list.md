@@ -53,19 +53,38 @@ compiler-derived and cannot be wrong.
       `/api/v1/items/{id}`. `APIRouter(prefix=…)` + `include_router(prefix=…)` must be
       composed. Also affects Express `app.use(prefix, router)` and NestJS.
 
-- [ ] **5. Stop inventing services from tests and variable names** — [#25](https://github.com/nhorto/App-Atlas/issues/25)
+- [x] **5. Stop inventing services from tests and variable names** — [#25](https://github.com/nhorto/App-Atlas/issues/25)
       `psf/requests` reports `s call` and `session call` as outside companies. Skip
       `zone === 'test'`; drop the `"<receiver> call"` fallback entirely.
+      **Done** (`d8f93eb`). The fallback is gone: with no literal URL there is no
+      destination to report, and a blank costs the reader less than a vendor that does
+      not exist. Test files no longer contribute services, stores or exported surface.
+      requests 4 services → 0; the FastAPI template's frontend surface 246 → 235;
+      dub's 21 services and 4 stores unchanged, so nothing real was lost.
+      *Doors stay exempt from the zone filter — dub ships a real webhook at
+      `.../webhook/test/route.ts`, and losing a real door beats listing a fixture.*
 
-- [ ] **6. Make the auth headline honest** — [#24](https://github.com/nhorto/App-Atlas/issues/24)
+- [x] **6. Make the auth headline honest** — [#24](https://github.com/nhorto/App-Atlas/issues/24)
       "12 routes have no auth check" where 8 are public marketing pages and 1 is the auth
       provider's own handler. True count: 0. Exclude PAGE routes and auth catch-alls, or
       split into "worth a look" / "public on purpose".
+      **Done** (`328f24a`), folded together with **#36**. `model/exposure.ts` splits
+      every unchecked door by *why* — `page`, `auth-mount`, `unreadable`,
+      `worth-a-look` — and splits rather than hides: each door stays on screen carrying
+      the fact that explains it, and only the unexplained ones reach the headline.
+      taxonomy 10 → **1**; dub 373 → **193**; midday 151 → 60; cal.com 190 → 116.
+      `authHeadline()` writes the sentence once for the CLI, the per-app line, the
+      walkthrough and the brief, so no two screens can quote different totals.
 
-- [ ] **7. Fix the walkthrough card clipping** — [#27](https://github.com/nhorto/App-Atlas/issues/27)
+- [x] **7. Fix the walkthrough card clipping** — [#27](https://github.com/nhorto/App-Atlas/issues/27)
       Body text is cut mid-sentence after two lines and hides behind the Back/Next row.
       Makes the flagship feature unusable on any step longer than two lines. Cheap fix,
       high visibility.
+      **Done** (`5accb88`). `.wt-body` was a flex item with `min-height: auto`, so it
+      grew past the drawer instead of scrolling inside it; the bar and buttons could be
+      squeezed by the overflow. Cap raised from 52% to 68% — still a max, so a short
+      step stays short. And the scrollbar is now always visible when there is more to
+      read: macOS overlay scrollbars hid the only signal that a step continued.
 
 ## Tier 2 — the tool is silent where it should speak
 
@@ -87,10 +106,19 @@ compiler-derived and cannot be wrong.
       powerfab-dashboard counts `scripts/_archive/` and `parked/` as ways in — 111 CLI
       doors.
 
-- [ ] **12. Detect a Worker from a declared `main`, built or not** — [#29](https://github.com/nhorto/App-Atlas/issues/29)
+- [x] **12. Detect a Worker from a declared `main`, built or not** — [#29](https://github.com/nhorto/App-Atlas/issues/29)
       mirrorquiz's entry is `.open-next/worker.js`, a build artifact absent from a fresh
       clone, so Workers/D1/KV detection never fires. Never worked on the repo it was
       written for. Also surface D1/KV/R2 bindings as data stores.
+      **Done** (`555e68b`). `declaredEntry` is what the config says; `entry` is what is
+      on disk. The door is real either way and hangs off nothing when there is nothing
+      to hang it off. D1/KV/R2/Durable Objects/Hyperdrive/Vectorize become stores with
+      0 reads and 0 writes — a declaration, not a call site. Queue *producers* are
+      deliberately not stores. mirrorquiz now names Cloudflare Workers among its
+      frameworks and shows `perception-quiz-db (Cloudflare D1)`.
+      *The ORM store is deliberately left as its own box rather than folded in:
+      guessing the one Drizzle client points at the one D1 database is right most of
+      the time, and wrong prints a false sentence about where data lives.*
 
 - [ ] **13. Land large repos on their main app, not `scopes[0]`** — [#34](https://github.com/nhorto/App-Atlas/issues/34)
       cal.com opens on `api-proxy` out of 113 scopes; `apps/web` is present and never
@@ -134,13 +162,19 @@ compiler-derived and cannot be wrong.
 Both surfaced by running the fixes against repos the tool had never seen, which is the
 point of doing that rather than only re-checking the repos that produced the list.
 
-- [ ] **25. An unreadable file is counted as unprotected** — [#36](https://github.com/nhorto/App-Atlas/issues/36) — *Tier 1*
+- [x] **25. An unreadable file is counted as unprotected** — [#36](https://github.com/nhorto/App-Atlas/issues/36) — *Tier 1*
       `fastapi/full-stack-fastapi-template`'s `deps.py` does not parse (a Python 2
       `except` clause, upstream, verified against raw.githubusercontent). We record the
       warning **and** print "21 of 21 routes unprotected" — every one of which is
       guarded, by the alias declared in the file we could not read. The warning and the
       headline never meet. Auth coverage has to degrade to "I could not read N files",
       never to zero. Generalizes to any parse failure.
+      **Done** (`328f24a`), with #24. Files that will not parse are marked on the node
+      (`meta.unread`), so the caveat survives the cache and names the file. A route
+      whose own file directly imports one reads `not examined`, never `unprotected` —
+      one hop, deliberately, so a single unreadable utility deep in a large repo cannot
+      excuse every door in it. The template now says *21 of 21 routes behind a file I
+      could not read*, and names `app/api/deps.py`.
 
 - [ ] **26. Auth applied by ASGI middleware is invisible** — [#37](https://github.com/nhorto/App-Atlas/issues/37) — *Tier 2*
       `Netflix/dispatch` mounts its routers under a sub-application and checks callers
@@ -159,9 +193,18 @@ Worth writing down, because the failure mode is easy and invisible:
   in `test/fixtures/pyauth` is deliberately hostile to vocabulary matching: its checker
   is called `who_is_asking`, and a decoy dependency called `fetch_tenant` is correctly
   *not* treated as a lock.
+- **#24 splits, it never hides.** Every unchecked door stays on the screen; what
+  changes is that the ones with a structural explanation carry it and stop inflating
+  the headline. "auth-mount" needs two independent facts to agree — a catch-all route
+  *and* the auth provider's package in that file — because either alone would excuse
+  an ordinary route that merely asks who is calling. `test/fixtures/exposure` proves
+  it: a route importing `next-auth` and checking nothing is still `worth-a-look`.
+- **#25 removes rather than renames.** The rule is not "which variable names are not
+  companies" but "with no destination in the code, say nothing".
 - **Every fix is checked on a repo that did not produce the finding.** mealie,
   dispatch and a fresh FastAPI template were cloned for exactly this, and two of the
-  three surfaced new bugs rather than confirming the old ones.
+  three surfaced new bugs rather than confirming the old ones. The #24/#25/#29 work
+  was measured across all thirteen clones, not only the ones named in the item.
 
 ---
 
