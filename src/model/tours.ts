@@ -46,7 +46,7 @@ export interface Tour {
   steps: TourStep[];
 }
 
-/** How many flows to offer. More than a handful stops being a suggestion. */
+/** How many flows to offer up front. More than a handful stops being a suggestion. */
 const MAX_FLOW_TOURS = 5;
 const MAX_TRACE_DEPTH = 3;
 const MAX_TRACED_NODES = 40;
@@ -59,6 +59,40 @@ export function buildTours(graph: AtlasGraph): Tour[] {
     if (tour && tour.steps.length >= 2) tours.push(tour);
   }
   return tours;
+}
+
+/**
+ * The walkthrough for whatever the reader just opened, built when they open it.
+ *
+ * The offered list is short on purpose — five suggestions is a suggestion and twenty-four
+ * is a directory — but "we only suggested five" was silently becoming "only five exist".
+ * A reader who searched their way to the twelfth route found no button and no reason
+ * given, which reads as *this door is not worth explaining*.
+ *
+ * Given a door, this is its own flow. Given a file or a function, it is the flow of the
+ * door that leads there — the question somebody looking at `checkout.ts` is actually
+ * asking is what reaches it. Exactly one door or nothing: two doors is two answers, and
+ * picking one of them would be inventing the reader's question for them.
+ */
+export function tourFor(graph: AtlasGraph, nodeId: string): Tour | null {
+  const node = graph.getNodeById(nodeId);
+  if (!node) return null;
+
+  const door = node.kind === 'endpoint' ? node : theDoorThatLeadsHere(graph, node);
+  if (!door) return null;
+
+  const tour = flowTour(graph, door);
+  return tour && tour.steps.length >= 2 ? tour : null;
+}
+
+function theDoorThatLeadsHere(graph: AtlasGraph, node: AtlasNode): AtlasNode | null {
+  const doors = graph
+    .edgesTo(node.id)
+    .filter((edge) => edge.kind === 'exposed-by')
+    .map((edge) => graph.getNodeById(edge.fromId))
+    .filter((found): found is AtlasNode => found?.kind === 'endpoint');
+  const distinct = new Map(doors.map((found) => [found.id, found]));
+  return distinct.size === 1 ? [...distinct.values()][0] : null;
 }
 
 // ---------------------------------------------------------------------------

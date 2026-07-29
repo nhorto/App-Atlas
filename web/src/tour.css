@@ -288,6 +288,28 @@
   color: var(--ink-faint);
 }
 
+/* Says the offered handful is a handful, not the whole supply. */
+.tour-more {
+  margin: 10px 2px 0;
+  font-size: 12px;
+  color: var(--ink-faint);
+}
+
+.tour-more .link {
+  border: 0;
+  padding: 0;
+  background: none;
+  font: inherit;
+  color: var(--ink);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+
+.tour-more .link:hover {
+  color: var(--accent);
+}
+
 .btn-tour {
   margin-top: 9px;
   padding: 7px 11px;

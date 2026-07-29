@@ -21,6 +21,7 @@ import {
   buildTours,
   buildTypeView,
   renderAtlasMarkdown,
+  tourFor,
 } from '../dist/node/index.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -225,6 +226,61 @@ test('every step points somewhere the map can actually go', () => {
       for (const id of step.focusIds) assert.ok(boundary.getNodeById(id), `${step.id} focus ${id} exists`);
     }
   }
+});
+
+// --- a walkthrough for whatever you opened (issue #27, second half) ---
+
+/**
+ * The offered list is five suggestions, and it was silently becoming the whole supply:
+ * a reader who searched their way to the twelfth door of twenty-four found no button and
+ * no reason given, which reads as *this one is not worth explaining*.
+ */
+test('a door that was never offered a tour still has one', () => {
+  const offered = new Set(tours.map((one) => one.id));
+  const doors = boundary
+    .nodesOfKind('endpoint')
+    .filter((node) => node.meta.endpointKind !== 'env' && !offered.has(`tour:${node.id}`));
+  assert.ok(doors.length > 10, 'the fixture has far more doors than the offered five');
+
+  // The one door left without a walk is the one with nothing to walk through: a table
+  // PostgREST publishes, with no code behind it and nothing guarding it. That is the
+  // honest answer to "which doors have one" — a single-step tour is not a tour.
+  for (const door of doors) {
+    const behind = boundary.edgesFrom(door.id).filter((edge) => edge.kind === 'exposed-by').length;
+    if (tourFor(boundary, door.id)) continue;
+    assert.equal(behind, 0, `${door.name} has code behind it and no walkthrough`);
+    assert.equal(door.meta.guards.length, 0, `${door.name} has a guard to show and no walkthrough`);
+  }
+  assert.ok(
+    doors.filter((door) => tourFor(boundary, door.id)).length >= doors.length - 1,
+    'all but the empty ones can be walked',
+  );
+});
+
+test('the tour of a door is the same however you got to it', () => {
+  const offered = tours.find((one) => one.title.includes('POST to /api/users'));
+  const onDemand = tourFor(boundary, offered.id.replace(/^tour:/, ''));
+  assert.deepEqual(onDemand, offered, 'one builder, so the two can never drift apart');
+});
+
+test('opening the file that answers a door offers that door’s walk', () => {
+  // Somebody who searched for `users.ts` is asking what reaches it. The walk they are
+  // offered is the door's, and the button says so rather than promising a walk of the
+  // helper they clicked.
+  const door = tours.find((one) => one.title.includes('POST to /api/users'));
+  const handlerId = boundary
+    .edgesFrom(door.id.replace(/^tour:/, ''))
+    .find((edge) => edge.kind === 'exposed-by').toId;
+
+  const found = tourFor(boundary, handlerId);
+  assert.equal(found?.id, door.id);
+  assert.notEqual(found.id, `tour:${handlerId}`, 'the walk belongs to the door, and is named for it');
+});
+
+test('a thing with no door above it is offered nothing, not a stub', () => {
+  const app = boundary.getNodeById(boundary.rootId);
+  assert.equal(tourFor(boundary, app.id), null);
+  assert.equal(tourFor(boundary, 'file:nothing/here.ts'), null);
 });
 
 // ---------------------------------------------------------------------------

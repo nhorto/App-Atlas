@@ -25,7 +25,7 @@ export { classifyZone, dominantZone } from './analyze/zones.js';
 export { findScopes } from './analyze/workspace.js';
 export type { Scope } from './analyze/workspace.js';
 export { renderAtlasMarkdown } from './export/markdown.js';
-export { buildTours } from './model/tours.js';
+export { buildTours, tourFor } from './model/tours.js';
 export type { Tour, TourStep } from './model/tours.js';
 export { buildTypeView } from './model/typeview.js';
 export type { TypeCard, TypeField, TypeLink, TypeView } from './model/typeview.js';

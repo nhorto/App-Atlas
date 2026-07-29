@@ -66,6 +66,20 @@ export async function fetchTours(): Promise<Tour[]> {
   return tours;
 }
 
+/**
+ * The walkthrough for one thing the reader opened, or null when there is none.
+ *
+ * A 404 here is an ordinary answer — a door with nothing behind it has nothing to walk
+ * through — so it is not treated as a failure.
+ */
+export async function fetchTourFor(id: string): Promise<Tour | null> {
+  try {
+    return await get<Tour>(`/api/tour?id=${encodeURIComponent(id)}`);
+  } catch {
+    return null;
+  }
+}
+
 /** The code behind one walkthrough step, read from disk when the step is reached. */
 export function fetchSource(id: string): Promise<SourceSlice> {
   return get<SourceSlice>(`/api/source?id=${encodeURIComponent(id)}`);

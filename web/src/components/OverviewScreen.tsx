@@ -97,6 +97,18 @@ export function OverviewScreen({ view, tours, onDrill, onReveal, onStartTour, on
               </button>
             ))}
           </div>
+          {/* Five suggestions is a suggestion; twenty-four is a directory. But a reader
+              who only ever saw five had no way to know the rest existed, which reads as
+              "the other nineteen doors are not worth explaining". */}
+          {stats.endpoints > tours.length ? (
+            <p className="tour-more">
+              Every other way in has one too — open a door on{' '}
+              <button className="link" onClick={onOpenBoundaries}>
+                Boundaries
+              </button>{' '}
+              and walk it from there.
+            </p>
+          ) : null}
         </Section>
       ) : null}
 

@@ -71,10 +71,16 @@ export function DetailPanel({ detail, overview, view, aiEnabled, tour, onReveal,
             Look inside →
           </button>
         ) : null}
-        {/* SPEC.md 6.5's "explain like I'm new": the same facts, walked instead of listed. */}
+        {/* SPEC.md 6.5's "explain like I'm new": the same facts, walked instead of listed.
+            When the walk belongs to a door the reader did not click — they opened the
+            file that answers it — the button says whose walk it is, because "walk me
+            through what happens" beside a helper function is a promise about the wrong
+            thing. */}
         {tour ? (
           <button className="btn-tour" onClick={() => onStartTour(tour.id)}>
-            Walk me through what happens →
+            {tour.id === `tour:${node.id}`
+              ? 'Walk me through what happens →'
+              : `Walk me through ${lowerFirst(tour.title)} →`}
           </button>
         ) : null}
       </header>
@@ -537,6 +543,11 @@ function edgeWord(kind: string): string {
     default:
       return 'uses';
   }
+}
+
+/** A tour title dropped into the middle of a sentence: "Walk me through what happens…". */
+function lowerFirst(text: string): string {
+  return text.charAt(0).toLowerCase() + text.slice(1);
 }
 
 function kindWord(node: AtlasNode): string {

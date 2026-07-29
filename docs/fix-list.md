@@ -197,9 +197,21 @@ compiler-derived and cannot be wrong.
       request. Verified on taxonomy: Pages opens all 14, API routes all 8, and clicking
       `/dashboard/billing` opens `app/(dashboard)/dashboard/billing/page.tsx`.
 
-- [ ] **15. Widen and surface walkthroughs** — [#27](https://github.com/nhorto/App-Atlas/issues/27)
+- [x] **15. Widen and surface walkthroughs** — [#27](https://github.com/nhorto/App-Atlas/issues/27)
       Only 5 of 24 doors get one, nothing says which, and the button is absent when you
       arrive via Search → Map even for routes that *do* have a tour.
+      **Done.** All three were one bug wearing three coats: five was the number we
+      *offered*, and it had quietly become the number that existed. A walkthrough is now
+      built for whatever the reader opens (`GET /api/tour?id=`), so taxonomy goes from
+      **5 of 24 doors to 24 of 24** — the offered handful stays a handful, because
+      twenty-four cards is a directory rather than a suggestion, and the overview says
+      out loud that there are more. Arriving at a *handler* offers the walk of the door
+      that leads to it, which is the question somebody who searched their way to
+      `route.tsx` is actually asking; the button names that door, because "walk me
+      through what happens" beside a helper function is a promise about the wrong thing.
+      Exactly one door or nothing. The only doors still without a walk are the ones with
+      nothing behind them — no code, no guard, one step — and a one-step tour is not a
+      tour.
 
 ## Tier 3 — polish and trust papercuts
 

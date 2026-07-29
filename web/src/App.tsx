@@ -39,6 +39,7 @@ import {
   fetchOverview,
   fetchScopes,
   fetchTours,
+  fetchTourFor,
   fetchTypes,
   onAtlasUpdated,
   setScope,
@@ -120,6 +121,9 @@ function AtlasApp() {
   const [insights, setInsights] = useState<InsightsView | null>(null);
   const [types, setTypes] = useState<TypeView | null>(null);
   const [tours, setTours] = useState<Tour[]>([]);
+  /** Walkthroughs fetched because the reader opened the thing they explain. */
+  const [fetchedTours, setFetchedTours] = useState<Tour[]>([]);
+  const [panelTourId, setPanelTourId] = useState<string | null>(null);
   const [tourId, setTourId] = useState<string | null>(null);
   const [stepIndex, setStepIndex] = useState(0);
   const [levelId, setLevelId] = useState<string | null>(initial.levelId);
@@ -311,6 +315,27 @@ function AtlasApp() {
     };
   }, [selectedId, revision]);
 
+  // --- and the walkthrough for it, if there is one ---
+  // Asked per selection rather than shipped with the rest: a repo with 760 doors has
+  // 760 walkthroughs, and the reader wants the one they just opened.
+  useEffect(() => {
+    if (!selectedId) {
+      setPanelTourId(null);
+      return;
+    }
+    let cancelled = false;
+    fetchTourFor(selectedId)
+      .then((found) => {
+        if (cancelled) return;
+        setPanelTourId(found?.id ?? null);
+        if (found) setFetchedTours((existing) => (existing.some((one) => one.id === found.id) ? existing : [...existing, found]));
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedId, revision]);
+
   // --- frame each level as soon as it is laid out ---
   // Not gated on React Flow's own "nodes measured" signal: these nodes carry explicit
   // width/height from elk, and React Flow never reports pre-sized nodes as measured,
@@ -357,7 +382,16 @@ function AtlasApp() {
 
   // --- guided tours (SPEC.md 6.4) ---
 
-  const tour = useMemo(() => tours.find((one) => one.id === tourId) ?? null, [tours, tourId]);
+  // The five offered on the overview, plus every one fetched because somebody opened
+  // the thing it explains. A tour fetched that way has to stay in the list: losing it
+  // when the selection changes would end the walk the reader is in the middle of.
+  const everyTour = useMemo(() => {
+    const byId = new Map(tours.map((one) => [one.id, one]));
+    for (const one of fetchedTours) if (!byId.has(one.id)) byId.set(one.id, one);
+    return byId;
+  }, [tours, fetchedTours]);
+
+  const tour = useMemo(() => (tourId ? (everyTour.get(tourId) ?? null) : null), [everyTour, tourId]);
   const step = tour?.steps[stepIndex] ?? null;
 
   /** Put the map where the current step is talking about. */
@@ -376,13 +410,13 @@ function AtlasApp() {
 
   const startTour = useCallback(
     (id: string) => {
-      const target = tours.find((one) => one.id === id);
+      const target = everyTour.get(id);
       if (!target) return;
       setTourId(id);
       setStepIndex(0);
       showStep(target, 0);
     },
-    [tours, showStep],
+    [everyTour, showStep],
   );
 
   const goToStep = useCallback(
@@ -800,7 +834,7 @@ function AtlasApp() {
           overview={overview}
           view={view}
           aiEnabled={aiEnabled}
-          tour={detail ? (tours.find((one) => one.id === `tour:${detail.node.id}`) ?? null) : null}
+          tour={panelTourId ? (everyTour.get(panelTourId) ?? null) : null}
           onReveal={reveal}
           onDrill={drill}
           onStartTour={startTour}
