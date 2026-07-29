@@ -392,6 +392,8 @@ export interface BoundaryCard {
   detail: string;
   count: number;
   memberIds: string[];
+  /** Present only on group cards — the nodes the card stands for, named. */
+  members?: { id: string; name: string }[];
   nodeId: string | null;
   family: string;
   openCount?: number;

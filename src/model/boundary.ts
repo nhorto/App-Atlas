@@ -39,6 +39,12 @@ export interface BoundaryCard {
   count: number;
   /** The atlas nodes it represents, so clicking it can open the real thing. */
   memberIds: string[];
+  /**
+   * Those same nodes with their names, so a card standing for fourteen pages can list
+   * the fourteen instead of silently opening one of them (#30). Only carried when the
+   * card is a group; a card that *is* a node has nothing to expand into.
+   */
+  members?: { id: string; name: string }[];
   /** Set when every member is one node — the card *is* that node. */
   nodeId: string | null;
   /** Endpoint family or service category, for the icon and grouping. */
@@ -236,6 +242,7 @@ function buildInputs(
       detail: inputDetail(family, members),
       count: paths,
       memberIds: members.map((node) => node.id),
+      members: members.length > 1 ? members.map((node) => ({ id: node.id, name: node.name })) : undefined,
       nodeId: members.length === 1 ? members[0].id : null,
       family,
       openCount: isAuthFamily(family) ? open : undefined,
@@ -360,6 +367,7 @@ function buildOutputs(
         .join(', '),
       count: rest.reduce((sum, entry) => sum + entry.card.count, 0),
       memberIds: rest.map((entry) => entry.node.id),
+      members: rest.map((entry) => ({ id: entry.node.id, name: entry.card.name })),
       nodeId: null,
       family: 'other',
     });

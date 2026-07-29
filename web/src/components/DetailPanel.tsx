@@ -23,9 +23,13 @@ import type {
 import { zoneLabel } from './AtlasNodeCard';
 import { Summary, TrustLabel } from './Trust';
 
+/** Which screen the panel is sitting beside — the instructions differ per screen. */
+export type PanelView = 'boundaries' | 'overview' | 'map' | 'types' | 'insights';
+
 interface Props {
   detail: NodeView | null;
   overview: OverviewView | null;
+  view: PanelView;
   aiEnabled: boolean;
   /** The walkthrough that starts at this node, when there is one. */
   tour: Tour | null;
@@ -35,12 +39,12 @@ interface Props {
   onClose: () => void;
 }
 
-export function DetailPanel({ detail, overview, aiEnabled, tour, onReveal, onDrill, onStartTour, onClose }: Props) {
+export function DetailPanel({ detail, overview, view, aiEnabled, tour, onReveal, onDrill, onStartTour, onClose }: Props) {
   // A description generated from this panel has to appear in this panel, and the atlas
   // on the server is the copy that got updated — not the one we were handed.
   const [written, setWritten] = useState<{ id: string; text: string } | null>(null);
 
-  if (!detail) return <OverviewPanel overview={overview} onReveal={onReveal} />;
+  if (!detail) return <OverviewPanel overview={overview} view={view} onReveal={onReveal} />;
 
   const node =
     written && written.id === detail.node.id
@@ -398,7 +402,36 @@ function Section({ title, hint, children }: { title: string; hint?: string; chil
   );
 }
 
-function OverviewPanel({ overview, onReveal }: { overview: OverviewView | null; onReveal: (id: string) => void }) {
+/**
+ * What to do next, on the screen the reader is actually looking at.
+ *
+ * The old text described the Map's `›` button and its breadcrumb from every screen,
+ * including three that have neither. Instructions for a control that is not on the
+ * page are worse than no instructions: the reader hunts for it, does not find it, and
+ * now has a reason to doubt everything else the panel says.
+ */
+function howToRead(view: PanelView): string {
+  switch (view) {
+    case 'boundaries':
+      return 'Click a card to see what it is and what it connects to. A card that stands for several things opens the list, so you choose which one.';
+    case 'types':
+      return 'Click a shape to see its fields and everywhere it is used.';
+    case 'insights':
+      return 'Click a route or a variable to see the code behind it.';
+    default:
+      return 'Click any box to see what it is and what it connects to. Press its › button to look inside, and the breadcrumb above to come back out.';
+  }
+}
+
+function OverviewPanel({
+  overview,
+  view,
+  onReveal,
+}: {
+  overview: OverviewView | null;
+  view: PanelView;
+  onReveal: (id: string) => void;
+}) {
   if (!overview) return <aside className="panel" />;
   const { meta, busiestFiles } = overview;
   const documented = meta.stats.files > 0 ? Math.round((meta.stats.documentedFiles / meta.stats.files) * 100) : 0;
@@ -414,10 +447,11 @@ function OverviewPanel({ overview, onReveal }: { overview: OverviewView | null; 
       </header>
 
       <section className="panel-section">
-        <p className="summary-empty">
-          Click any box to see what it is and what it connects to. Press its <strong>›</strong> button to look
-          inside, and the breadcrumb above to come back out.
-        </p>
+        {/* The panel sits beside four different screens, and only one of them has a
+            `›` button and a breadcrumb. Telling somebody on the Boundaries screen to
+            press a control that is not there is a small thing that makes them doubt
+            the rest of the panel. */}
+        <p className="summary-empty">{howToRead(view)}</p>
       </section>
 
       <section className="panel-section">

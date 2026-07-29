@@ -144,9 +144,13 @@ compiler-derived and cannot be wrong.
       scope: it is rougher than the per-app number the CLI prints (no gitignore, no
       `--max-files`), and two numbers with one name that disagree is its own small lie.
 
-- [ ] **14. Show a group card's members** — [#30](https://github.com/nhorto/App-Atlas/issues/30)
+- [x] **14. Show a group card's members** — [#30](https://github.com/nhorto/App-Atlas/issues/30)
       "Pages · 14 pages" opens one arbitrary page; `memberIds` holds the rest and is
       discarded at `BoundaryScreen.tsx:151`.
+      **Done.** A group card opens the list and the reader picks. The card carries its
+      members' names now, not only their ids, so the list can be drawn without a second
+      request. Verified on taxonomy: Pages opens all 14, API routes all 8, and clicking
+      `/dashboard/billing` opens `app/(dashboard)/dashboard/billing/page.tsx`.
 
 - [ ] **15. Widen and surface walkthroughs** — [#27](https://github.com/nhorto/App-Atlas/issues/27)
       Only 5 of 24 doors get one, nothing says which, and the button is absent when you
@@ -158,18 +162,42 @@ compiler-derived and cannot be wrong.
       powerfab-dashboard's MySQL store is a correct conclusion but its sites are
       `os.environ.get(…)` lines rather than the pymysql code.
 
-- [ ] **17. Fix the Boundaries panel's instructions** — [#30](https://github.com/nhorto/App-Atlas/issues/30)
+- [x] **17. Fix the Boundaries panel's instructions** — [#30](https://github.com/nhorto/App-Atlas/issues/30)
       Describes a `›` button and a breadcrumb that exist only on the Map.
+      **Done.** The panel is told which screen it is beside and says something true of
+      that screen. Instructions for a control that is not on the page are worse than no
+      instructions: the reader hunts for it, does not find it, and now has a reason to
+      doubt everything else the panel says.
 
-- [ ] **18. Ignore runtime-set env vars** — [#30](https://github.com/nhorto/App-Atlas/issues/30)
+- [x] **18. Ignore runtime-set env vars** — [#30](https://github.com/nhorto/App-Atlas/issues/30)
       `NODE_ENV` flagged as missing from `.env.example`; it is 100% of that section's
       signal on taxonomy. Also `PORT`, `CI`, `VERCEL*`, `NEXT_RUNTIME`.
+      **Done** (`eb7220f`). Badged "set by the platform" — shown, not hidden, and
+      excluded from a count whose whole meaning is "you forgot these". taxonomy's
+      undocumented count 1 → **0**.
+      *Writing the rule immediately produced a worse bug than the one it fixed:*
+      `GITHUB_` looked like a safe family, because CI injects a dozen of them, and it
+      swallowed `GITHUB_CLIENT_SECRET` and `GITHUB_ACCESS_TOKEN` — the app's own OAuth
+      credentials, and the most important rows on the screen. A name that looks like a
+      credential is never excused now, whatever prefix it wears.
 
-- [ ] **19. Don't list in-process libraries as companies** — [#30](https://github.com/nhorto/App-Atlas/issues/30)
+- [x] **19. Don't list in-process libraries as companies** — [#30](https://github.com/nhorto/App-Atlas/issues/30)
       `next-auth` appears under "3 companies you send data to".
+      **Done** (`eb7220f`). `next-auth`, `@auth/core`, `lucia` and `better-auth` run
+      inside the app and keep their sessions in the app's own database. Clerk, Auth0 and
+      WorkOS stay — your app really does call their servers. taxonomy 4 services → 3.
+      *Removing the service box broke the "this is the sign-in door" verdict, which had
+      been using it as a proxy for the fact it actually cares about — the auth package
+      being imported in that file. That fact is now stamped on the file node by the
+      layer that owns the catalog, so `src/model` reads a plain field instead of
+      importing the analyzer.*
 
-- [ ] **20. Label boundary cards for screen readers** — [#30](https://github.com/nhorto/App-Atlas/issues/30)
+- [x] **20. Label boundary cards for screen readers** — [#30](https://github.com/nhorto/App-Atlas/issues/30)
       Bare `button` elements; text lives in nested spans.
+      **Done.** Four nested spans concatenated into one breath — "API routes 12 routes
+      3 open". Every card now carries an explicit label, read back from the live a11y
+      tree as *"API routes. 8 routes. 1 with no auth check found. opens the list"*, and
+      group cards expose `aria-expanded`.
 
 - [ ] **21. Fix the self-contradicting archetype reason** — [#28](https://github.com/nhorto/App-Atlas/issues/28)
       NBA's reason reads "no doors of any kind" while the headline above says "14 names

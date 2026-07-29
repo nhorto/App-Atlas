@@ -14,9 +14,9 @@
  * diagram for a script. When a project has no boundary at all this screen says so in
  * words and points at the map, rather than drawing an empty frame.
  */
-import { useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { CSSProperties } from 'react';
-import type { Archetype, ArchetypeVerdict, BoundaryView, SummarySource } from '../types';
+import type { Archetype, ArchetypeVerdict, BoundaryCard, BoundaryView, SummarySource } from '../types';
 import { TrustLabel } from './Trust';
 
 interface Props {
@@ -74,6 +74,8 @@ export function BoundaryScreen({
   onOpenMap,
 }: Props) {
   const [hovered, setHovered] = useState<string | null>(null);
+  /** Which group card is showing its members. One at a time; they overlap. */
+  const [expanded, setExpanded] = useState<string | null>(null);
   const layout = useMemo(() => computeLayout(view), [view]);
   const scrollRef = useRef<HTMLDivElement>(null);
   const scale = useFitScale(scrollRef, layout.width);
@@ -134,6 +136,7 @@ export function BoundaryScreen({
             if (!box) return null;
             const isInput = view.inputs.includes(card);
             return (
+              <Fragment key={card.id}>
               <button
                 key={card.id}
                 className={[
@@ -148,7 +151,15 @@ export function BoundaryScreen({
                 style={boxStyle(box)}
                 onMouseEnter={() => setHovered(card.id)}
                 onMouseLeave={() => setHovered(null)}
-                onClick={() => onSelect(card.nodeId ?? card.memberIds[0] ?? '')}
+                // A card that *is* a node opens it. A card standing for fourteen pages
+                // used to open one of the fourteen, chosen by nothing — so it now opens
+                // the list instead, and the reader picks (#30).
+                onClick={() => (card.nodeId ? onSelect(card.nodeId) : setExpanded(expanded === card.id ? null : card.id))}
+                // The label the assistive tree reads. Composed here rather than left to
+                // the concatenation of four nested spans, which produced a run-on with
+                // no pause between the name, the count and the warning.
+                aria-label={cardLabel(card)}
+                aria-expanded={card.nodeId ? undefined : expanded === card.id}
               >
                 {/* Decoration only — the card's name says the same thing in words, and
                     without this a screen reader opens every card with "⇥" or "◉". */}
@@ -164,7 +175,26 @@ export function BoundaryScreen({
                     {card.openCount} open
                   </span>
                 ) : null}
+                {card.nodeId ? null : <span className="bcard-more" aria-hidden="true">▾</span>}
               </button>
+              {expanded === card.id && card.members ? (
+                <ul
+                  className={`bcard-members bcard-members-${isInput ? 'in' : 'out'}`}
+                  style={{ left: box.x, top: box.y + box.h + 6, width: box.w }}
+                >
+                  {card.members.map((member) => (
+                    <li key={member.id}>
+                      <button
+                        className={`bmember${selectedId === member.id ? ' is-selected' : ''}`}
+                        onClick={() => onSelect(member.id)}
+                      >
+                        {member.name}
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              ) : null}
+              </Fragment>
             );
           })}
           </div>
@@ -496,6 +526,22 @@ function touches(layout: Layout, cardId: string, active: string): boolean {
     if (band.toId === active && band.fromId === cardId) return true;
   }
   return false;
+}
+
+/**
+ * What a screen reader announces for a card.
+ *
+ * The visible text is four nested spans, which the accessible-name calculation
+ * concatenates into a run-on with no pause between the name, the count and the
+ * warning — "API routes 12 routes 3 open" as one breath. Saying it in a sentence
+ * costs nothing and is the only version anybody can act on.
+ */
+function cardLabel(card: BoundaryCard): string {
+  const parts = [card.name, card.detail];
+  if (card.openCount) parts.push(`${card.openCount} with no auth check found`);
+  // The detail line already says how many; repeating it reads as two different counts.
+  if (!card.nodeId && card.members) parts.push('opens the list');
+  return parts.join('. ');
 }
 
 function boxStyle(box: Box): CSSProperties {

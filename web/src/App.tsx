@@ -798,6 +798,7 @@ function AtlasApp() {
         <DetailPanel
           detail={detail}
           overview={overview}
+          view={view}
           aiEnabled={aiEnabled}
           tour={detail ? (tours.find((one) => one.id === `tour:${detail.node.id}`) ?? null) : null}
           onReveal={reveal}
