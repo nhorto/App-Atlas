@@ -505,11 +505,10 @@ $2.78 and ~3 minutes for all four. Nothing came off the list; two things moved u
       on a screen: a generated sentence is not evidence, and letting prose promote itself
       into a fact is the one thing this layering exists to prevent. Only catalog names
       count; a word the tool has never heard of is not evidence of a gap.
-      ⚠️ *Verified with a stubbed backend, not a live model.* The prompt half is a change
-      to what we ask for and has not been driven against a real one — the underlying
-      detectors have also moved a long way since the run that produced this item (#23,
-      #25, #26, #29, #32, #33), so the original contradictions may already be gone. Worth
-      re-running the four repos with `--ai-backend claude` before closing #35.
+      **Driven against a live model.** `mirrorquiz` re-run with `--ai-backend claude`,
+      148 explanations written: every company the paragraph names — Stripe, Anthropic,
+      Resend, PostHog — is in the diagram beside it, and no contradiction line fired,
+      because none was warranted.
 
 - [x] **23. Give the AI "not visible in the code" as an option** — [#35](https://github.com/nhorto/App-Atlas/issues/35) — *Tier 1*
       mirrorquiz runs on Cloudflare D1; because #29 never fires, the atlas offered a
@@ -522,7 +521,11 @@ $2.78 and ~3 minutes for all four. Nothing came off the list; two things moved u
       longer appears as a flat assertion, it reads "No data store was detected. That may
       mean there is none, or that we could not see it. Do not name one." Same wording for
       ways in and for outside services.
-      Same caveat as 22: stub-verified, not driven against a live model.
+      **The sentence that raised this item is gone.** Live re-run of `mirrorquiz`: the
+      write-up now says data lives in *"your `perception-quiz-db` database"* — the name
+      out of the Cloudflare config, not a database engine nobody mentioned. The two
+      fixes met in the middle: #29 gave the facts a real name to carry, and the prompt
+      change stopped the model reaching past them when they have none.
 
 - [x] **24. Fix filenames broken by a stray space** — *Tier 3*
       powerfab-dashboard's summary renders "`01_list_tables. py`", "`02_describe_tables. py`"

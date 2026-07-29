@@ -27,7 +27,7 @@ import { pythonPlugin } from './py/index.js';
 import { typescriptPlugin } from './ts/index.js';
 import { dominantZone } from './zones.js';
 
-export const TOOL_VERSION = '0.5.0';
+export const TOOL_VERSION = '0.6.0';
 
 export interface AnalyzeOptions {
   maxFiles?: number;
