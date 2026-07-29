@@ -14,7 +14,9 @@
   z-index: 30;
   display: flex;
   flex-direction: column;
-  max-height: min(52%, 420px);
+  /* The step is the thing being read; the map behind it is the illustration. At 52%
+     a five-line step ended mid-sentence while half the canvas above sat empty. */
+  max-height: min(68%, 560px);
   border: 1px solid var(--line-strong);
   border-radius: 12px;
   background: var(--surface);
@@ -32,6 +34,7 @@
 }
 
 .wt-bar {
+  flex: none;
   display: flex;
   align-items: center;
   gap: 14px;
@@ -95,9 +98,44 @@
   color: var(--ink);
 }
 
+/*
+ * The scrolling part, and the only part allowed to shrink.
+ *
+ * `min-height: 0` is load-bearing: a flex item defaults to `min-height: auto`, which
+ * refuses to shrink below its content, so the text grew past the drawer and the last
+ * line slid under the Back/Next row — reading, to anyone who saw it, as a sentence
+ * that simply stopped.
+ */
 .wt-body {
-  padding: 14px 18px 4px;
+  flex: 1 1 auto;
+  min-height: 0;
+  padding: 14px 18px 16px;
   overflow-y: auto;
+}
+
+/*
+ * The scrollbar is the affordance, and the honest one: the browser shows it only when
+ * there is genuinely more to read. macOS hides overlay scrollbars until a gesture
+ * starts, so a step that continued below the fold looked exactly like a step that had
+ * finished — which is how a sentence cut in half read as a sentence that ended.
+ *
+ * Styling these pseudo-elements is what switches Chromium off overlay scrollbars and
+ * back to one that takes up space and stays put. Deliberately *without*
+ * `scrollbar-width`: setting the standard property makes Chromium ignore this block
+ * entirely and go back to hiding the bar.
+ */
+.wt-body::-webkit-scrollbar {
+  width: 11px;
+}
+
+.wt-body::-webkit-scrollbar-thumb {
+  background: var(--line-strong);
+  border: 3px solid var(--surface);
+  border-radius: 999px;
+}
+
+.wt-body::-webkit-scrollbar-track {
+  background: transparent;
 }
 
 .wt-body h2 {
@@ -167,12 +205,17 @@
   line-height: 1.55;
 }
 
+/* Never shrinks, and draws its own edge so the text above it visibly ends rather
+   than appearing to run underneath. */
 .wt-actions {
+  flex: none;
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
   padding: 11px 15px 13px;
+  border-top: 1px solid var(--line);
+  background: var(--surface);
 }
 
 .wt-nav {
