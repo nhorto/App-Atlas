@@ -363,6 +363,7 @@ function inboundPhrase(archetype: Archetype | undefined, count: number): string 
     case 'library':
       return `${count} ${count === 1 ? 'name' : 'names'} in its public API`;
     case 'pipeline':
+    case 'analysis':
       return `${count} ${count === 1 ? 'input' : 'inputs'}`;
     default:
       return `${count} ${count === 1 ? 'way' : 'ways'} in`;
@@ -566,6 +567,8 @@ const GLYPHS: Record<string, string> = {
   env: '⚙',
   files: '▤',
   store: '◉',
+  // The same store, drawn on the side it is read from.
+  source: '◉',
   payments: '◆',
   ai: '✦',
   email: '✉',

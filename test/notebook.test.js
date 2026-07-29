@@ -9,7 +9,7 @@ import assert from 'node:assert/strict';
 import path from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
-import { analyzeProject, classifyZone } from '../dist/node/index.js';
+import { analyzeProject, AtlasGraph, buildBoundaryView, classifyZone } from '../dist/node/index.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const FIXTURE = path.join(here, 'fixtures', 'notebook');
@@ -73,4 +73,38 @@ test('the opening markdown cell is the notebook describing itself', { skip }, ()
 test('checkpoints are not source', () => {
   // Jupyter's autosave litter would otherwise double every notebook on the map.
   assert.ok(!atlas.nodes.some((n) => n.path?.includes('.ipynb_checkpoints')));
+});
+
+/**
+ * The bug in the header of this file, finished (#28).
+ *
+ * Reading the notebooks was half of it: NBA and handson-ml3 still came out as
+ * libraries, rendering the helper functions in them as a "public API" nobody imports.
+ * A notebook is not a module somebody installs, and the question it answers is what the
+ * data says.
+ */
+test('a repo of notebooks is analysis, not a library', { skip }, () => {
+  assert.equal(atlas.meta.archetype.archetype, 'analysis');
+  assert.equal(atlas.meta.archetype.label, 'Code that turns data into answers');
+  assert.ok(atlas.meta.archetype.because.some((why) => /notebook/.test(why)));
+  // The dataset is the other half of the case, and it could not be made until the
+  // data detectors could see a `pd.read_csv`.
+  assert.ok(
+    atlas.meta.archetype.because.some((why) => /reads data files with pandas/.test(why)),
+    atlas.meta.archetype.because.join(' · '),
+  );
+});
+
+test('the data an analysis reads is where it comes from, not where it goes', { skip }, () => {
+  const view = buildBoundaryView(new AtlasGraph(atlas));
+  assert.equal(view.captions.inputs, 'Where the data comes from');
+  assert.equal(view.captions.app, 'The analysis');
+  assert.equal(view.captions.outputs, 'What it produces');
+
+  const csv = view.inputs.find((card) => card.name === 'CSV files');
+  assert.ok(csv, `expected the CSV on the left, got ${view.inputs.map((c) => c.name).join(', ')}`);
+  assert.match(csv.detail, /1 read/);
+  // Nothing writes one, so it appears once. A store that is read *and* written is
+  // genuinely both, and says so on both sides.
+  assert.ok(!view.outputs.some((card) => card.name === 'CSV files'));
 });

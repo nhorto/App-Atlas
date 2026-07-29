@@ -380,7 +380,7 @@ export interface AtlasStats {
  * exported is a legitimate thing to be, and guessing at it would put the first lie in
  * the map.
  */
-export type Archetype = 'web-app' | 'service' | 'library' | 'pipeline' | 'unknown';
+export type Archetype = 'web-app' | 'service' | 'library' | 'pipeline' | 'analysis' | 'unknown';
 
 export interface ArchetypeVerdict {
   archetype: Archetype;

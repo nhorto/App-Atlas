@@ -36,6 +36,15 @@ const FS_WRITES = new Set([
   'rename',
 ]);
 
+/**
+ * Reading a file is touching the same store as writing one.
+ *
+ * These used to be a door of their own, called "Files on disk" — beside a store also
+ * called "Files on disk", which is the same sentence written twice. One box, two
+ * directions, and the same shape Python already reports.
+ */
+const FS_READS = new Set(['readFile', 'readFileSync', 'createReadStream', 'readdir', 'readdirSync', 'readJson', 'readJSON']);
+
 export const storeDetector: BoundaryDetector = {
   id: 'stores',
   // Browser storage needs no dependency at all, so this one always runs; every
@@ -57,7 +66,7 @@ export const storeDetector: BoundaryDetector = {
       keyValue(node, dotted, ctx) ||
       blobWrite(node, dotted, ctx) ||
       browserStorage(node, dotted, ctx) ||
-      fileWrite(node, dotted, ctx);
+      fileAccess(node, dotted, ctx);
   },
 };
 
@@ -437,10 +446,11 @@ function browserStorage(call: CallExpression, dotted: string, ctx: DetectorConte
   return false;
 }
 
-function fileWrite(call: CallExpression, dotted: string, ctx: DetectorContext): boolean {
+function fileAccess(call: CallExpression, dotted: string, ctx: DetectorContext): boolean {
   const parts = dotted.split('.');
   const last = parts[parts.length - 1];
-  if (!FS_WRITES.has(last)) return false;
+  const writes = FS_WRITES.has(last);
+  if (!writes && !FS_READS.has(last)) return false;
 
   const root = parts[0];
   const viaNamespace = ctx.imports.get(root)?.module === 'fs' || /^(fs|fsp|fsPromises)$/.test(root);
@@ -453,7 +463,7 @@ function fileWrite(call: CallExpression, dotted: string, ctx: DetectorContext): 
     client: 'Node fs',
     storeKind: 'filesystem',
     table: null,
-    operation: 'write',
+    operation: writes ? 'write' : 'read',
   });
   return true;
 }

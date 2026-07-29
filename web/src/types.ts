@@ -256,7 +256,7 @@ export interface AtlasStats {
 }
 
 /** What kind of project this is — a different question from which framework it uses. */
-export type Archetype = 'web-app' | 'service' | 'library' | 'pipeline' | 'unknown';
+export type Archetype = 'web-app' | 'service' | 'library' | 'pipeline' | 'analysis' | 'unknown';
 
 export interface ArchetypeVerdict {
   archetype: Archetype;

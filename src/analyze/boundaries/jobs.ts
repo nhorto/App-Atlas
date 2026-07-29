@@ -11,16 +11,6 @@ import type { CallExpression, NewExpression } from 'ts-morph';
 import { argAt, dottedName, literalString, objectProp } from './ast.js';
 import type { BoundaryDetector, DetectorContext } from './types.js';
 
-const FS_READS = new Set([
-  'readFile',
-  'readFileSync',
-  'createReadStream',
-  'readdir',
-  'readdirSync',
-  'readJson',
-  'readJSON',
-]);
-
 export const jobsDetector: BoundaryDetector = {
   id: 'jobs',
   enabled: () => true,
@@ -89,10 +79,6 @@ function callExpression(call: CallExpression, ctx: DetectorContext): void {
     return emitCli(call, ctx, dotted);
   }
 
-  // --- files read off disk ---
-  if (FS_READS.has(last) && isFsCall(root, last, ctx)) {
-    return emitFileRead(ctx, call, literalString(argAt(call, 0)));
-  }
 }
 
 function newExpression(node: NewExpression, ctx: DetectorContext): void {
@@ -185,22 +171,6 @@ function emitCli(at: Node, ctx: DetectorContext, snippet: string): void {
   });
 }
 
-function emitFileRead(ctx: DetectorContext, at: Node, target: string | null): void {
-  ctx.emit({
-    type: 'endpoint',
-    endpointKind: 'file-read',
-    key: 'file-read',
-    name: 'Files on disk',
-    method: 'FILE',
-    route: target,
-    framework: 'Node',
-    writes: false,
-    guards: [],
-    site: ctx.site(at),
-    handlerId: ctx.enclosing(at),
-  });
-}
-
 // ---------------------------------------------------------------------------
 
 /** Was this local name imported from that package? */
@@ -211,11 +181,3 @@ function isFrom(local: string, ctx: DetectorContext, pkg: string): boolean {
   return built?.module === pkg;
 }
 
-/** `fs.readFile(...)`, or `readFile(...)` imported straight from `node:fs/promises`. */
-function isFsCall(root: string, name: string, ctx: DetectorContext): boolean {
-  const binding = ctx.imports.get(root);
-  if (binding?.external && binding.module === 'fs') return true;
-  if (root === 'fs' || root === 'fsp' || root === 'fsPromises') return true;
-  const direct = ctx.imports.get(name);
-  return Boolean(direct?.external && direct.module === 'fs');
-}

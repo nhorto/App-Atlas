@@ -120,18 +120,46 @@ compiler-derived and cannot be wrong.
       SQLAlchemy 2.0's `session.execute(select(User))` is read through the builder,
       inline or bound to a name a line above.
 
-- [ ] **9. Add an `analysis` archetype for notebook projects** — [#28](https://github.com/nhorto/App-Atlas/issues/28)
+- [x] **9. Add an `analysis` archetype for notebook projects** — [#28](https://github.com/nhorto/App-Atlas/issues/28)
       NBA and handson-ml3 both fall through to `library` and render as a "public API" of
       helper functions nobody imports. Columns should be *where the data comes from* →
       *the analysis* → *what it produces*. Depends on item 8 for the inputs.
+      **Done.** Two signals, either enough: a notebook (nobody writes one to ship it),
+      or a store the code *reads* whose client is pandas, polars, NumPy or joblib — item
+      8's output, which is why this could not be built before it. The read is what
+      matters; a library that writes a CSV is not doing analysis.
+      And the columns turned out to be the bigger half. For an app the request comes
+      first and the database is somewhere data is put; for an analysis the data comes
+      first. A store with reads is now drawn on the **left** for `analysis` and
+      `pipeline` — which also settles a promise the pipeline caption had been making
+      since archetypes were built, since "What it reads" had until now been a column of
+      environment variables. NBA reads *Where the data comes from: CSV files · 6 reads* →
+      *The analysis* → *What it produces: CSV files · 1 write*.
+      *A store that is read and written appears on both sides.* That is the shape of the
+      work, not a duplicate — and it is the same node, so either card opens the same box.
 
-- [ ] **10. Rank exported surface above `__main__` CLI doors** — [#28](https://github.com/nhorto/App-Atlas/issues/28)
+- [x] **10. Rank exported surface above `__main__` CLI doors** — [#28](https://github.com/nhorto/App-Atlas/issues/28)
       `psf/requests` is classified `pipeline` ("Something you run") because two files
       have debug `__main__` blocks. A regression from our own `__main__` work.
+      **Done**, but not by counting. Counting cannot separate those two files from the
+      thirty-five around them — and `Summarization-2.0` has exactly two `__main__` files
+      too, out of two, and *is* a thing you run. What separates them is the `setup.py`
+      sitting beside one of them. A manifest that says "install me and import me" is a
+      decision somebody wrote down, and it outranks an idiom; with no manifest, a folder
+      of runnable scripts is exactly what this is.
+      A designed command line — argparse, Click, Typer, a `bin` — still beats everything:
+      someone wrote the flags down. `requests` is a library again, and its two runnable
+      files are still named in the verdict.
 
-- [ ] **11. Ignore archived and parked paths when counting doors** — [#28](https://github.com/nhorto/App-Atlas/issues/28)
+- [x] **11. Ignore archived and parked paths when counting doors** — [#28](https://github.com/nhorto/App-Atlas/issues/28)
       powerfab-dashboard counts `scripts/_archive/` and `parked/` as ways in — 111 CLI
       doors.
+      **Done.** A door somebody cannot use is not a way in, and a count that includes
+      them is a count nobody can act on. The list is deliberately short and deliberately
+      excludes bare `archive`, `old`, `legacy` and `backup`: a Next.js app ships
+      `app/api/archive/route.ts`, and dropping a real door because a folder is called
+      `archive` is a far worse error than counting a dead one. What is left is either
+      explicitly parked or wears the underscore that means "not part of the build".
 
 - [x] **12. Detect a Worker from a declared `main`, built or not** — [#29](https://github.com/nhorto/App-Atlas/issues/29)
       mirrorquiz's entry is `.open-next/worker.js`, a build artifact absent from a fresh
@@ -226,9 +254,14 @@ compiler-derived and cannot be wrong.
       tree as *"API routes. 8 routes. 1 with no auth check found. opens the list"*, and
       group cards expose `aria-expanded`.
 
-- [ ] **21. Fix the self-contradicting archetype reason** — [#28](https://github.com/nhorto/App-Atlas/issues/28)
+- [x] **21. Fix the self-contradicting archetype reason** — [#28](https://github.com/nhorto/App-Atlas/issues/28)
       NBA's reason reads "no doors of any kind" while the headline above says "14 names
       in its public API".
+      **Done.** It says "nothing answers a URL", which stays true after the exported
+      names become doors a moment later. The second half of the same sentence was wrong
+      too: "28 exported names" sat under a headline reading "118 names in its public
+      API", because the reason counts *files* on purpose and called them names. It now
+      says "28 files other code can import".
 
 ---
 
@@ -302,6 +335,27 @@ door that was never drawn.
       was detected before — and the TypeScript side never used the path heuristic at
       all, so this is one small unification rather than a bug.
 
+- [x] **32. A single-page app was filed as a library** — *Tier 1.* Found while doing 9.
+      `full-stack-fastapi-template`'s React frontend routes in the browser, so no door
+      detector fires and nothing catches it — it landed under "Code other code imports",
+      with 235 of its own components listed as the public API nobody imports.
+      **Done.** A UI framework plus interface files plus *no manifest saying where to
+      import this from* is an app. The manifest is what keeps a component library out:
+      `cal.com/packages/ui` and `dub/packages/ui` both declare `exports` and both stay
+      libraries. `private: true` is deliberately not consulted — it means "do not publish
+      to the registry", which every internal package in a monorepo says.
+
+- [x] **33. "Files on disk" was a door and a store at the same time** — *Tier 3.* Found
+      while doing 9. `jobs.ts` emitted a `file-read` door called "Files on disk" and
+      `data.ts` emitted a filesystem store called "Files on disk". Two columns hid it
+      until a pipeline's read stores moved to the left, where they sat side by side.
+      **Done.** The filesystem is a store; reading is one of the two things you do to
+      one. The TypeScript detector now counts `readFile` and `readdirSync` as store
+      reads, matching what Python already did, and the door is gone. powerfab reads one
+      *Files on disk · 113 reads · 60 writes* instead of two boxes with one name. The
+      `file-read` kind stays in the type — older atlases still carry it — and nothing
+      emits it.
+
 ## How these fixes avoid being fitted to the test repos
 
 Worth writing down, because the failure mode is easy and invisible:
@@ -326,6 +380,13 @@ Worth writing down, because the failure mode is easy and invisible:
   prefix we cannot read becomes a visible `…` rather than a shorter address that looks
   finished. Across all sixteen clones exactly **one** door carries that marker, and it
   earns it: mealie builds a prefix out of an f-string.
+- **#28 asks a manifest, not a repo.** "Is this a library?" is answered by a `setup.py`
+  or an `exports` field — a sentence somebody wrote about their own code — never by
+  counting how many files happen to have a `__main__`. The same lever decides whether a
+  React package is an app or a component library, and it gives the right answer for
+  `cal.com/packages/ui` and `full-stack-fastapi-template/frontend` without either being
+  named anywhere.
+
 - **#26 believes the call, not the name.** A format is only claimed when the library
   spells it (`read_parquet`), never when a path happens to end in `.parquet`; a database
   read is only claimed when the SQL says so or the receiver was built by a client we can

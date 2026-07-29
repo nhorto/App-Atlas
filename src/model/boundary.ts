@@ -104,6 +104,7 @@ const CAPTIONS: Record<Archetype, BoundaryCaptions> = {
   service: { inputs: 'What calls it', app: 'Your service', outputs: 'Where data goes' },
   library: { inputs: 'What consumers can call', app: 'Your library', outputs: 'What it reaches for' },
   pipeline: { inputs: 'What it reads', app: 'Your code', outputs: 'What it writes' },
+  analysis: { inputs: 'Where the data comes from', app: 'The analysis', outputs: 'What it produces' },
   unknown: { inputs: 'What gets in', app: 'Your code', outputs: 'Where data goes' },
 };
 
@@ -142,7 +143,9 @@ const INPUT_FAMILIES: InputFamily[] = [
   },
   { family: 'cli', label: 'Command line', kinds: ['cli'] },
   { family: 'env', label: 'Environment & config', kinds: ['env'] },
-  { family: 'files', label: 'Files on disk', kinds: ['file-read'] },
+  // `file-read` is deliberately absent: the filesystem is a store, and it was a door
+  // and a store at once, both drawn and both called "Files on disk". Old atlases still
+  // carry the kind, so the type keeps it; nothing emits it any more.
 ];
 
 const ZONE_ORDER: Zone[] = ['ui', 'api', 'logic', 'data', 'config', 'test', 'unknown'];
@@ -171,10 +174,26 @@ export function buildBoundaryView(graph: AtlasGraph): BoundaryView {
   // or the screen argues with itself: "8 open" on the Pages card above "1 route has
   // no auth check" is a reader's first reason to distrust both (#24).
   const openDoors = classifyOpenDoors(graph.allNodes(), graph.allEdges());
-  const inputs = buildInputs(graph, endpoints, flows, zoneWeights, openDoors);
-  const outputs = buildOutputs(graph, services, stores, flows, zoneWeights);
-
   const archetype = graph.meta.archetype?.archetype;
+
+  // For an app, the request comes first and the database is somewhere data is put. For
+  // an analysis, the data comes first: the file is where the work starts, and the whole
+  // left-hand column is the answer to "where did this come from". The pipeline caption
+  // has promised "What it reads" since the archetypes were built, and until now that
+  // column held environment variables.
+  const readsFirst = archetype === 'analysis' || archetype === 'pipeline';
+  const sources = readsFirst ? stores.filter((node) => (node.meta as unknown as StoreMeta).reads > 0) : [];
+  const sourceIds = new Set(sources.map((node) => node.id));
+
+  const inputs = [
+    ...buildInputs(graph, endpoints, flows, zoneWeights, openDoors),
+    ...buildSources(graph, sources, flows, zoneWeights),
+  ];
+  // A store that is read and never written belongs on the left and nowhere else. One
+  // that is both is genuinely both, and saying so twice — "6 reads" in, "1 write" out —
+  // is the shape of the work rather than a duplicate.
+  const kept = stores.filter((node) => !sourceIds.has(node.id) || (node.meta as unknown as StoreMeta).writes > 0);
+  const outputs = buildOutputs(graph, services, kept, flows, zoneWeights);
 
   return {
     appName: graph.meta.name,
@@ -250,6 +269,44 @@ function buildInputs(
   }
 
   return cards;
+}
+
+/**
+ * The stores an analysis or a pipeline reads, drawn as the inputs they are.
+ *
+ * Same node as the output card when the code writes to it as well, so clicking either
+ * lands on the same box on the Map. Only the direction differs, because only the
+ * direction did.
+ */
+function buildSources(
+  graph: AtlasGraph,
+  sources: AtlasNode[],
+  flows: BoundaryFlow[],
+  zoneWeights: Map<Zone, number>,
+): BoundaryCard[] {
+  return sources.map((node) => {
+    const meta = node.meta as unknown as StoreMeta;
+    const id = `input:${node.id}`;
+
+    for (const edge of graph.edgesTo(node.id)) {
+      if (edge.kind !== 'reads-from') continue;
+      const zone = graph.getNodeById(edge.fromId)?.zone;
+      if (zone) addFlow(flows, zoneWeights, id, `zone:${zone}`, edge.weight);
+    }
+    if (!flows.some((flow) => flow.fromId === id)) {
+      addFlow(flows, zoneWeights, id, `zone:${node.zone}`, meta.reads);
+    }
+
+    return {
+      id,
+      name: node.name,
+      detail: `${meta.client} · ${meta.reads} ${meta.reads === 1 ? 'read' : 'reads'}`,
+      count: meta.reads,
+      memberIds: [node.id],
+      nodeId: node.id,
+      family: 'source',
+    };
+  });
 }
 
 function isAuthFamily(family: string): boolean {
