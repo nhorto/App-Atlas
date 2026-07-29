@@ -16,7 +16,9 @@
  *     is not a map, and the atlas itself is one command away for anything deeper.
  */
 import type { AtlasGraph } from '../model/graph.js';
+import { authHeadline } from '../model/exposure.js';
 import { buildInsights } from '../model/insights.js';
+import type { RouteInsight } from '../model/insights.js';
 import { buildTypeView } from '../model/typeview.js';
 import type { SummarySource } from '../model/types.js';
 
@@ -78,17 +80,17 @@ export function renderAtlasMarkdown(graph: AtlasGraph, options: MarkdownOptions 
   if (insights.auth.routes.length > 0) {
     out.push('## Ways in');
     out.push('');
-    if (insights.auth.openCount > 0) {
-      out.push(
-        `**${insights.auth.openCount} of ${insights.auth.total} doors reachable from the internet have no auth check App Atlas can see.** They are listed first.`,
-      );
+    const auth = authHeadline(stats);
+    if (auth) {
+      out.push(auth.tone === 'warn' ? `**${sentenceCase(auth.headline)}.** They are listed first.` : `${sentenceCase(auth.headline)}.`);
+      for (const caveat of auth.caveats) out.push(`- ${sentenceCase(caveat)}.`);
       out.push('');
     }
     out.push('| Kind | Route | Auth | Writes | Where |');
     out.push('|---|---|---|---|---|');
     for (const route of insights.auth.routes.slice(0, MAX_ROUTES)) {
       out.push(
-        `| ${route.method ?? route.endpointKind} | ${route.route ?? route.name} | ${authCell(route.protection, route.guards[0]?.provider ?? route.guards[0]?.name)} | ${route.writes ? 'yes' : '—'} | ${route.sites[0]?.path ?? '—'} |`,
+        `| ${route.method ?? route.endpointKind} | ${route.route ?? route.name} | ${authCell(route)} | ${route.writes ? 'yes' : '—'} | ${route.sites[0]?.path ?? '—'} |`,
       );
     }
     if (insights.auth.routes.length > MAX_ROUTES) {
@@ -223,10 +225,29 @@ function mark(source: SummarySource): string {
   return source === 'ai' ? ' _(ai)_' : '';
 }
 
-function authCell(protection: string, provider?: string): string {
-  if (protection === 'open') return '**none found**';
-  if (protection === 'likely') return `${provider ?? 'a check'}?`;
-  return provider ?? 'checked';
+/**
+ * An unchecked door with a reason reads differently from one without. Printing them
+ * identically is what made the old brief's "none found" column something a reader
+ * learned to skim past.
+ */
+function authCell(route: RouteInsight): string {
+  const provider = route.guards[0]?.provider ?? route.guards[0]?.name;
+  switch (route.open?.kind) {
+    case 'worth-a-look':
+      return '**none found**';
+    case 'unreadable':
+      return 'not examined';
+    case 'page':
+      return 'public page';
+    case 'auth-mount':
+      return 'the sign-in door';
+    default:
+      return route.protection === 'likely' ? `${provider ?? 'a check'}?` : (provider ?? 'checked');
+  }
+}
+
+function sentenceCase(text: string): string {
+  return text.charAt(0).toUpperCase() + text.slice(1);
 }
 
 function oneLine(text: string): string {

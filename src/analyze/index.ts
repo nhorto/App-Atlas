@@ -7,6 +7,7 @@
  * the whole pipeline.
  */
 import type { Atlas, AtlasEdge, AtlasNode, AtlasStats, EndpointMeta, Zone } from '../model/types.js';
+import { classifyOpenDoors, tallyOpenDoors } from '../model/exposure.js';
 import { countStaleDocs } from '../model/staleness.js';
 import { FORMAT_VERSION, makeAppId, makeEdgeId } from '../model/types.js';
 import { hashParts } from '../util/hash.js';
@@ -218,6 +219,16 @@ export async function analyzeProject(rootDir: string, options: AnalyzeOptions = 
   // Drop edges that point at nodes we never created (e.g. a file that failed to parse).
   const known = new Set(nodes.map((n) => n.id));
   const liveEdges = edges.filter((e) => known.has(e.fromId) && known.has(e.toId));
+
+  // Why each unchecked door is unchecked, written onto the door. Every screen that
+  // badges an endpoint then reads one field instead of re-deriving its own answer,
+  // which is how the card, the card's group and the summary line stay in agreement.
+  const byId = new Map(nodes.map((node) => [node.id, node]));
+  for (const [id, verdict] of classifyOpenDoors(nodes, liveEdges)) {
+    const node = byId.get(id);
+    if (node) node.meta.open = verdict;
+  }
+
   options.onProgress?.('Building the map', 1, 1);
 
   const atlas: Atlas = {
@@ -296,7 +307,7 @@ export function computeStats(nodes: AtlasNode[], edges: AtlasEdge[]): AtlasStats
   let aiFiles = 0;
   let endpoints = 0;
   let routes = 0;
-  let unprotectedRoutes = 0;
+  let unreadFiles = 0;
   let services = 0;
   let externalServices = 0;
   let stores = 0;
@@ -308,6 +319,7 @@ export function computeStats(nodes: AtlasNode[], edges: AtlasEdge[]): AtlasStats
       case 'file':
         files++;
         linesOfCode += Number(node.meta.loc ?? 0);
+        if (node.meta.unread) unreadFiles++;
         if (node.summarySource === 'docs') documentedFiles++;
         else if (node.summarySource === 'ai') aiFiles++;
         break;
@@ -325,10 +337,7 @@ export function computeStats(nodes: AtlasNode[], edges: AtlasEdge[]): AtlasStats
         endpoints++;
         const meta = node.meta as unknown as EndpointMeta;
         if (meta.endpointKind === 'env') envVars += meta.vars?.length ?? 0;
-        if (isAuthRelevant(meta)) {
-          routes++;
-          if (meta.guards.length === 0) unprotectedRoutes++;
-        }
+        if (isAuthRelevant(meta)) routes++;
         break;
       }
       case 'service':
@@ -350,6 +359,11 @@ export function computeStats(nodes: AtlasNode[], edges: AtlasEdge[]): AtlasStats
     else if (edge.kind === 'references') references++;
   }
 
+  // "No check found" is three different statements wearing one number. Splitting them
+  // here rather than at each screen is what stops the CLI, the walkthrough and the
+  // security page from quoting three different totals (#24, #36).
+  const open = tallyOpenDoors(classifyOpenDoors(nodes, edges).values());
+
   return {
     files,
     functions,
@@ -365,7 +379,10 @@ export function computeStats(nodes: AtlasNode[], edges: AtlasEdge[]): AtlasStats
     aiFiles,
     endpoints,
     routes,
-    unprotectedRoutes,
+    unprotectedRoutes: open.worthALook,
+    publicRoutes: open.page + open.authMount,
+    unreadableRoutes: open.unreadable,
+    unreadFiles,
     services,
     externalServices,
     stores,

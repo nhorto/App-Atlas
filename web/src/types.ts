@@ -89,6 +89,12 @@ export interface EndpointMeta {
   guards: GuardInfo[];
   writes: boolean;
   sites: CodeSite[];
+  /**
+   * When nothing checks this door, what explains it. Written by the analyzer so every
+   * screen badges the same route the same way. Absent on atlases written before this
+   * existed, which the UI treats exactly like `worth-a-look`.
+   */
+  open?: OpenVerdict;
   schedule?: string;
   vars?: EnvVarInfo[];
   envExample?: string | null;
@@ -233,7 +239,14 @@ export interface AtlasStats {
   aiFiles: number;
   endpoints: number;
   routes: number;
+  /** Unchecked with nothing explaining it — the number worth interrupting for. */
   unprotectedRoutes: number;
+  /** Unchecked for a reason: a page, or the door people sign in through. */
+  publicRoutes: number;
+  /** Unchecked, but a file they import could not be read. Unknown, not open. */
+  unreadableRoutes: number;
+  /** Files that could not be parsed at all. */
+  unreadFiles: number;
   services: number;
   externalServices: number;
   stores: number;
@@ -431,6 +444,8 @@ export interface RouteInsight {
   framework: string;
   writes: boolean;
   protection: Protection;
+  /** When nothing checks this door, what explains it. `null` when something does. */
+  open: OpenVerdict | null;
   guards: GuardInfo[];
   sites: CodeSite[];
 }
@@ -469,12 +484,26 @@ export interface TableProtectionInsight {
   line: number | null;
 }
 
+/**
+ * Why a door with no visible check is that way. `worth-a-look` is the absence of an
+ * explanation, which is the only one of these that belongs in a headline.
+ */
+export type OpenKind = 'worth-a-look' | 'page' | 'auth-mount' | 'unreadable';
+
+export interface OpenVerdict {
+  kind: OpenKind;
+  because: string | null;
+}
+
 export interface InsightsView {
   auth: {
     total: number;
     protectedCount: number;
     likelyCount: number;
     openCount: number;
+    publicCount: number;
+    unreadableCount: number;
+    unread: { path: string; because: string }[];
     routes: RouteInsight[];
   };
   services: ServiceInsight[];

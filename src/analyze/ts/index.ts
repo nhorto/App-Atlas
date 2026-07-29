@@ -134,7 +134,12 @@ export function analyzeTypeScript(ctx: PluginContext): PluginResult {
         positions: [],
       });
     } catch (err) {
-      warnings.push(`Could not read ${ref.relPath}: ${(err as Error).message}`);
+      const because = (err as Error).message;
+      warnings.push(`Could not read ${ref.relPath}: ${because}`);
+      // Still put it on the map. A file that silently vanishes takes its imports and
+      // whatever check it declared with it, and the auth screen then reports the
+      // routes that leaned on it as unprotected rather than as unexamined (#36).
+      nodes.push(unreadFileNode(ref, because));
     }
   }
   timings.load = Date.now() - t1;
@@ -261,6 +266,41 @@ function createProject(tsConfigPath: string | null): Project {
 // ---------------------------------------------------------------------------
 // Declarations
 // ---------------------------------------------------------------------------
+
+/**
+ * A file the compiler would not even open. It keeps its place on the map, marked, so
+ * that everything downstream can tell "nothing to protect here" apart from "I never
+ * got to look".
+ */
+function unreadFileNode(ref: SourceFileRef, because: string): AtlasNode {
+  return {
+    id: makeFileId(ref.relPath),
+    kind: 'file',
+    name: path.posix.basename(ref.relPath),
+    label: null,
+    parentId: null,
+    language: 'typescript',
+    path: ref.relPath,
+    startLine: 1,
+    endLine: 1,
+    zone: ref.zone,
+    summary: null,
+    summarySource: null,
+    docHash: null,
+    bodyHash: null,
+    hash: hashText(ref.relPath),
+    provenance: 'static',
+    meta: {
+      ext: extOf(ref.relPath),
+      loc: 0,
+      externalImports: [],
+      exportedNames: [],
+      functionCount: 0,
+      typeCount: 0,
+      unread: because,
+    },
+  };
+}
 
 function extractFile(ref: SourceFileRef, sf: SourceFile, nodes: AtlasNode[], declared: Declared): AtlasNode {
   const fileId = makeFileId(ref.relPath);

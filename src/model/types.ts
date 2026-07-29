@@ -213,6 +213,19 @@ export interface EnvVarInfo {
 }
 
 /** meta for kind === 'endpoint' */
+/**
+ * Why a door with no visible check is that way. `worth-a-look` is the *absence* of an
+ * explanation, and is the only one of these that belongs in a headline — see
+ * `model/exposure.ts` for how each is decided.
+ */
+export type OpenKind = 'worth-a-look' | 'page' | 'auth-mount' | 'unreadable';
+
+export interface OpenVerdict {
+  kind: OpenKind;
+  /** The fact that decided it, in the reader's words. `null` for `worth-a-look`. */
+  because: string | null;
+}
+
 export interface EndpointMeta {
   endpointKind: EndpointKind;
   /** GET/POST/… where the boundary has a verb. */
@@ -226,6 +239,12 @@ export interface EndpointMeta {
   /** This door leads to code that writes data, so leaving it open matters more. */
   writes: boolean;
   sites: CodeSite[];
+  /**
+   * When nothing checks this door, what explains it — see `model/exposure.ts`. Written
+   * once by the analyzer so the node card, its group and the security screen cannot
+   * disagree about the same route. Absent when something *does* check it.
+   */
+  open?: OpenVerdict;
   /** Cron expression, when a scheduler is what knocks. */
   schedule?: string;
   /** Only on the single `env` endpoint. */
@@ -328,7 +347,19 @@ export interface AtlasStats {
   endpoints: number;
   /** The subset that answers a URL — the ones auth coverage is measured over. */
   routes: number;
+  /**
+   * Doors with no check found *and* nothing that explains why — the number this tool
+   * exists to surface. Pages, the auth provider's own mount point and routes behind
+   * an unreadable file are counted separately, because a headline that includes them
+   * is one people learn to scroll past (#24).
+   */
   unprotectedRoutes: number;
+  /** Unchecked, with a reason: a page the browser renders, or the sign-in door. */
+  publicRoutes: number;
+  /** Unchecked, but a file they import could not be read — unknown, not open (#36). */
+  unreadableRoutes: number;
+  /** Files that could not be parsed at all. Every count above is short by their contents. */
+  unreadFiles: number;
   services: number;
   externalServices: number;
   stores: number;

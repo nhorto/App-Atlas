@@ -26,6 +26,8 @@ import type {
   StoreMeta,
   Zone,
 } from './types.js';
+import { classifyOpenDoors } from './exposure.js';
+import type { OpenVerdict } from './exposure.js';
 import type { AtlasGraph } from './graph.js';
 
 export interface BoundaryCard {
@@ -159,7 +161,11 @@ export function buildBoundaryView(graph: AtlasGraph): BoundaryView {
   const flows: BoundaryFlow[] = [];
   const zoneWeights = new Map<Zone, number>();
 
-  const inputs = buildInputs(graph, endpoints, flows, zoneWeights);
+  // Card badges and the summary line under them have to be counting the same thing,
+  // or the screen argues with itself: "8 open" on the Pages card above "1 route has
+  // no auth check" is a reader's first reason to distrust both (#24).
+  const openDoors = classifyOpenDoors(graph.allNodes(), graph.allEdges());
+  const inputs = buildInputs(graph, endpoints, flows, zoneWeights, openDoors);
   const outputs = buildOutputs(graph, services, stores, flows, zoneWeights);
 
   const archetype = graph.meta.archetype?.archetype;
@@ -191,6 +197,7 @@ function buildInputs(
   endpoints: AtlasNode[],
   flows: BoundaryFlow[],
   zoneWeights: Map<Zone, number>,
+  openDoors: Map<string, OpenVerdict>,
 ): BoundaryCard[] {
   const cards: BoundaryCard[] = [];
 
@@ -207,7 +214,7 @@ function buildInputs(
     for (const node of members) {
       const meta = node.meta as unknown as EndpointMeta;
       paths += Math.max(1, meta.sites.length);
-      if (meta.guards.length === 0) open++;
+      if (openDoors.get(node.id)?.kind === 'worth-a-look') open++;
 
       // A door's flow lands in the zone of whatever code answers it.
       for (const edge of graph.edgesFrom(node.id)) {

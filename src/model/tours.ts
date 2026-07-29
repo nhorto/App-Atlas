@@ -16,6 +16,7 @@
  * Nothing in this file calls a model. Tours are free, work offline, and are the same
  * on every run.
  */
+import { authHeadline } from './exposure.js';
 import type { AtlasGraph } from './graph.js';
 import type { AtlasNode, EndpointMeta, ServiceMeta, StoreMeta, SummarySource } from './types.js';
 
@@ -66,6 +67,7 @@ export function buildTours(graph: AtlasGraph): Tour[] {
 
 function welcomeTour(graph: AtlasGraph): Tour {
   const stats = graph.meta.stats;
+  const auth = authHeadline(stats);
   const app = graph.getNodeById(graph.rootId) ?? null;
   const overview = graph.getOverview();
   // Sorted by size, because the welcome step introduces them as "the biggest" —
@@ -108,11 +110,10 @@ function welcomeTour(graph: AtlasGraph): Tour {
         ? 'App Atlas found no routes, webhooks or scheduled jobs — nothing here answers the outside world directly.'
         : [
             `${sentenceCase(countOf(stats.endpoints, 'way'))} in: ${describeDoors(endpoints)}.`,
-            stats.routes === 0
-              ? null
-              : stats.unprotectedRoutes === 0
-                ? `Every one of the ${stats.routes} a stranger can reach has an auth check.`
-                : `${stats.unprotectedRoutes} of the ${stats.routes} a stranger can reach have no auth check App Atlas can see.`,
+            auth ? `${sentenceCase(auth.headline)}.` : null,
+            // Only the first caveat: a walkthrough card is three lines, and the
+            // security screen is where the full accounting belongs.
+            auth?.caveats[0] ? `${sentenceCase(auth.caveats[0])}.` : null,
           ]
             .filter(Boolean)
             .join(' '),
@@ -121,7 +122,7 @@ function welcomeTour(graph: AtlasGraph): Tour {
     focusIds: endpoints.slice(0, 12).map((node) => node.id),
     levelId: graph.rootId,
     codeId: null,
-    tone: stats.unprotectedRoutes > 0 ? 'warn' : undefined,
+    tone: auth?.tone === 'warn' ? 'warn' : undefined,
   });
 
   if (modules.length > 0) {

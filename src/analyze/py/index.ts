@@ -86,7 +86,7 @@ export async function analyzePython(ctx: PluginContext): Promise<PluginResult> {
       `Found ${files.length} Python ${files.length === 1 ? 'file' : 'files'} but no Python 3.9+ to read them with. ` +
         'They appear on the map without their insides. Set APP_ATLAS_PYTHON to point at an interpreter.',
     );
-    for (const ref of stale) nodes.push(shallowFileNode(ref, project.root));
+    for (const ref of stale) nodes.push(shallowFileNode(ref, project.root, 'no Python 3.9+ interpreter was available to read it'));
     return { nodes, edges: [...edges.values()], boundaries, warnings, timings, slices, reused };
   }
   timings.interpreter = Date.now() - t0;
@@ -114,8 +114,9 @@ export async function analyzePython(ctx: PluginContext): Promise<PluginResult> {
     buckets.set(ref.relPath, bucket);
 
     if (!file || !file.ok) {
+      const because = file?.error ?? 'the Python reader returned nothing for it';
       if (file?.error) warnings.push(`Could not read ${ref.relPath}: ${file.error}`);
-      bucket.nodes.push(shallowFileNode(ref, project.root));
+      bucket.nodes.push(shallowFileNode(ref, project.root, because));
       continue;
     }
     // A notebook's own bytes are JSON; the Python it contains came back from the
@@ -376,8 +377,15 @@ function classNode(id: string, fileId: string, ref: SourceFileRef, def: PyDef, l
   };
 }
 
-/** A file we could not parse still belongs on the map — as a file, with its size. */
-function shallowFileNode(ref: SourceFileRef, root: string): AtlasNode {
+/**
+ * A file we could not parse still belongs on the map — as a file, with its size.
+ *
+ * `because` is carried on the node rather than only into `warnings` for two reasons:
+ * it survives the cache, so the second run is as honest as the first; and the auth
+ * screen needs to know that a route importing this file has an unexamined check in it
+ * rather than no check at all (issue #36).
+ */
+function shallowFileNode(ref: SourceFileRef, root: string, because: string): AtlasNode {
   const text = readText(path.join(root, ref.relPath));
   return {
     id: makeFileId(ref.relPath),
@@ -403,7 +411,7 @@ function shallowFileNode(ref: SourceFileRef, root: string): AtlasNode {
       exportedNames: [],
       functionCount: 0,
       typeCount: 0,
-      unread: true,
+      unread: because,
     },
   };
 }
