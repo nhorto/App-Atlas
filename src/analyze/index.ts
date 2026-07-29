@@ -7,7 +7,7 @@
  * the whole pipeline.
  */
 import type { Atlas, AtlasEdge, AtlasNode, AtlasStats, EndpointMeta, Zone } from '../model/types.js';
-import { classifyOpenDoors, tallyOpenDoors } from '../model/exposure.js';
+import { classifyOpenDoors, isAuthRelevant, tallyOpenDoors } from '../model/exposure.js';
 import { authProviderForPackage } from './boundaries/catalog.js';
 import { countStaleDocs } from '../model/staleness.js';
 import { FORMAT_VERSION, makeAppId, makeEdgeId } from '../model/types.js';
@@ -411,15 +411,6 @@ export function computeStats(nodes: AtlasNode[], edges: AtlasEdge[]): AtlasStats
   };
 }
 
-/**
- * Auth coverage is measured over the doors a stranger can knock on. A cron job or a
- * queue worker is not reachable from the internet, so counting it as "unprotected"
- * would inflate the number that matters and teach people to ignore it.
- */
-export function isAuthRelevant(meta: EndpointMeta): boolean {
-  return (
-    meta.endpointKind === 'http-route' ||
-    meta.endpointKind === 'server-action' ||
-    meta.endpointKind === 'realtime'
-  );
-}
+// The rule itself lives beside the classification it belongs to, so the denominator and
+// the numerator can never be computed from two different ideas of what a route is.
+export { isAuthRelevant } from '../model/exposure.js';

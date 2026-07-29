@@ -167,7 +167,10 @@ function detectRoutes(
       for (const method of methods) {
         findings.push({
           type: 'endpoint',
-          endpointKind: isWebhookPath(route) ? 'webhook' : 'http-route',
+          // Always a route here. Whether it is really a webhook is decided once, in the
+          // merge, on the address after its prefixes are composed — a handler spelled
+          // `@router.post("/")` under `prefix="/webhooks"` cannot know its own name.
+          endpointKind: 'http-route',
           key: `${method} ${route}`,
           name: `${method} ${route}`,
           method,
@@ -196,7 +199,7 @@ function detectRoutes(
       const shown = `/${route}`.replace(/\/+/g, '/');
       findings.push({
         type: 'endpoint',
-        endpointKind: isWebhookPath(shown) ? 'webhook' : 'http-route',
+        endpointKind: 'http-route',
         key: `GET ${shown}`,
         // Django does not declare the method here; the view decides. Saying GET would
         // be a guess, so the name says what is actually known: a URL is served.
@@ -213,9 +216,6 @@ function detectRoutes(
   }
 }
 
-function isWebhookPath(route: string): boolean {
-  return /webhook|callback|\/hooks?\//i.test(route);
-}
 
 /** Auth that is visible on the handler itself: a decorator, or an injected dependency. */
 function guardsFor(def: PyDef, path: string): GuardInfo[] {

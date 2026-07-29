@@ -13,7 +13,7 @@ import assert from 'node:assert/strict';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import test from 'node:test';
-import { analyzeProject, AtlasGraph, buildBoundaryView, buildInsights } from '../dist/node/index.js';
+import { analyzeProject, AtlasGraph, buildBoundaryView, buildInsights, isAuthRelevant } from '../dist/node/index.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const FIXTURE = path.join(here, 'fixtures', 'boundary');
@@ -123,6 +123,21 @@ test('promotes a route to a webhook when it verifies a signature', () => {
   const guard = hook.meta.guards.find((g) => g.provider === 'Stripe');
   assert.ok(guard, 'the signature check is what protects a webhook');
   assert.equal(guard.confidence, 'certain');
+});
+
+/**
+ * A door is also *called* a webhook on the strength of the word in its address, which
+ * is a fair guess about what the author meant and no evidence at all about who can
+ * knock. When the promotion was allowed to remove it from the auth count, an address
+ * containing `/webhooks/` was enough to make an unchecked door invisible on the one
+ * screen built to find unchecked doors.
+ */
+test('a webhook is excused from the auth count by its signature check, not by its name', () => {
+  const verified = endpoint('POST /api/webhooks/stripe');
+  assert.ok(!isAuthRelevant(verified.meta), 'the signature is the lock');
+
+  const named = { endpointKind: 'webhook', guards: [], sites: [], method: 'POST' };
+  assert.ok(isAuthRelevant(named), 'nothing verifies this one, so it is still a door anyone can post to');
 });
 
 test('folds a vercel.json cron into the route it actually calls', () => {

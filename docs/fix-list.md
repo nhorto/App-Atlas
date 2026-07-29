@@ -318,7 +318,7 @@ door that was never drawn.
       the Node side as `Depends()`, so the one name that mattered had already been
       thrown away.
 
-- [ ] **31. A controller class inherits the check its handlers never mention** —
+- [ ] **34. A controller class inherits the check its handlers never mention** —
       *Tier 2, found while fixing #37.* `mealie` reads **124 of 183 routes** as having
       no visible check. Its routers are plain, and its handlers are methods of
       `AdminBackupController(BaseAdminController)`; three classes up the hierarchy,
@@ -329,7 +329,7 @@ door that was never drawn.
       name the way aliases already are. Not wrong today, only blank: the headline says
       *no auth check App Atlas can see*.
 
-- [ ] **27. A door's identity was its address, and its address was wrong** — *Tier 1,
+- [x] **27. A door's identity was its address, and its address was wrong** — *Tier 1,
       fixed by #33.* `makeEndpointId` keys on `method + route`, so two files each
       declaring `@router.get("/")` produced one node. Not a display bug: the count on
       the Boundaries screen, the auth denominator and the brief were all short by the
@@ -364,13 +364,25 @@ door that was never drawn.
       warning the reader can see is false teaches them to skip the warnings, which is
       where the real ones live. **Done.** Removed.
 
-- [ ] **28. A webhook is recognised by a path we now know better** — *Tier 3.*
-      `isWebhookPath` runs in the Python detector, on the route as its own file spells
-      it. A handler at `@router.post("/")` mounted under `prefix="/webhooks"` is typed
-      `http-route`, and after #33 its own name says `/webhooks/…`. Re-checking the kind
-      once the address is composed would settle it. Not a regression — neither spelling
-      was detected before — and the TypeScript side never used the path heuristic at
-      all, so this is one small unification rather than a bug.
+- [x] **28. A webhook is recognised by a path we now know better** — *Tier 3, and it
+      turned out to be Tier 1.* `isWebhookPath` ran in the Python detector, on the route
+      as its own file spells it, so re-checking the kind once the address is composed
+      looked like a small unification.
+      **Done, in the other direction.** Composing the address first would have made the
+      hole *bigger*, because a route promoted to `webhook` leaves the auth denominator
+      entirely — and the merge layer promotes on the word in the address alone, pushing
+      no guard when it does. `/api/webhooks/anything` with nothing verifying anything
+      was a door a stranger could post to, and it was leaving the security count without
+      ever being reported once. So the promotion stays (the author's own word for the
+      door is worth showing, and it groups the boundary screen correctly), and the
+      question the auth count asks changed: **not what the door is called, but whether
+      anything is checking the caller.** A signature check is the lock; a path is not.
+      One rule now, in `model/exposure.ts`, for the headline, the security screen and
+      the brief — the Python-side copy is gone, which is the unification the item wanted.
+      mealie's six `/webhooks/…` routes are actually CRUD over webhook *subscriptions*
+      and were silently exempt: 124 of 183 → **130 of 189**. taxonomy and dispatch are
+      unchanged to the number, because their webhooks verify signatures and have earned
+      the exemption.
 
 - [x] **32. A single-page app was filed as a library** — *Tier 1.* Found while doing 9.
       `full-stack-fastapi-template`'s React frontend routes in the browser, so no door

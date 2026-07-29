@@ -38,6 +38,25 @@ export type { OpenKind, OpenVerdict } from './types.js';
 /** Doors a stranger on the internet can knock on. Crons and queues are not. */
 const AUTH_RELEVANT = new Set(['http-route', 'server-action', 'realtime']);
 
+/**
+ * Auth coverage is measured over the doors a stranger can knock on. A cron job or a
+ * queue worker is not reachable from the internet, so counting it as "unprotected"
+ * would inflate the number that matters and teach people to ignore it.
+ *
+ * A webhook is the one kind that answers *both* ways. When something in the file
+ * verifies a signature, that signature is the lock and the door is not open — which is
+ * why a verified webhook sits outside this count. But a route is also called a webhook
+ * on the strength of the word in its address, and there the promotion was quietly
+ * deleting a door from the only screen that exists to find open doors: `/api/webhooks/x`
+ * with nothing verifying anything is a door anyone can post to, and it was leaving the
+ * count without ever being reported. So the question asked here is not what the door is
+ * called — it is whether anything is checking the caller.
+ */
+export function isAuthRelevant(meta: EndpointMeta): boolean {
+  if (meta.endpointKind === 'webhook') return meta.guards.length === 0;
+  return AUTH_RELEVANT.has(meta.endpointKind);
+}
+
 const WORTH_A_LOOK: OpenVerdict = { kind: 'worth-a-look', because: null };
 
 /**
@@ -61,7 +80,7 @@ export function classifyOpenDoors(nodes: AtlasNode[], edges: AtlasEdge[]): Map<s
     switch (node.kind) {
       case 'endpoint': {
         const meta = node.meta as unknown as EndpointMeta;
-        if (AUTH_RELEVANT.has(meta.endpointKind) && meta.guards.length === 0) open.push(node);
+        if (isAuthRelevant(meta) && meta.guards.length === 0) open.push(node);
         break;
       }
       case 'service':

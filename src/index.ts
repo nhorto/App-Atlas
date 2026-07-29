@@ -29,6 +29,7 @@ export { buildTours, tourFor } from './model/tours.js';
 export type { Tour, TourStep } from './model/tours.js';
 export { buildTypeView } from './model/typeview.js';
 export type { TypeCard, TypeField, TypeLink, TypeView } from './model/typeview.js';
+export { authHeadline, classifyOpenDoors, isAuthRelevant } from './model/exposure.js';
 export { buildInsights } from './model/insights.js';
 export type { InsightsView, Protection, RouteInsight, ServiceInsight, StoreInsight } from './model/insights.js';
 export {

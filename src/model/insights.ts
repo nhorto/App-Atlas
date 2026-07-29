@@ -23,7 +23,7 @@ import type {
   TypeMeta,
 } from './types.js';
 import type { AtlasGraph } from './graph.js';
-import { classifyOpenDoors, unreadableFiles } from './exposure.js';
+import { classifyOpenDoors, isAuthRelevant, unreadableFiles } from './exposure.js';
 import type { OpenVerdict } from './exposure.js';
 
 /** How sure we are that something is checking who is calling. */
@@ -135,8 +135,6 @@ export interface InsightsView {
   };
 }
 
-/** Doors a stranger on the internet can knock on. Crons and queues are not. */
-const AUTH_RELEVANT: EndpointKind[] = ['http-route', 'server-action', 'realtime'];
 
 export function buildInsights(graph: AtlasGraph): InsightsView {
   const endpoints = graph.nodesOfKind('endpoint');
@@ -152,7 +150,7 @@ export function buildInsights(graph: AtlasGraph): InsightsView {
       envMeta = meta;
       continue;
     }
-    if (!AUTH_RELEVANT.includes(meta.endpointKind)) continue;
+    if (!isAuthRelevant(meta)) continue;
 
     routes.push({
       id: node.id,
