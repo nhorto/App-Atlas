@@ -28,8 +28,17 @@ export interface WorkerBinding {
   name: string;
   /** `durable-object` | `kv` | `r2` | `d1` | `queue` | `ai` | `vectorize`. */
   kind: string;
-  /** The class, namespace or bucket on the other end, when the config names one. */
+  /**
+   * The class, namespace or bucket on the other end, when the config *names* one.
+   *
+   * A KV namespace is identified only by an opaque id, and `d3dc14b78c9f…` is not a
+   * name — showing it as one puts a hex string where a reader expects to see what the
+   * thing is called. Where there is no name, the binding's own name (`OG_CACHE`) is
+   * the better label, and it is what the code greps for anyway.
+   */
   target: string | null;
+  /** The opaque identifier, when the config carries one. Evidence, not a label. */
+  id: string | null;
 }
 
 export interface WorkerSignal {
@@ -37,6 +46,14 @@ export interface WorkerSignal {
   name: string | null;
   /** Repo-relative path of the config file. */
   configPath: string;
+  /**
+   * `main` exactly as the config writes it. This, not `entry`, is what makes a config
+   * a Worker: OpenNext and every TypeScript Worker point `main` at a build artifact,
+   * so on a fresh clone the file is simply not there yet. Deciding "is this a Worker"
+   * on whether someone had run a build was how App Atlas came to report that
+   * mirrorquiz — which runs entirely on Cloudflare — had no edge deploy at all (#29).
+   */
+  declaredEntry: string | null;
   /**
    * Repo-relative path of the entry script, resolved against the config's own folder
    * and only when the file is really there. A `main` pointing at a build artifact that
@@ -51,6 +68,16 @@ export interface WorkerSignal {
 }
 
 const CONFIG_NAMES = ['wrangler.toml', 'wrangler.json', 'wrangler.jsonc'];
+
+/**
+ * A config that deploys code, as opposed to a Pages config that deploys files.
+ *
+ * The one place to ask the question, so no caller re-decides it as "has an entry file
+ * on disk" and quietly stops finding Workers whose entry is built.
+ */
+export function isWorker(signal: WorkerSignal): boolean {
+  return !signal.isPages && signal.declaredEntry !== null;
+}
 
 /** Directories that never hold a config worth reading. */
 const SKIP_DIRS = new Set([
@@ -120,6 +147,7 @@ function readOne(root: string, absPath: string): WorkerSignal | null {
   return {
     name: typeof parsed.name === 'string' ? parsed.name : null,
     configPath,
+    declaredEntry: main,
     entry: main ? resolveEntry(root, absPath, main) : null,
     crons: parsed.crons ?? [],
     bindings: parsed.bindings ?? [],
@@ -180,12 +208,11 @@ function readToml(text: string): ParsedConfig {
   const flush = () => {
     if (!current || !currentTable) return;
     const kind = BINDING_TABLES[currentTable];
-    if (kind && current.binding !== undefined) {
-      out.bindings!.push({ name: current.binding, kind, target: bindingTarget(current) });
-    } else if (kind && current.name !== undefined) {
-      // `durable_objects.bindings` spells the env name `name`, everything else spells
-      // it `binding`. Same idea, two conventions, both in the same file.
-      out.bindings!.push({ name: current.name, kind, target: bindingTarget(current) });
+    // `durable_objects.bindings` spells the env name `name`, everything else spells
+    // it `binding`. Same idea, two conventions, both in the same file.
+    const envName = current.binding ?? current.name;
+    if (kind && envName !== undefined) {
+      out.bindings!.push({ name: envName, kind, target: bindingTarget(current), id: current.id ?? null });
     }
     current = null;
   };
@@ -239,7 +266,7 @@ function readToml(text: string): ParsedConfig {
 }
 
 function bindingTarget(entry: Record<string, string>): string | null {
-  return entry.class_name ?? entry.database_name ?? entry.bucket_name ?? entry.queue ?? entry.id ?? null;
+  return entry.class_name ?? entry.database_name ?? entry.bucket_name ?? entry.queue ?? null;
 }
 
 function readTomlString(value: string): string | null {
@@ -300,9 +327,14 @@ function collectJsonBindings(value: unknown, kind: string, out: ParsedConfig): v
     const entry = raw as Record<string, unknown>;
     const name = typeof entry.binding === 'string' ? entry.binding : typeof entry.name === 'string' ? entry.name : null;
     if (!name) continue;
-    const target = ['class_name', 'database_name', 'bucket_name', 'queue', 'id'].find(
+    const target = ['class_name', 'database_name', 'bucket_name', 'queue'].find(
       (key) => typeof entry[key] === 'string',
     );
-    out.bindings!.push({ name, kind, target: target ? (entry[target] as string) : null });
+    out.bindings!.push({
+      name,
+      kind,
+      target: target ? (entry[target] as string) : null,
+      id: typeof entry.id === 'string' ? entry.id : null,
+    });
   }
 }

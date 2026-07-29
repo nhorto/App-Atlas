@@ -36,6 +36,7 @@ import {
   makeTypeId,
 } from '../../model/types.js';
 import { hashParts } from '../../util/hash.js';
+import { isWorker } from '../wrangler.js';
 import { classifyZone } from '../zones.js';
 import { isCatchAllMatcher, matcherMatches } from './auth.js';
 import { guardThroughHops, reachableGuards, servicesThroughWrappers } from './reach.js';
@@ -338,8 +339,12 @@ function collectEndpoints(input: BuildInput): Map<string, MergedEndpoint> {
  */
 function addWorkerDoors(input: BuildInput, add: (finding: EndpointFinding) => void): void {
   for (const worker of input.signals.workers) {
-    if (worker.isPages || !worker.entry) continue;
-    const label = worker.name ?? worker.entry;
+    if (!isWorker(worker)) continue;
+    // `declaredEntry` is what the config says; `entry` is null until someone has run
+    // a build. The door is real either way — the handler is only hung off the file
+    // when there is a file to hang it off.
+    const main = worker.declaredEntry as string;
+    const label = worker.name ?? main;
 
     add({
       type: 'endpoint',
@@ -355,11 +360,11 @@ function addWorkerDoors(input: BuildInput, add: (finding: EndpointFinding) => vo
         path: worker.configPath,
         line: 1,
         nodeId: null,
-        snippet: `main = "${worker.entry}"`,
+        snippet: `main = "${main}"`,
       },
       // The entry file is the handler, so the door hangs off real code and the map can
       // walk from it into whatever the Worker calls.
-      handlerId: input.knownNodeIds.has(`file:${worker.entry}`) ? `file:${worker.entry}` : null,
+      handlerId: worker.entry && input.knownNodeIds.has(`file:${worker.entry}`) ? `file:${worker.entry}` : null,
     });
 
     for (const schedule of worker.crons) {
@@ -379,7 +384,7 @@ function addWorkerDoors(input: BuildInput, add: (finding: EndpointFinding) => vo
           nodeId: null,
           snippet: `crons = ["${schedule}"]`,
         },
-        handlerId: input.knownNodeIds.has(`file:${worker.entry}`) ? `file:${worker.entry}` : null,
+        handlerId: worker.entry && input.knownNodeIds.has(`file:${worker.entry}`) ? `file:${worker.entry}` : null,
       });
     }
   }
@@ -770,6 +775,66 @@ interface MergedStore {
   tableSites: Map<string, CodeSite[]>;
 }
 
+/**
+ * What a Cloudflare binding is, in the vocabulary the rest of the map already uses.
+ * Queue producers are left out on purpose: a queue you write into is somewhere data
+ * goes, not somewhere it is kept, and calling it a store would put it on the wrong
+ * half of the picture.
+ */
+const BINDING_STORES: Record<string, { client: string; storeKind: StoreKind }> = {
+  d1: { client: 'Cloudflare D1', storeKind: 'sql' },
+  kv: { client: 'Cloudflare KV', storeKind: 'kv' },
+  r2: { client: 'Cloudflare R2', storeKind: 'blob' },
+  'durable-object': { client: 'Durable Objects', storeKind: 'kv' },
+  hyperdrive: { client: 'Cloudflare Hyperdrive', storeKind: 'sql' },
+  vectorize: { client: 'Cloudflare Vectorize', storeKind: 'nosql' },
+};
+
+/**
+ * Databases a Worker is bound to, read out of its config (#29).
+ *
+ * Nothing in the code says which database `env.DB` is — the platform injects it, and
+ * the config is the only place its name and kind are written down. Without this the
+ * map offered mirrorquiz a nameless "Database", and the words layer, asked to describe
+ * a nameless database, confidently called it Postgres. It is D1.
+ *
+ * Reads and writes stay at zero because none were observed: this is a declaration, not
+ * a call site, and the evidence shown is the config line itself. An ORM store found in
+ * the code is deliberately left as its own box rather than folded into this one —
+ * guessing that the app's one Drizzle client points at the app's one D1 database would
+ * be right most of the time, and the times it is wrong it would print a false sentence
+ * about where a customer's data lives.
+ */
+function addWorkerBindings(input: BuildInput, merged: Map<string, MergedStore>): void {
+  for (const worker of input.signals.workers) {
+    if (!isWorker(worker)) continue;
+    for (const binding of worker.bindings) {
+      const shape = BINDING_STORES[binding.kind];
+      if (!shape) continue;
+      const id = makeStoreId(`cloudflare:${binding.kind}:${binding.target ?? binding.id ?? binding.name}`);
+      if (merged.has(id)) continue;
+      const site: CodeSite = {
+        path: worker.configPath,
+        line: 1,
+        nodeId: null,
+        // What the code sees on `env`, and what the dashboard calls it — the two ways
+        // a reader might go looking for this thing.
+        snippet: `env.${binding.name} → ${binding.target ?? binding.id ?? shape.client}`,
+      };
+      merged.set(id, {
+        id,
+        // The name in the dashboard when the config gives one, else the name the code
+        // sees on `env` — both are things a reader can search for.
+        name: binding.target ?? binding.name,
+        readSites: [],
+        writeSites: [],
+        tableSites: new Map(),
+        meta: { storeKind: shape.storeKind, client: shape.client, tables: [], reads: 0, writes: 0, sites: [site] },
+      });
+    }
+  }
+}
+
 function collectStores(input: BuildInput): Map<string, MergedStore> {
   const merged = new Map<string, MergedStore>();
 
@@ -815,6 +880,8 @@ function collectStores(input: BuildInput): Map<string, MergedStore> {
     noteTable(store, finding.table, finding.site);
     merged.set(id, store);
   }
+
+  addWorkerBindings(input, merged);
 
   // A Prisma schema lists every table, including ones no code has touched yet.
   const prisma = merged.get(makeStoreId('prisma'));

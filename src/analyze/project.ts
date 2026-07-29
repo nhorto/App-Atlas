@@ -13,6 +13,7 @@ import type { Zone } from '../model/types.js';
 import { relPosix, toPosix } from '../util/paths.js';
 import { readSignals } from './signals.js';
 import type { ProjectSignals } from './signals.js';
+import { isWorker } from './wrangler.js';
 import { classifyZone } from './zones.js';
 
 export interface SourceFileRef {
@@ -224,7 +225,7 @@ function detectFrameworks(pkg: Record<string, unknown> | null, signals: ProjectS
   if (signals.crons.length > 0) out.add('Vercel Cron');
   // A wrangler config is the only place a Cloudflare deploy is written down; the
   // dependency list often does not mention it at all.
-  if (signals.workers.some((w) => !w.isPages && w.entry)) out.add('Cloudflare Workers');
+  if (signals.workers.some(isWorker)) out.add('Cloudflare Workers');
   if (signals.workers.some((w) => w.isPages)) out.add('Cloudflare Pages');
   for (const [dep, label] of Object.entries(PYTHON_FRAMEWORKS)) {
     if (signals.pythonPackages.has(dep)) out.add(label);

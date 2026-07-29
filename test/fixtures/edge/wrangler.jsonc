@@ -1,0 +1,19 @@
+{
+	// `main` points at a build artifact. On a fresh clone `.open-next/` does not exist,
+	// which is the normal state of every OpenNext and TypeScript Worker repo.
+	"name": "quiz-edge",
+	"main": ".open-next/worker.js",
+	"compatibility_date": "2025-04-01",
+	"compatibility_flags": ["nodejs_compat"],
+	"assets": { "directory": ".open-next/assets", "binding": "ASSETS" },
+	"d1_databases": [
+		{
+			"binding": "DB",
+			"database_name": "quiz-db",
+			"database_id": "b1c3a6a5-aca5-474d-9acf-cbf8c2da241e"
+		}
+	],
+	"kv_namespaces": [{ "binding": "OG_CACHE", "id": "d3dc14b78c9f4213a5b78bfa031768ba" }],
+	"r2_buckets": [{ "binding": "UPLOADS", "bucket_name": "quiz-uploads" }],
+	"queues": { "producers": [{ "binding": "JOBS", "queue": "quiz-jobs" }] }
+}
