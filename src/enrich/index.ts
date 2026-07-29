@@ -25,6 +25,7 @@
 import type { Atlas, AtlasNode, EndpointMeta, ServiceMeta, StoreMeta } from '../model/types.js';
 import { hashParts } from '../util/hash.js';
 import type { AppFacts, LabelItem } from './prompts.js';
+import { knownServiceNames } from '../analyze/boundaries/catalog.js';
 import { fileBatchRequest, moduleBatchRequest, overviewRequest } from './prompts.js';
 import type { CachedExplanation, EnrichBackend, EnrichTier, EnrichUsage } from './types.js';
 import { estimateTokens, explanationKey } from './types.js';
@@ -81,6 +82,15 @@ export interface EnrichReport {
   /** Files past the cap, never sent. Reported so a limit is never silent. */
   filesSkipped: number;
   declined: boolean;
+  /**
+   * Companies the overview named that no detector found (#35).
+   *
+   * Not a correction — nothing here changes a box on a screen, because a generated
+   * sentence is not evidence. It is a lead: the paragraph and the diagram are drawn
+   * from the same list and shown together, so a name in one and not the other means one
+   * of the two layers is wrong, and it is worth knowing which.
+   */
+  contradictions: string[];
   usage: EnrichUsage;
   /** Newly generated explanations for the caller to persist. */
   additions: Map<string, CachedExplanation>;
@@ -101,6 +111,7 @@ export async function enrichAtlas(options: EnrichOptions): Promise<EnrichReport>
     failedRequests: 0,
     filesSkipped: 0,
     declined: false,
+    contradictions: [],
     usage: { inputTokens: 0, outputTokens: 0, costUsd: 0 },
     additions: new Map(),
   };
@@ -169,6 +180,7 @@ export async function enrichAtlas(options: EnrichOptions): Promise<EnrichReport>
       hashes: [appHash],
       paths: [''],
       request: overviewRequest(appFacts),
+      knownServices: appFacts.services,
     });
   }
   for (const batch of chunk(pending.modules, MODULES_PER_REQUEST)) {
@@ -240,6 +252,30 @@ interface Job {
   /** The path shown in the prompt, also in that order. Accepted as a reply key. */
   paths: string[];
   request: { system: string; user: string; maxOutputTokens: number };
+  /** Overview only: the companies the structure did find, to check the prose against. */
+  knownServices?: string[];
+}
+
+/**
+ * Companies the paragraph names that the structure does not have.
+ *
+ * Only names from the catalog count. "Stripe" appearing in prose beside a diagram with
+ * no Stripe box means the detectors missed a payment integration or the model invented
+ * one, and either is worth a line in the run report. Anything the tool has never heard
+ * of is not evidence of a gap — it is a word.
+ */
+function companiesNotFound(paragraph: string, found: string[]): string[] {
+  const already = new Set(found.map((name) => name.toLowerCase()));
+  const missing: string[] = [];
+  for (const name of knownServiceNames()) {
+    if (already.has(name.toLowerCase())) continue;
+    // Whole words only: "Resend" must not match "resends", and a one-word company name
+    // is exactly the kind of thing that appears inside another word.
+    if (new RegExp(`\\b${name.replace(/[.*+?^${}()|[\\]\\\\]/g, '\\\\$&')}\\b`, 'i').test(paragraph)) {
+      missing.push(name);
+    }
+  }
+  return missing;
 }
 
 function applyReply(job: Job, text: string, byId: Map<string, AtlasNode>, report: EnrichReport): void {
@@ -247,6 +283,7 @@ function applyReply(job: Job, text: string, byId: Map<string, AtlasNode>, report
     const node = byId.get(job.nodeIds[0]);
     const paragraph = cleanParagraph(text);
     if (!node || !paragraph) return;
+    report.contradictions.push(...companiesNotFound(paragraph, job.knownServices ?? []));
     applySummary(node, paragraph);
     remember(report, 'overview', node.id, job.hashes[0], paragraph);
     return;

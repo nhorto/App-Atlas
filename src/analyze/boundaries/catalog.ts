@@ -241,6 +241,21 @@ export function serviceForPackage(pkg: string): ServiceDef | null {
   return PACKAGE_SERVICES[pkg] ?? null;
 }
 
+/**
+ * Every company this tool knows how to recognise, by the name it would print.
+ *
+ * Used to check generated prose against the structure it sits beside: if a paragraph
+ * names Stripe and no detector found Stripe, one of the two layers is wrong and the
+ * reader is looking at both at once.
+ */
+export function knownServiceNames(): string[] {
+  const names = new Set<string>();
+  for (const def of Object.values(PACKAGE_SERVICES)) names.add(def.name);
+  for (const def of Object.values(PYTHON_SERVICES)) names.add(def.name);
+  for (const { def } of HOST_SERVICES) names.add(def.name);
+  return [...names].sort();
+}
+
 export function serviceForHost(host: string): ServiceDef | null {
   const lower = host.toLowerCase();
   for (const { pattern, def } of HOST_SERVICES) {

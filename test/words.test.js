@@ -362,10 +362,67 @@ test('trims a description to one sentence and refuses a failure message', () => 
   assert.equal(cleanSentence(42), null);
 });
 
+/**
+ * powerfab-dashboard's summary read "01_list_tables. py", "02_describe_tables. py" —
+ * four times in one paragraph. A model wraps its own output, the wrap lands mid-token,
+ * and collapsing whitespace turns the newline into a space. A reader who cannot read
+ * code has no way to tell that from a real file name.
+ */
+test('a filename split across a line break is put back together', () => {
+  assert.equal(
+    cleanSentence('Runs 01_list_tables. py and writes the result'),
+    'Runs 01_list_tables.py and writes the result',
+  );
+  assert.equal(
+    cleanParagraph('Your app dumps the schema with 06_full_schema_dump. py and writes JSON into docs for the dashboard.'),
+    'Your app dumps the schema with 06_full_schema_dump.py and writes JSON into docs for the dashboard.',
+  );
+  // `pymysql` is a word that starts with an extension and is not one. Welding it on
+  // would invent the file `None.pymysql`, which is the same failure in reverse.
+  assert.equal(
+    cleanSentence("Formats a date as 'YYYY-MM-DD' or None. pymysql hands back a date"),
+    "Formats a date as 'YYYY-MM-DD' or None. pymysql hands back a date",
+  );
+});
+
 test('rejects a folder label that just re-spells the folder name', () => {
   assert.equal(cleanLabel('User accounts', 'auth'), 'User accounts');
   assert.equal(cleanLabel('components', 'components'), null);
   assert.equal(cleanLabel('a very long label that nobody could fit on a card at all', 'x'), null);
+});
+
+/**
+ * The paragraph and the diagram are drawn from the same list and shown one above the
+ * other, so a company in one and not the other is visible to the reader before it is
+ * visible to us. Nothing here changes a box — a generated sentence is not evidence —
+ * but a lead this specific belongs in the run report.
+ */
+test('a company in the prose that no detector found is reported as a lead', async () => {
+  const atlas = await freshAtlas();
+  const backend = stubBackend({
+    reply: (request) =>
+      /one paragraph/.test(request.user)
+        ? 'Your app takes web requests, charges cards through Stripe and mails receipts with SendGrid, then files everything away.'
+        : '{}',
+  });
+
+  const report = await enrichAtlas({ atlas, backend, cache: new Map() });
+  // The fixture does call Stripe, so that one is agreement, not a lead.
+  assert.ok(!report.contradictions.includes('Stripe'), report.contradictions.join(', '));
+  assert.ok(report.contradictions.includes('SendGrid'), report.contradictions.join(', '));
+});
+
+test('a company the tool has never heard of is a word, not a lead', async () => {
+  const atlas = await freshAtlas();
+  const backend = stubBackend({
+    reply: (request) =>
+      /one paragraph/.test(request.user)
+        ? 'Your app takes web requests and files them away in the usual places for later.'
+        : '{}',
+  });
+
+  const report = await enrichAtlas({ atlas, backend, cache: new Map() });
+  assert.deepEqual(report.contradictions, []);
 });
 
 test('keeps a paragraph whole', () => {

@@ -432,23 +432,54 @@ Worth writing down, because the failure mode is easy and invisible:
 Ran taxonomy, mirrorquiz, NBA and powerfab-dashboard with the `claude` backend —
 $2.78 and ~3 minutes for all four. Nothing came off the list; two things moved up.
 
-- [ ] **22. Stop the two layers contradicting each other on screen** — [#35](https://github.com/nhorto/App-Atlas/issues/35) — *Tier 1*
+- [x] **22. Stop the two layers contradicting each other on screen** — [#35](https://github.com/nhorto/App-Atlas/issues/35) — *Tier 1*
       With AI on, the boxes say "3 services out" while the paragraph below says data goes
       to Stripe; the badge says "no check found" while the file summary says "checking the
       signed-in user first". **The AI is right and the compiler-derived box is wrong**,
       which inverts what the UI tells the reader to trust. Anchor the prose to structural
       facts, and treat prose that names something the structure lacks as a signal the
       detector missed it.
+      **Done, both halves.** The overview prompt now says the lists it was given are
+      everything we found, and that the paragraph sits directly under a diagram drawn
+      from the same lists — so a company in the sentence and not in the diagram makes the
+      reader distrust both.
+      And when it happens anyway, the run says so: a company from the catalog that the
+      prose names and no detector found is printed as a lead — *"The description names
+      SendGrid, which no detector found. Either the write-up over-reached or something
+      real is missing from the map."* Deliberately a line in the report and **not** a box
+      on a screen: a generated sentence is not evidence, and letting prose promote itself
+      into a fact is the one thing this layering exists to prevent. Only catalog names
+      count; a word the tool has never heard of is not evidence of a gap.
+      ⚠️ *Verified with a stubbed backend, not a live model.* The prompt half is a change
+      to what we ask for and has not been driven against a real one — the underlying
+      detectors have also moved a long way since the run that produced this item (#23,
+      #25, #26, #29, #32, #33), so the original contradictions may already be gone. Worth
+      re-running the four repos with `--ai-backend claude` before closing #35.
 
-- [ ] **23. Give the AI "not visible in the code" as an option** — [#35](https://github.com/nhorto/App-Atlas/issues/35) — *Tier 1*
+- [x] **23. Give the AI "not visible in the code" as an option** — [#35](https://github.com/nhorto/App-Atlas/issues/35) — *Tier 1*
       mirrorquiz runs on Cloudflare D1; because #29 never fires, the atlas offered a
       generic "Database" and the AI confidently wrote "your own **Postgres** database".
       A structural gap is not a blank — it is an invitation to guess.
+      **Done.** Two rules, because the failure had two halves. *Never add detail the
+      facts do not have* — if they say "Database", write "the database", not Postgres;
+      being more specific than the facts is the one way to be confidently wrong. And *a
+      blank means nobody could see it, not that it is absent*: "No data store found" no
+      longer appears as a flat assertion, it reads "No data store was detected. That may
+      mean there is none, or that we could not see it. Do not name one." Same wording for
+      ways in and for outside services.
+      Same caveat as 22: stub-verified, not driven against a live model.
 
-- [ ] **24. Fix filenames broken by a stray space** — *Tier 3*
+- [x] **24. Fix filenames broken by a stray space** — *Tier 3*
       powerfab-dashboard's summary renders "`01_list_tables. py`", "`02_describe_tables. py`"
       — four times in one paragraph. Looks like sentence-splitting applied to text
       containing filenames.
+      **Done**, and it was not the splitter — that already knows `next.config.js` is one
+      token. A model hard-wraps its own output, the wrap lands mid-filename, and
+      collapsing whitespace turns the newline into a space. Repaired after the collapse,
+      which is safe because there is no English sentence in which a word, a full stop and
+      a space are followed by a bare file extension. `None. pymysql` is left alone: a
+      word that starts with an extension is not one, and welding it would invent the file
+      `None.pymysql` — the same failure in reverse.
 
 ### Re-ranking after phase 2
 
