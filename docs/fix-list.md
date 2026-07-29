@@ -1,0 +1,128 @@
+# Fix list
+
+Everything the field drive turned up, ranked, with a checkbox each. Phase 1 (13 repos,
+no AI) is complete; phase 2 (AI on) appends to the bottom section when it runs.
+
+Evidence for every item is in [field-drive-findings.md](field-drive-findings.md).
+
+**Rule of thumb for the order:** anything that makes a screen state a *falsehood* comes
+before anything that makes a screen *incomplete*, because these pages claim to be
+compiler-derived and cannot be wrong.
+
+---
+
+## Tier 1 — the tool says false things
+
+- [ ] **1. Follow one hop from the handler** — [#23](https://github.com/nhorto/App-Atlas/issues/23)
+      Guards and outbound calls reached through a local helper or wrapper module are
+      invisible. Causes false "no auth check" *and* missing services. Walk the `uses`
+      edges the atlas already resolves (depth 2–3, same repo); badge hop-found guards
+      `likely`, not `certain`.
+      *Repos: taxonomy, daily-briefing, mirrorquiz.*
+
+- [ ] **2. Detect FastAPI `Annotated[..., Depends(...)]` auth** — [#32](https://github.com/nhorto/App-Atlas/issues/32)
+      `CurrentUser = Annotated[User, Depends(get_current_user)]` used as a parameter
+      type. FastAPI's own template reports **21 of 21 routes unprotected**. Needs
+      type-alias resolution, so it is separate work from #23.
+
+- [ ] **3. Detect higher-order auth wrappers** — [#32](https://github.com/nhorto/App-Atlas/issues/32)
+      `export const GET = withWorkspace(async ({ session }) => …)`. dub reports **746 of
+      760 unprotected**. The dominant pattern in production Next.js and tRPC.
+
+- [ ] **4. Compose router prefixes into route paths** — [#33](https://github.com/nhorto/App-Atlas/issues/33)
+      FastAPI doors display as `GET /{id}` when the real address is
+      `/api/v1/items/{id}`. `APIRouter(prefix=…)` + `include_router(prefix=…)` must be
+      composed. Also affects Express `app.use(prefix, router)` and NestJS.
+
+- [ ] **5. Stop inventing services from tests and variable names** — [#25](https://github.com/nhorto/App-Atlas/issues/25)
+      `psf/requests` reports `s call` and `session call` as outside companies. Skip
+      `zone === 'test'`; drop the `"<receiver> call"` fallback entirely.
+
+- [ ] **6. Make the auth headline honest** — [#24](https://github.com/nhorto/App-Atlas/issues/24)
+      "12 routes have no auth check" where 8 are public marketing pages and 1 is the auth
+      provider's own handler. True count: 0. Exclude PAGE routes and auth catch-alls, or
+      split into "worth a look" / "public on purpose".
+
+- [ ] **7. Fix the walkthrough card clipping** — [#27](https://github.com/nhorto/App-Atlas/issues/27)
+      Body text is cut mid-sentence after two lines and hides behind the Back/Next row.
+      Makes the flagship feature unusable on any step longer than two lines. Cheap fix,
+      high visibility.
+
+## Tier 2 — the tool is silent where it should speak
+
+- [ ] **8. Give Python a data story** — [#26](https://github.com/nhorto/App-Atlas/issues/26)
+      `pd.read_csv`/`to_csv`, `open()`, `sqlite3.connect`, SQLAlchemy `create_engine`.
+      powerfab-dashboard has 124 real sites and detects zero; NBA and handson-ml3 show
+      empty read/write columns.
+
+- [ ] **9. Add an `analysis` archetype for notebook projects** — [#28](https://github.com/nhorto/App-Atlas/issues/28)
+      NBA and handson-ml3 both fall through to `library` and render as a "public API" of
+      helper functions nobody imports. Columns should be *where the data comes from* →
+      *the analysis* → *what it produces*. Depends on item 8 for the inputs.
+
+- [ ] **10. Rank exported surface above `__main__` CLI doors** — [#28](https://github.com/nhorto/App-Atlas/issues/28)
+      `psf/requests` is classified `pipeline` ("Something you run") because two files
+      have debug `__main__` blocks. A regression from our own `__main__` work.
+
+- [ ] **11. Ignore archived and parked paths when counting doors** — [#28](https://github.com/nhorto/App-Atlas/issues/28)
+      powerfab-dashboard counts `scripts/_archive/` and `parked/` as ways in — 111 CLI
+      doors.
+
+- [ ] **12. Detect a Worker from a declared `main`, built or not** — [#29](https://github.com/nhorto/App-Atlas/issues/29)
+      mirrorquiz's entry is `.open-next/worker.js`, a build artifact absent from a fresh
+      clone, so Workers/D1/KV detection never fires. Never worked on the repo it was
+      written for. Also surface D1/KV/R2 bindings as data stores.
+
+- [ ] **13. Land large repos on their main app, not `scopes[0]`** — [#34](https://github.com/nhorto/App-Atlas/issues/34)
+      cal.com opens on `api-proxy` out of 113 scopes; `apps/web` is present and never
+      shown. Default to the `app`-kind scope with the most files.
+
+- [ ] **14. Show a group card's members** — [#30](https://github.com/nhorto/App-Atlas/issues/30)
+      "Pages · 14 pages" opens one arbitrary page; `memberIds` holds the rest and is
+      discarded at `BoundaryScreen.tsx:151`.
+
+- [ ] **15. Widen and surface walkthroughs** — [#27](https://github.com/nhorto/App-Atlas/issues/27)
+      Only 5 of 24 doors get one, nothing says which, and the button is absent when you
+      arrive via Search → Map even for routes that *do* have a tour.
+
+## Tier 3 — polish and trust papercuts
+
+- [ ] **16. Point a store's evidence at the real call site** — [#26](https://github.com/nhorto/App-Atlas/issues/26)
+      powerfab-dashboard's MySQL store is a correct conclusion but its sites are
+      `os.environ.get(…)` lines rather than the pymysql code.
+
+- [ ] **17. Fix the Boundaries panel's instructions** — [#30](https://github.com/nhorto/App-Atlas/issues/30)
+      Describes a `›` button and a breadcrumb that exist only on the Map.
+
+- [ ] **18. Ignore runtime-set env vars** — [#30](https://github.com/nhorto/App-Atlas/issues/30)
+      `NODE_ENV` flagged as missing from `.env.example`; it is 100% of that section's
+      signal on taxonomy. Also `PORT`, `CI`, `VERCEL*`, `NEXT_RUNTIME`.
+
+- [ ] **19. Don't list in-process libraries as companies** — [#30](https://github.com/nhorto/App-Atlas/issues/30)
+      `next-auth` appears under "3 companies you send data to".
+
+- [ ] **20. Label boundary cards for screen readers** — [#30](https://github.com/nhorto/App-Atlas/issues/30)
+      Bare `button` elements; text lives in nested spans.
+
+- [ ] **21. Fix the self-contradicting archetype reason** — [#28](https://github.com/nhorto/App-Atlas/issues/28)
+      NBA's reason reads "no doors of any kind" while the headline above says "14 names
+      in its public API".
+
+---
+
+## Confirmed working — do not regress
+
+- Notebook reading (`.ipynb`) holds up in the wild: `game_predictions.ipynb` → 498 lines
+  across 20 cells, flattened Python not JSON envelope; handson-ml3 76% documented.
+- Monorepo scoping: midday's 38 scopes complete, apps vs libraries correctly typed.
+- Scale: cal.com 346 MB / 113 scopes / 41 s, no crash, no cap hit.
+- Archetype correct on 10 of 13 repos; the service and pipeline frames are genuinely good.
+- Search, and the Map's file-level view with outbound arrows.
+- The provenance discipline and the Security screen's "nothing found ≠ exploitable"
+  disclaimer.
+
+---
+
+## Phase 2 additions
+
+*(AI backend on, 4 repos — appended when phase 2 runs.)*

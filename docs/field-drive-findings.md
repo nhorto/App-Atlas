@@ -97,22 +97,39 @@ Two distinct defects: outbound detection runs over test code, where fake hosts a
 throwaway variables live; and when no host is known the fallback name is
 `"<receiver> call"`, which turns any local variable into a company.
 
-## 4. On Python, data access is invisible
+## 4. Python file and dataframe I/O is invisible
 
-This is the archetype the original complaint was about, and it is the weakest.
+This is the archetype the original complaint was about.
 
 `NBA` reads CSVs (`pd.read_csv` across three files) and imports
 `nba_api.stats.endpoints`, an HTTP client to stats.nba.com. Its Boundaries screen shows
 **"what it reaches for" empty** and zero data stores.
 
-`powerfab-dashboard` *does* show three stores — and all three are wrong or accidental.
-"Files on disk" and "Browser storage" come from stray JavaScript (`rmSync`, `mkdirSync`,
-`localStorage`), not from its 238 Python files. "MySQL" is inferred from an
-`os.environ.get(...)` variable *name*, not from any database call.
+`powerfab-dashboard` contains **124 `open()` / `read_csv` / `to_csv` sites across its
+Python files, and detects none of them**. Its single "file-read" door comes entirely
+from one *TypeScript* file (`readdirSync`, `readFileSync` in
+`app/scripts/validate-client-configs.ts`), displayed on the Boundaries screen as
+"Files on disk · 27 places" — a count of sites within that one TS file. Likewise
+"Browser storage" is `localStorage` in the React frontend, not the Python.
 
-So for Python: no `pd.read_csv`, no `open()`, no `sqlite3`, no SQLAlchemy engine. The
-question "where does my data live" — persona question #3 — currently has no answer in
-Python repos, and in one case a confidently wrong one.
+> **Correction.** An earlier revision of this document said powerfab-dashboard's MySQL
+> store was "inferred from an `os.environ.get(...)` variable name, not from any database
+> call," and called all three of its stores "wrong or accidental." That was too strong
+> and I got it wrong: `scripts/db.py` genuinely imports pymysql and subclasses
+> `pymysql.connections.Connection`, so **MySQL is a correct conclusion.** What is
+> actually wrong is narrower: the store's recorded evidence sites are the `os.environ.get(…)`
+> lines, so clicking "MySQL" shows you environment reads rather than the pymysql code.
+> Right answer, wrong "where in the code" — worth fixing, but not a fabrication.
+
+So the real gap is specific: no `pd.read_csv`/`to_csv`, no `open()`, no `sqlite3`, no
+SQLAlchemy engine. Persona question #3 ("where does my data live") goes unanswered in
+Python repos, and the pipeline screen's read/write columns are populated by whatever
+stray JavaScript the repo happens to contain.
+
+**What works, and should be said plainly:** the pipeline archetype view itself is good.
+powerfab-dashboard renders as "113 inputs · 3 data stores" with reads (command line,
+environment, files) on the left and writes (browser storage, files, MySQL) on the right.
+That is the right frame for a flat repo. It is starved of Python facts, not misconceived.
 
 ## 5. Archetype misfires on two of seven repos
 
@@ -171,6 +188,78 @@ Confirmed, with specifics:
 - **Boundary cards are unlabelled buttons** in the accessibility tree; the text lives in
   nested spans. Screen readers hear "button, button, button".
 
+## 8. Auth detection fails on all three dominant real-world idioms
+
+Completing the roster turned §1 from "a taxonomy problem" into an ecosystem-wide one.
+Three different frameworks, three different ways of attaching auth, none detected:
+
+| repo | idiom | reported |
+| --- | --- | --- |
+| taxonomy | guard inside a local helper the handler calls | 2 of 22 wrong |
+| `fastapi/full-stack-fastapi-template` | `CurrentUser = Annotated[User, Depends(get_current_user)]`, used as a parameter type | **21 of 21** "nothing found" |
+| `dubinc/dub` | `export const GET = withWorkspace(async ({ workspace, session }) => …)` | **746 of 760** unprotected |
+
+The FastAPI case is the most damning: that is **FastAPI's own official template**, using
+the idiom from FastAPI's own documentation, and the Security screen reads "0 checked ·
+0 probably checked · 21 nothing found." The dub case is the dominant pattern in
+production Next.js (`withAuth`, `withWorkspace`, tRPC's `protectedProcedure`).
+
+Each needs a different mechanism — call-graph walk (#23), type-alias resolution to find
+`Depends(...)` inside `Annotated[...]`, and recognising a handler wrapped in a
+higher-order function — but they share one symptom: a route the author protected is
+displayed as open. At these rates the Security screen is not merely imprecise, it is
+inverted.
+
+## 9. FastAPI route addresses omit their router prefixes
+
+The Security screen lists doors as `POST /`, `GET /{id}`, `DELETE /{user_id}`, `GET /me`.
+The real addresses are `/api/v1/items/`, `/api/v1/items/{id}`, `/api/v1/users/{user_id}`,
+`/api/v1/users/me`: `items.py` declares `APIRouter(prefix="/items")` and `main.py` mounts
+the whole thing with `prefix=settings.API_V1_STR`.
+
+So the list of "doors a stranger could knock on" contains addresses that do not exist,
+and two different routers both surface as bare `/{id}`-shaped rows the reader cannot tell
+apart. Next.js escapes this because its paths come from the file tree; anything with
+programmatic mounting (FastAPI, Express `app.use(prefix, router)`, NestJS) needs the
+prefixes composed.
+
+## 10. Notebook repos get the library frame, and it gets worse with scale
+
+`ageron/handson-ml3` — 29 notebooks, 37,066 lines, a published ML textbook — renders as
+"**225 names in its public API**", with "what consumers can call: 181 functions, 43
+types", "what it reaches for" **empty**, and **0 services & stores** for code whose whole
+purpose is fetching and transforming datasets.
+
+Nobody imports handson-ml3. The 181 "public API" functions are helpers defined inside
+notebook cells. This is the NBA finding (§5) at 10× the size, and it confirms the shape:
+a notebook project has no fitting archetype, falls through to `library`, and the library
+frame then produces a screen that is confidently and comprehensively about the wrong
+thing.
+
+Notebook *reading* is fine — 76% of files carry docstrings App Atlas can read. It is the
+framing that fails.
+
+## 11. Scale is fine; the landing scope is not
+
+The giants held up better than expected. No crashes, no cap warnings, no degradation:
+
+| repo | size | scopes | time |
+| --- | --- | --- | --- |
+| `midday-ai/midday` | 119 MB | 38 (all `apps/*` and `packages/*`, apps vs libraries correctly labelled) | 14.4 s |
+| `dubinc/dub` | 32 MB | 10 | 17.5 s |
+| `calcom/cal.com` | 346 MB | 113 | 41.3 s |
+
+Monorepo scoping is a genuine strength — the scope switcher works, and midday's 38
+scopes are complete and correctly typed.
+
+But **the UI opens on `scopes[0]`** (`web/src/App.tsx`; `scopes.json` carries no
+`default` key). For cal.com that is `api-proxy` (`apps/api`), because the list is sorted
+by name and "api-proxy" sorts first. `apps/web` — the actual product — is present in the
+list and never shown. The largest repos, where orientation matters most, open on their
+least representative package, and the reader has 113 dropdown entries to guess among.
+
+A default worth having: the `app`-kind scope with the most files.
+
 ## What went right, and should not be lost
 
 - **Notebook support works in the wild.** `game_predictions.ipynb` reports 498 lines
@@ -209,11 +298,34 @@ Confirmed, with specifics:
    data stores.
 8. **Show group members** instead of `memberIds[0]`.
 
+## Coverage
+
+All 13 planned repos analyzed. Driven in the browser: taxonomy (full protocol),
+full-stack-fastapi-template, handson-ml3, powerfab-dashboard, NBA, cal.com. Probed from
+the atlas JSON and verified against source: mirrorquiz, daily-briefing, Summarization-2.0,
+requests, dub, midday, NASCAR-Analytics.
+
+| repo | archetype | verdict |
+| --- | --- | --- |
+| taxonomy | web-app ✓ | good frame, 3 false facts (§1, §2) |
+| full-stack-fastapi-template | service ✓ | 21/21 false alarms (§8), wrong addresses (§9) |
+| dub | web-app ✓ | 746/760 false alarms (§8); monorepo scoping good |
+| midday | web-app ✓ | 38 scopes complete and correctly typed |
+| cal.com | web-app ✓ | survives 346 MB; lands on the wrong scope (§11) |
+| mirrorquiz | web-app ✓ | Workers/D1/KV all missed (§7) |
+| daily-briefing | web-app ✓ | Vercel KV missed (§1) |
+| powerfab-dashboard | pipeline ✓ | good frame, no Python I/O (§4) |
+| Summarization-2.0 | pipeline ✓ | correct |
+| NASCAR-Analytics | web-app | 64 files, 4 doors, 0 services |
+| requests | pipeline ✗ | should be library (§5); garbage services (§3) |
+| NBA | library ✗ | should be analysis (§5) |
+| handson-ml3 | library ✗ | should be analysis (§10) |
+
+Archetype is right on 10 of 13. All three misses are the same gap: no archetype fits a
+notebook/analysis project, and `__main__` outranks exported surface.
+
 ## Caveats
 
 Phase 1 only: no AI descriptions anywhere, so every "the screen says too little" judgment
 is provisional and gets retested in phase 2. Findings about screens saying **wrong**
 things are unaffected — prose cannot fix a false auth claim.
-
-`dub` and the giant repos (cal.com, midday) were cloned but not yet driven; scale
-behavior is still unmeasured.
