@@ -1,0 +1,8 @@
+{
+  "name": "sample-pipeline",
+  "version": "1.0.0",
+  "private": true,
+  "bin": {
+    "crunch": "src/cli.js"
+  }
+}

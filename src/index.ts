@@ -19,6 +19,7 @@ export { AtlasGraph } from './model/graph.js';
 export type { LevelView, NodeView, OverviewView } from './model/graph.js';
 export { buildBoundaryView } from './model/boundary.js';
 export type { BoundaryCard, BoundaryFlow, BoundaryView, BoundaryZone } from './model/boundary.js';
+export { classifyArchetype } from './analyze/archetype.js';
 export { buildSchemaNodes } from './analyze/schema.js';
 export { classifyZone, dominantZone } from './analyze/zones.js';
 export { findScopes } from './analyze/workspace.js';

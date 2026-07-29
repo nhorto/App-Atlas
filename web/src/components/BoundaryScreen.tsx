@@ -8,10 +8,15 @@
  *
  * The bands are SVG; the cards are ordinary HTML sitting on top of them. That way a
  * card is a real button with real text, and the ribbon behind it is just geometry.
+ *
+ * The column headings and the headline's first count come from the archetype, so the
+ * same picture reads as doors for an app, a public API for a library and an I/O
+ * diagram for a script. When a project has no boundary at all this screen says so in
+ * words and points at the map, rather than drawing an empty frame.
  */
 import { useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { CSSProperties } from 'react';
-import type { BoundaryView, SummarySource } from '../types';
+import type { Archetype, ArchetypeVerdict, BoundaryView, SummarySource } from '../types';
 import { TrustLabel } from './Trust';
 
 interface Props {
@@ -20,8 +25,11 @@ interface Props {
   /** The app's one-paragraph description, when there is one. */
   summary: string | null;
   summarySource: SummarySource;
+  /** What kind of project this is — what an empty diagram needs in order to explain itself. */
+  archetype: ArchetypeVerdict | null;
   onSelect: (id: string) => void;
   onOpenInsights: () => void;
+  onOpenMap: () => void;
 }
 
 const PAD = 28;
@@ -34,6 +42,8 @@ const ZONE_H = 46;
 const ZONE_GAP = 8;
 const APP_PAD = 18;
 const APP_HEAD = 34;
+/** Room above the three columns for the headings that say what each one is. */
+const CAPTION_H = 26;
 
 const MIN_BAND = 3;
 const MAX_BAND = 26;
@@ -53,13 +63,28 @@ interface Box {
   h: number;
 }
 
-export function BoundaryScreen({ view, selectedId, summary, summarySource, onSelect, onOpenInsights }: Props) {
+export function BoundaryScreen({
+  view,
+  selectedId,
+  summary,
+  summarySource,
+  archetype,
+  onSelect,
+  onOpenInsights,
+  onOpenMap,
+}: Props) {
   const [hovered, setHovered] = useState<string | null>(null);
   const layout = useMemo(() => computeLayout(view), [view]);
   const scrollRef = useRef<HTMLDivElement>(null);
   const scale = useFitScale(scrollRef, layout.width);
 
   const active = hovered ?? selectedId;
+
+  // An empty diagram of doors is the worst thing this screen can show: it looks like
+  // the analyzer failed on a project that simply has no doors. Say which it was.
+  if (view.inputs.length === 0 && view.outputs.length === 0) {
+    return <NoBoundary appName={view.appName} archetype={archetype} onOpenMap={onOpenMap} />;
+  }
 
   return (
     <div className="boundary">
@@ -82,6 +107,12 @@ export function BoundaryScreen({ view, selectedId, summary, summarySource, onSel
               />
             ))}
           </svg>
+
+          {layout.captions.map((caption) => (
+            <div key={caption.text} className="boundary-caption" style={boxStyle(caption.box)}>
+              {caption.text}
+            </div>
+          ))}
 
           <div className="boundary-appbox" style={boxStyle(layout.appBox)}>
             <div className="boundary-appname">{view.appName}</div>
@@ -198,16 +229,91 @@ function useFitScale(ref: React.RefObject<HTMLDivElement | null>, naturalWidth: 
   return scale;
 }
 
+/**
+ * What this screen says when the project has no boundary at all.
+ *
+ * The honest version of "nothing found" names what kind of project this is, shows the
+ * signals that led there so a wrong verdict can be argued with, and sends the reader
+ * to the view that does have their answer. A blank diagram would say none of that.
+ */
+function NoBoundary({
+  appName,
+  archetype,
+  onOpenMap,
+}: {
+  appName: string;
+  archetype: ArchetypeVerdict | null;
+  onOpenMap: () => void;
+}) {
+  const kind = archetype?.archetype ?? 'unknown';
+  return (
+    <div className="page">
+      <div className="overview-page">
+        <div className="page-head">
+          <h1>{appName} has no boundary to draw</h1>
+        </div>
+        <div className="overview-lede is-empty">
+          <p>{EMPTY_BOUNDARY[kind]}</p>
+        </div>
+        {archetype && archetype.because.length > 0 ? (
+          <p className="page-sub" style={{ marginTop: 18 }}>
+            {archetype.label} — {archetype.because.join(' · ')}
+          </p>
+        ) : null}
+        <p style={{ marginTop: 22 }}>
+          <button className="pill" onClick={onOpenMap}>
+            Open the Map instead →
+          </button>
+        </p>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * One sentence per kind of project, saying what was concluded rather than what was
+ * missing. Each one has to be true of a project with genuinely nothing on this screen.
+ */
+const EMPTY_BOUNDARY: Record<string, string> = {
+  library:
+    'This is code other code imports, and nothing in it is exported — so there is no public surface to draw and nothing outside can reach in. The Map shows what is here.',
+  pipeline:
+    'This is something you run rather than something that listens, so there are no doors for a stranger to knock on. What it reads and writes as it runs will appear here as more of that is detected.',
+  service:
+    'No inbound routes, outbound calls or data stores were found. If this project does have them, the analyzer may not recognise its framework yet — that is worth reporting.',
+  'web-app':
+    'No inbound routes, outbound calls or data stores were found. If this project does have them, the analyzer may not recognise its framework yet — that is worth reporting.',
+  unknown:
+    'Nothing in this project answers a URL, reads a database, or calls another company. That may be exactly right, or it may mean the analyzer does not recognise the framework in use — the Map shows what it did find.',
+};
+
+/**
+ * The counts, in the vocabulary of the kind of project this is.
+ *
+ * "3 ways in · 0 services out · 0 data stores" is a true sentence about a library and
+ * a useless one: it answers a question nobody asked and pads it with two zeroes. The
+ * first number is the one the archetype renames; the rest drop out when they are zero,
+ * which every project benefits from.
+ */
 function Headline({ view, onOpenInsights }: { view: BoundaryView; onOpenInsights: () => void }) {
   const { summary } = view;
+  const parts = [inboundPhrase(view.archetype, summary.endpoints)];
+  if (summary.externalServices > 0) {
+    parts.push(`${summary.externalServices} ${summary.externalServices === 1 ? 'service' : 'services'} out`);
+  }
+  if (summary.stores > 0) {
+    parts.push(`${summary.stores} ${summary.stores === 1 ? 'data store' : 'data stores'}`);
+  }
+
   return (
     <div className="boundary-head">
       <h1>
-        {summary.endpoints} {summary.endpoints === 1 ? 'way' : 'ways'} in
-        <span className="sep">·</span>
-        {summary.externalServices} {summary.externalServices === 1 ? 'service' : 'services'} out
-        <span className="sep">·</span>
-        {summary.stores} {summary.stores === 1 ? 'data store' : 'data stores'}
+        {parts.map((part, index) => (
+          <span key={part}>
+            {index > 0 ? <span className="sep">·</span> : null}
+            {part}
+          </span>
+        ))}
       </h1>
       {summary.openRoutes > 0 ? (
         <button className="pill pill-warn" onClick={onOpenInsights}>
@@ -220,6 +326,17 @@ function Headline({ view, onOpenInsights }: { view: BoundaryView; onOpenInsights
       )}
     </div>
   );
+}
+
+function inboundPhrase(archetype: Archetype | undefined, count: number): string {
+  switch (archetype) {
+    case 'library':
+      return `${count} ${count === 1 ? 'name' : 'names'} in its public API`;
+    case 'pipeline':
+      return `${count} ${count === 1 ? 'input' : 'inputs'}`;
+    default:
+      return `${count} ${count === 1 ? 'way' : 'ways'} in`;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -239,6 +356,8 @@ interface Layout {
   height: number;
   boxes: Map<string, Box>;
   appBox: Box;
+  /** Column headings, which are the one part of this picture the archetype changes. */
+  captions: { text: string; box: Box }[];
   bands: Band[];
 }
 
@@ -256,12 +375,17 @@ function computeLayout(view: BoundaryView): Layout {
   const xZone = xApp + APP_PAD;
   const xOut = xApp + APP_W + GAP;
   const width = xOut + COL_W + PAD;
-  const height = contentH + PAD * 2;
+  const height = contentH + PAD * 2 + CAPTION_H;
 
-  stack(boxes, view.inputs.map((c) => c.id), xIn, COL_W, CARD_H, CARD_GAP, (height - inputsH) / 2);
-  stack(boxes, view.outputs.map((c) => c.id), xOut, COL_W, CARD_H, CARD_GAP, (height - outputsH) / 2);
+  // Everything below the caption row is centred in what is left, so adding the
+  // captions moves the picture down rather than squashing it.
+  const top = CAPTION_H;
+  const centre = (columnH: number) => top + (height - top - columnH) / 2;
 
-  const appBox: Box = { x: xApp, y: (height - appH) / 2, w: APP_W, h: appH };
+  stack(boxes, view.inputs.map((c) => c.id), xIn, COL_W, CARD_H, CARD_GAP, centre(inputsH));
+  stack(boxes, view.outputs.map((c) => c.id), xOut, COL_W, CARD_H, CARD_GAP, centre(outputsH));
+
+  const appBox: Box = { x: xApp, y: centre(appH), w: APP_W, h: appH };
   stack(
     boxes,
     view.zones.map((z) => `zone:${z.zone}`),
@@ -272,7 +396,13 @@ function computeLayout(view: BoundaryView): Layout {
     appBox.y + APP_HEAD,
   );
 
-  return { width, height, boxes, appBox, bands: computeBands(view, boxes) };
+  const captions: Layout['captions'] = [
+    { text: view.captions.inputs, box: { x: xIn, y: PAD / 2, w: COL_W, h: CAPTION_H } },
+    { text: view.captions.app, box: { x: xApp, y: PAD / 2, w: APP_W, h: CAPTION_H } },
+    { text: view.captions.outputs, box: { x: xOut, y: PAD / 2, w: COL_W, h: CAPTION_H } },
+  ];
+
+  return { width, height, boxes, appBox, captions, bands: computeBands(view, boxes) };
 }
 
 function columnHeight(count: number, itemH: number, gap: number): number {

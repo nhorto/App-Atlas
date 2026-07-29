@@ -10,7 +10,9 @@ import type { Atlas, AtlasEdge, AtlasNode, AtlasStats, EndpointMeta, Zone } from
 import { countStaleDocs } from '../model/staleness.js';
 import { FORMAT_VERSION, makeAppId, makeEdgeId } from '../model/types.js';
 import { hashParts } from '../util/hash.js';
+import { classifyArchetype } from './archetype.js';
 import { buildBoundaryGraph } from './boundaries/build.js';
+import { buildExportDoors } from './boundaries/exports.js';
 import type { BoundaryFinding } from './boundaries/types.js';
 import { AnalysisCache, fingerprintProject } from './cache.js';
 import { buildModuleTree } from './modules.js';
@@ -168,6 +170,18 @@ export async function analyzeProject(rootDir: string, options: AnalyzeOptions = 
     edges.push(...boundary.edges);
   }
 
+  // --- what kind of project this is ---
+  // Here and not earlier: the doors the detectors just found are the strongest signal
+  // available, and here and not later because one archetype changes what gets built
+  // next. A library's boundary is its public API surface, so its exported names become
+  // doors — on an app that would turn every helper into one and say nothing.
+  const archetype = classifyArchetype({ project, nodes });
+  if (detectBoundaries && archetype.archetype === 'library') {
+    const surface = buildExportDoors({ nodes, appId });
+    nodes.push(...surface.nodes);
+    edges.push(...surface.edges);
+  }
+
   // --- containment tree ---
   options.onProgress?.('Building the map', 0, 1);
   const treeFiles = project.files.map((f) => ({ relPath: f.relPath, zone: f.zone as Zone }));
@@ -212,6 +226,7 @@ export async function analyzeProject(rootDir: string, options: AnalyzeOptions = 
       durationMs: Date.now() - started,
       languages: [...languages],
       frameworks: project.frameworks,
+      archetype,
       stats: computeStats(nodes, liveEdges),
       incremental: { reused, analyzed },
       warnings,

@@ -10,8 +10,22 @@
  *
  * Grouping is by family rather than by size, because "12 API routes" and "3 webhooks"
  * are two different kinds of door even when one of them is small.
+ *
+ * One view, parameterized by archetype (SPEC.md 5.9) — never three. The geometry is
+ * fixed, because left→right is the whole argument for this picture over a ring; what
+ * changes is the vocabulary, since a library's left column is what consumers may call
+ * and a script's is what it reads when you run it. Calling either of those "ways in"
+ * would be false.
  */
-import type { AtlasNode, EndpointKind, EndpointMeta, ServiceMeta, StoreMeta, Zone } from './types.js';
+import type {
+  Archetype,
+  AtlasNode,
+  EndpointKind,
+  EndpointMeta,
+  ServiceMeta,
+  StoreMeta,
+  Zone,
+} from './types.js';
 import type { AtlasGraph } from './graph.js';
 
 export interface BoundaryCard {
@@ -43,8 +57,26 @@ export interface BoundaryFlow {
   weight: number;
 }
 
+/**
+ * What the three columns are called for this kind of project.
+ *
+ * The geometry never changes — something arrives on the left, your code is in the
+ * middle, something leaves on the right — because that reading order is the whole
+ * reason the view beats a ring. What changes is the words, and only the words: a
+ * library's left column is what consumers may call, a script's is what it reads when
+ * you run it, and calling either of those "ways in over the network" would be false.
+ */
+export interface BoundaryCaptions {
+  inputs: string;
+  app: string;
+  outputs: string;
+}
+
 export interface BoundaryView {
   appName: string;
+  /** Absent on an atlas analyzed before archetypes existed. */
+  archetype?: Archetype;
+  captions: BoundaryCaptions;
   inputs: BoundaryCard[];
   zones: BoundaryZone[];
   outputs: BoundaryCard[];
@@ -59,16 +91,47 @@ export interface BoundaryView {
   };
 }
 
+const CAPTIONS: Record<Archetype, BoundaryCaptions> = {
+  'web-app': { inputs: 'What gets in', app: 'Your app', outputs: 'Where data goes' },
+  service: { inputs: 'What calls it', app: 'Your service', outputs: 'Where data goes' },
+  library: { inputs: 'What consumers can call', app: 'Your library', outputs: 'What it reaches for' },
+  pipeline: { inputs: 'What it reads', app: 'Your code', outputs: 'What it writes' },
+  unknown: { inputs: 'What gets in', app: 'Your code', outputs: 'Where data goes' },
+};
+
+interface InputFamily {
+  family: string;
+  label: string;
+  kinds: EndpointKind[];
+  /** Narrows a kind that covers two different kinds of door. */
+  match?: (meta: EndpointMeta) => boolean;
+}
+
 /** Kept in this order on screen: how a request arrives, roughly. */
-const INPUT_FAMILIES: { family: string; label: string; kinds: EndpointKind[]; pagesOnly?: boolean }[] = [
+const INPUT_FAMILIES: InputFamily[] = [
   { family: 'screens', label: 'Screens', kinds: ['screen'] },
-  { family: 'pages', label: 'Pages', kinds: ['http-route'], pagesOnly: true },
-  { family: 'routes', label: 'API routes', kinds: ['http-route'] },
+  { family: 'pages', label: 'Pages', kinds: ['http-route'], match: (meta) => meta.method === 'PAGE' },
+  { family: 'routes', label: 'API routes', kinds: ['http-route'], match: (meta) => meta.method !== 'PAGE' },
   { family: 'actions', label: 'Server actions', kinds: ['server-action'] },
   { family: 'webhooks', label: 'Webhooks', kinds: ['webhook'] },
   { family: 'cron', label: 'Scheduled jobs', kinds: ['cron'] },
   { family: 'queue', label: 'Background jobs', kinds: ['queue'] },
   { family: 'realtime', label: 'Realtime', kinds: ['realtime'] },
+  // A library's whole boundary. Split in two because the commitments are different:
+  // changing a function's behaviour breaks callers at runtime, changing a type's
+  // shape breaks them at compile time.
+  {
+    family: 'exports',
+    label: 'Functions you can call',
+    kinds: ['export'],
+    match: (meta) => meta.framework === 'function',
+  },
+  {
+    family: 'export-types',
+    label: 'Types you can import',
+    kinds: ['export'],
+    match: (meta) => meta.framework !== 'function',
+  },
   { family: 'cli', label: 'Command line', kinds: ['cli'] },
   { family: 'env', label: 'Environment & config', kinds: ['env'] },
   { family: 'files', label: 'Files on disk', kinds: ['file-read'] },
@@ -99,8 +162,12 @@ export function buildBoundaryView(graph: AtlasGraph): BoundaryView {
   const inputs = buildInputs(graph, endpoints, flows, zoneWeights);
   const outputs = buildOutputs(graph, services, stores, flows, zoneWeights);
 
+  const archetype = graph.meta.archetype?.archetype;
+
   return {
     appName: graph.meta.name,
+    archetype,
+    captions: CAPTIONS[archetype ?? 'unknown'],
     inputs,
     zones: buildZones(graph, zoneWeights),
     outputs,
@@ -127,12 +194,11 @@ function buildInputs(
 ): BoundaryCard[] {
   const cards: BoundaryCard[] = [];
 
-  for (const { family, label, kinds, pagesOnly } of INPUT_FAMILIES) {
+  for (const { family, label, kinds, match } of INPUT_FAMILIES) {
     const members = endpoints.filter((node) => {
       const meta = node.meta as unknown as EndpointMeta;
       if (!kinds.includes(meta.endpointKind)) return false;
-      const isPage = meta.method === 'PAGE';
-      return pagesOnly ? isPage : !isPage;
+      return match ? match(meta) : true;
     });
     if (members.length === 0) continue;
 
@@ -199,6 +265,8 @@ const INPUT_NOUNS: Record<string, string> = {
   cron: 'scheduled job',
   queue: 'worker',
   realtime: 'subscription',
+  exports: 'function',
+  'export-types': 'type',
 };
 
 // ---------------------------------------------------------------------------

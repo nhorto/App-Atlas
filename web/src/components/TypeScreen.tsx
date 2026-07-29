@@ -135,8 +135,7 @@ export function TypeScreen({
       <div className="page">
         <div className="overview-page">
           <div className="page-head">
-            <h1>Your data</h1>
-            <p className="page-sub">The shapes your app moves around, and how they connect.</p>
+            <h1>Your data model</h1>
           </div>
           <div className="overview-lede is-empty">
             <p>
@@ -155,7 +154,7 @@ export function TypeScreen({
     <div className="type-screen">
       <div className="type-head">
         <div>
-          <h1>Your data</h1>
+          <h1>Your data model</h1>
           <p className="page-sub">
             {countOf(view.cards.length, 'shape')}
             {view.tables > 0 ? ` · ${countOf(view.tables, 'database table')}` : ''}

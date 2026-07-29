@@ -51,6 +51,16 @@ export function OverviewScreen({ view, tours, onDrill, onReveal, onStartTour, on
         </p>
       </header>
 
+      {/* What kind of project App Atlas decided this is, and the signals that decided
+          it. On screen because the verdict changes which view opens first: a guess
+          that steers the tool has to be one the reader can check and disagree with. */}
+      {meta.archetype ? (
+        <p className="archetype">
+          <span className="archetype-label">{meta.archetype.label}</span>
+          <span className="archetype-because">{meta.archetype.because.join(' · ')}</span>
+        </p>
+      ) : null}
+
       {app?.summary ? (
         <section className="overview-lede">
           <TrustLabel kind={app.summarySource === 'docs' ? 'docs' : 'ai'} />
