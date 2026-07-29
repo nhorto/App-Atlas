@@ -125,4 +125,40 @@ compiler-derived and cannot be wrong.
 
 ## Phase 2 additions
 
-*(AI backend on, 4 repos — appended when phase 2 runs.)*
+Ran taxonomy, mirrorquiz, NBA and powerfab-dashboard with the `claude` backend —
+$2.78 and ~3 minutes for all four. Nothing came off the list; two things moved up.
+
+- [ ] **22. Stop the two layers contradicting each other on screen** — [#35](https://github.com/nhorto/App-Atlas/issues/35) — *Tier 1*
+      With AI on, the boxes say "3 services out" while the paragraph below says data goes
+      to Stripe; the badge says "no check found" while the file summary says "checking the
+      signed-in user first". **The AI is right and the compiler-derived box is wrong**,
+      which inverts what the UI tells the reader to trust. Anchor the prose to structural
+      facts, and treat prose that names something the structure lacks as a signal the
+      detector missed it.
+
+- [ ] **23. Give the AI "not visible in the code" as an option** — [#35](https://github.com/nhorto/App-Atlas/issues/35) — *Tier 1*
+      mirrorquiz runs on Cloudflare D1; because #29 never fires, the atlas offered a
+      generic "Database" and the AI confidently wrote "your own **Postgres** database".
+      A structural gap is not a blank — it is an invitation to guess.
+
+- [ ] **24. Fix filenames broken by a stray space** — *Tier 3*
+      powerfab-dashboard's summary renders "`01_list_tables. py`", "`02_describe_tables. py`"
+      — four times in one paragraph. Looks like sentence-splitting applied to text
+      containing filenames.
+
+### Re-ranking after phase 2
+
+- **Item 12 (#29, Cloudflare detection) moves from Tier 2 to Tier 1.** Its gap no longer
+  produces a blank; it produces the false sentence "Postgres".
+- **Items 1–3 (#23, #32) get more urgent.** With AI on, the false auth claim is now
+  contradicted on screen by our own product, so the inconsistency is visible to the user.
+- **Item 9 (analysis archetype) stays at full weight.** Prose does not fix framing: NBA's
+  file summaries are good, but the screen still reads "225 names in its public API" with
+  an empty "what it reaches for", because archetype and columns are structural.
+
+### What phase 2 settled
+
+Every phase-1 "the screen says too little" finding **is** resolved by prose — taxonomy's
+AI paragraph is a genuine stakeholder brief and answers all five persona questions. The
+words layer works and is cheap. What it cannot do is correct a false structural fact; it
+can only expose it, or inherit the gap and guess.

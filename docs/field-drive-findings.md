@@ -324,8 +324,112 @@ requests, dub, midday, NASCAR-Analytics.
 Archetype is right on 10 of 13. All three misses are the same gap: no archetype fits a
 notebook/analysis project, and `__main__` outranks exported surface.
 
+---
+
+# Phase 2 — with the AI backend on
+
+Re-ran taxonomy, mirrorquiz, NBA and powerfab-dashboard through the `claude` backend.
+Cost and time were unremarkable: **$2.78 and about 3 minutes for all four** (taxonomy 203
+explanations / 96¢ / 54 s; mirrorquiz 148 / 76¢ / 41 s; powerfab-dashboard 157 / 92¢ /
+61 s; NBA 4 / 14¢ / 24 s).
+
+The question was narrow: **which phase-1 gaps does prose actually close?**
+
+## P1. Prose closes the briefing gap completely
+
+Phase 1's briefing test failed on every repo — you could not write a stakeholder summary
+from the screen. With AI on, taxonomy's Boundaries screen carries this, and it *is* the
+brief:
+
+> Your app is a blogging and documentation site where people sign in with GitHub or an
+> emailed sign-in link sent through Postmark… a person writes posts in the editor at
+> /editor/:postId, which saves to the Post table in your MySQL database… /dashboard/billing
+> connects to Stripe through /api/users/stripe to start a paid subscription or open the
+> billing portal. Stripe keeps the card details and charges; your database keeps the
+> customer and subscription identifiers on the User record… nothing here is sent anywhere
+> beyond GitHub, Postmark and Stripe.
+
+That answers all five persona questions in one paragraph, in the reader's own terms, with
+real routes and real table names. It is the single highest-value thing in the product.
+**Every "the screen says too little" finding from phase 1 is resolved by prose.**
+
+## P2. The AI finds what the detectors miss — on all four repos
+
+| repo | structure says | AI says |
+| --- | --- | --- |
+| taxonomy | 3 services, no Stripe | "card details go to Stripe", "nothing beyond GitHub, Postmark and Stripe" |
+| mirrorquiz | Better Auth, PostHog, Stripe | also names **Anthropic** and **Resend** |
+| NBA | 0 services, "what it reaches for" empty | "Pulls NBA stats from the **official NBA API**" |
+| powerfab-dashboard | no Python file I/O (§4) | "pull records and **write them to files on disk**", naming the scripts |
+
+This is strong independent confirmation of §1 and §4: the information is plainly present
+in the source — an LLM reading the same files finds it immediately. The detectors' one-hop
+blindness is the only reason the boxes are empty.
+
+## P3. But this inverts the provenance hierarchy, and the screen now contradicts itself
+
+The product teaches the reader that structure is compiler-derived and "cannot be wrong",
+while prose "varies". Phase 2 makes that guidance backwards in the exact cases that
+matter:
+
+- On one screen, the boxes say "**3 services out**" (no Stripe) and the paragraph below
+  says data goes to "GitHub, Postmark and **Stripe**".
+- On `app/api/posts/[postId]/route.ts` the AI file summary reads "*Handles editing and
+  deleting a single post, **checking the signed-in user first**, and saving to your
+  database*" — while the endpoint badge on the same route says "**no check found**" and
+  the walkthrough's final step is still headed "**Nobody is checking who called**".
+
+A reader following our own stated hierarchy believes the compiler and gets the wrong
+answer. **Prose does not fix §1 — it exposes it**, and turns a silent error into a visible
+contradiction.
+
+## P4. Structural gaps don't stay blank — they become confident wrong prose
+
+The most important phase-2 result. `mirrorquiz` runs on **Cloudflare D1**:
+`drizzle.config.ts` declares `dialect: "sqlite"` and `src/db/index.ts` is
+`export function getDb(d1: D1Database) { return drizzle(d1, { schema }) }`.
+
+Because Worker/D1 detection never fires (§7 / #29), the atlas offered the AI a generic
+"Database" with no engine. The AI filled the blank with the statistically likely answer:
+
+> "quiz and account data sits in your own **Postgres** database (managed through Drizzle)"
+
+That is false, and it is stated in the same confident register as everything true around
+it. The AI never mentions Cloudflare, Workers, D1 or KV at all.
+
+This changes how the Tier-2 "silent" items should be weighted: a missing structural fact
+is not a blank the reader notices, it is an **invitation for the words layer to guess**.
+Every detector gap is a potential false sentence once AI is on.
+
+## P5. Prose does not fix framing
+
+NBA's per-file summaries are good ("Notebook that builds and scores NBA game prediction
+models"), but the screen still reads "**225 names in its public API**" with an empty
+"what it reaches for", because the archetype and the columns are structural. AI coverage
+was also thinnest here — 4 explanations, 14¢ — precisely where phase 1 said the screen was
+emptiest.
+
+So §5/§10 (the `analysis` archetype) is **not** rescued by prose and stays on the list at
+full weight.
+
+## P6. Papercut: filenames broken by a stray space
+
+powerfab-dashboard's summary renders "`01_list_tables. py`", "`02_describe_tables. py`",
+"`03_sample_data. py`" — a space inserted before the extension, four times in one
+paragraph. Looks like sentence-splitting applied to prose containing filenames.
+
+## What phase 2 changes about the plan
+
+- **Nothing moves off the list.** No phase-1 finding was invalidated.
+- **#23/#32 get more urgent, not less.** With AI on, the false auth claim is now
+  contradicted on screen by our own product.
+- **#29 gets promoted from Tier 2 to Tier 1**, because its gap now produces a false
+  sentence ("Postgres") rather than a blank.
+- **New work:** reconcile the two layers — either feed structural facts to the AI as
+  constraints, or flag disagreement rather than rendering both silently.
+
 ## Caveats
 
-Phase 1 only: no AI descriptions anywhere, so every "the screen says too little" judgment
-is provisional and gets retested in phase 2. Findings about screens saying **wrong**
-things are unaffected — prose cannot fix a false auth claim.
+Phase 2 covered 4 of 13 repos, chosen as one per archetype. Cost scales with file count,
+and the 400-file AI cap means the giants (cal.com, midday, dub) would only be partly
+described; that was not measured.
