@@ -431,18 +431,24 @@ function detectOutbound(
 
     const url = firstUrl(call);
     const host = url ? hostOf(url) : null;
-    if (host && isInternalHost(host)) continue;
+    // No literal URL means no destination to name. `s.get(build_url())` tells us an
+    // HTTP call happens and nothing whatever about who answers it, and naming the box
+    // after the receiving variable is how `s call` and `session call` ended up on
+    // psf/requests' list of outside companies (#25). A blank costs the reader far
+    // less than a company that does not exist.
+    if (!host || isInternalHost(host)) continue;
 
-    const known = host ? serviceForHost(host) : null;
+    const known = serviceForHost(host);
     findings.push({
       type: 'service',
-      name: known?.name ?? host ?? `${root} call`,
+      name: known?.name ?? host,
       category: known?.category ?? 'other',
-      package: root,
+      // Evidence, so only the real import — `s` is a local variable, not a package.
+      package: viaClient ? root : null,
       host,
-      external: host !== null,
+      external: true,
       writes: WRITE_METHODS.has(method),
-      site: site(call.line, `${call.callee}(${url ? `"${url}"` : '…'})`),
+      site: site(call.line, `${call.callee}("${url}")`),
     });
   }
 }

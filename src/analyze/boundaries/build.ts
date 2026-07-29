@@ -36,6 +36,7 @@ import {
   makeTypeId,
 } from '../../model/types.js';
 import { hashParts } from '../../util/hash.js';
+import { classifyZone } from '../zones.js';
 import { isCatchAllMatcher, matcherMatches } from './auth.js';
 import { guardThroughHops, reachableGuards, servicesThroughWrappers } from './reach.js';
 import type { ReachedGuard } from './reach.js';
@@ -90,16 +91,55 @@ function isSecretName(name: string): boolean {
   return SECRET_PATTERN.test(name);
 }
 
+/**
+ * Whether a finding describes the app someone ships, rather than the code that tests
+ * it (#25).
+ *
+ * A test's outbound calls go to `example.com`; its database is a fixture; its exported
+ * helpers are not anybody's public API. `psf/requests` was reporting four outside
+ * companies, all four of them from `tests/`.
+ *
+ * Doors are deliberately exempt. `classifyZone` decides by path, and dub ships a real
+ * Stripe webhook at `app/api/stripe/integration/webhook/test/route.ts` — a URL whose
+ * last segment happens to be the word "test". Dropping a real door because of a folder
+ * name is a far worse error than listing a fixture, so the heuristic is only allowed
+ * to remove things that are not doors. (A library's exported names *are* filtered,
+ * but they never pass through here — see `exports.ts`.)
+ */
+function describesTheApp(): (finding: BoundaryFinding) => boolean {
+  const zones = new Map<string, Zone>();
+  const isTest = (path: string): boolean => {
+    let zone = zones.get(path);
+    if (zone === undefined) {
+      zone = classifyZone(path);
+      zones.set(path, zone);
+    }
+    return zone === 'test';
+  };
+
+  return (finding) => {
+    switch (finding.type) {
+      case 'service':
+      case 'store':
+        return !isTest(finding.site.path);
+      default:
+        return true;
+    }
+  };
+}
+
 export function buildBoundaryGraph(raw: BuildInput): BoundaryGraph {
   const nodes: AtlasNode[] = [];
   const edges: AtlasEdge[] = [];
+
+  const shipped = raw.findings.filter(describesTheApp());
 
   // A call made through a wrapper module is a real call to a real company; it just
   // took two files to say so. Resolved before anything is merged, so those sites land
   // on the same box as the direct ones rather than a second one beside it.
   const input: BuildInput = {
     ...raw,
-    findings: [...raw.findings, ...servicesThroughWrappers(raw.findings)],
+    findings: [...shipped, ...servicesThroughWrappers(shipped)],
   };
 
   const endpoints = collectEndpoints(input);
