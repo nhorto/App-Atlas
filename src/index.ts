@@ -30,6 +30,8 @@ export type { Tour, TourStep } from './model/tours.js';
 export { buildTypeView } from './model/typeview.js';
 export type { TypeCard, TypeField, TypeLink, TypeView } from './model/typeview.js';
 export { authHeadline, classifyOpenDoors, isAuthRelevant } from './model/exposure.js';
+export { grammarTier, GRAMMAR_TIER } from './model/tiers.js';
+export type { TierNote } from './model/tiers.js';
 export { buildInsights } from './model/insights.js';
 export type { InsightsView, Protection, RouteInsight, ServiceInsight, StoreInsight } from './model/insights.js';
 export {
