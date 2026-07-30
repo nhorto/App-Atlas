@@ -116,6 +116,16 @@ export interface GuardFinding {
   nodeId: string | null;
   /** Set when scope is `matcher`: Next.js-style path patterns. */
   matchers: string[];
+  /**
+   * The router variable a matcher was written on, when it was written on one.
+   *
+   * `app.use(requireAuth)` and `admin.use(requireAuth)` are the same line and mean
+   * different things: the first is the whole application, the second is one prefix. The
+   * matcher a router-scoped check produces is relative to wherever that router is
+   * mounted, and the mount is in another file — so the pattern here is a fragment until
+   * the merge layer puts the address in front of it.
+   */
+  routerVar?: string | null;
   /** The atlas node that implements the check, for the `protected-by` edge. */
   sourceId: string;
 }
@@ -191,6 +201,11 @@ export interface AuthAliasFinding {
   name: string;
   /** Every function handed to a `Depends(...)` inside it. */
   depends: string[];
+  /**
+   * What the language spells the binding with, for showing a reader where to look:
+   * `Depends` in Python, `UseGuards` on a NestJS class. Defaults to `Depends`.
+   */
+  binds?: string;
   /**
    * For a class: what it inherits from, by name. A controller three levels down from
    * the class that declares the check says nothing about a caller anywhere in its own
@@ -300,6 +315,39 @@ export interface RouterGuardFinding {
 }
 
 /**
+ * A check attached to addresses rather than to routes or to a router variable:
+ * NestJS's `consumer.apply(AuthMiddleware).forRoutes({ path: 'articles/feed', method:
+ * RequestMethod.GET })`.
+ *
+ * The whole of the wiring is in a module file. The controller declaring the route
+ * imports nothing from it, mentions no caller, and reads as wide open — which is how a
+ * real NestJS application had all twenty-one of its doors reported unprotected while
+ * eleven of them were behind a JWT check.
+ *
+ * The name is carried as written. Whether it checks anything is decided in the merge
+ * against what the project's classes actually do, because a module applies a logger the
+ * same way it applies a lock.
+ */
+export interface PathGuardFinding {
+  type: 'path-guard';
+  /** The name of the thing doing the checking, resolved in the merge. */
+  name: string;
+  /** The address it covers, as written — before any prefix the framework adds. */
+  matcher: string;
+  /**
+   * The one HTTP method it covers, or null for all of them. `forRoutes` takes a list,
+   * and `{path: 'articles/:slug', method: DELETE}` beside a public `GET` on the same
+   * address is ordinary — so each entry is its own finding rather than a set of paths
+   * sharing one method.
+   */
+  method: string | null;
+  /** Only doors this framework opened are affected, since the prefix is the framework's. */
+  framework: string;
+  path: string;
+  line: number;
+}
+
+/**
  * A name bound to something that looks like a URL path: `API_V1_STR = "/api/v1"`.
  *
  * Only useful for turning a `prefix=SOME_NAME` back into an address, so only names
@@ -343,6 +391,7 @@ export type BoundaryFinding =
   | RouterBuildFinding
   | RouterMountFinding
   | RouterGuardFinding
+  | PathGuardFinding
   | PathConstantFinding
   | GlobalPrefixFinding;
 

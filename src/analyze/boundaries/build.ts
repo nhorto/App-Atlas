@@ -49,6 +49,7 @@ import type {
   EndpointFinding,
   GuardFinding,
   RouterBuildFinding,
+  PathGuardFinding,
   RouterGuardFinding,
   RouterMountFinding,
   StoreFinding,
@@ -257,6 +258,7 @@ export function buildBoundaryGraph(raw: BuildInput): BoundaryGraph {
     input.findings.filter((f): f is RouterBuildFinding => f.type === 'router-build'),
     input.findings.filter((f): f is RouterMountFinding => f.type === 'router-mount'),
     input.findings.filter((f): f is RouterGuardFinding => f.type === 'router-guard'),
+    input.findings.filter((f): f is PathGuardFinding => f.type === 'path-guard'),
   );
 
   const envEndpoint = collectEnv(input);
@@ -734,6 +736,7 @@ function applyDependencyGuards(
   routers: RouterBuildFinding[],
   mounts: RouterMountFinding[],
   attached: RouterGuardFinding[],
+  byPath: PathGuardFinding[],
 ): void {
   if (checkers.length === 0) return;
   const byName = new Map(checkers.map((checker) => [checker.name, checker.guard]));
@@ -745,7 +748,7 @@ function applyDependencyGuards(
     const target = alias.depends.find((name) => byName.has(name));
     if (!target) continue;
     const inherited = byName.get(target) as GuardInfo;
-    byName.set(alias.name, { ...inherited, name: `${alias.name} → Depends(${target})` });
+    byName.set(alias.name, { ...inherited, name: `${alias.name} → ${alias.binds ?? 'Depends'}(${target})` });
   }
 
   // A router that carries a check guards the routes registered on *it* — matched by
@@ -759,6 +762,9 @@ function applyDependencyGuards(
 
   const behind = routersBehindACheck(routers, mounts, attached, byName);
   const inherited = checkInherited(aliases, byName);
+  // Only the wiring that names something the project turns callers away with. A module
+  // applies a logger with the same two calls it applies a lock.
+  const wired = byPath.filter((entry) => entry.matcher && byName.has(entry.name.split('.').pop() ?? entry.name));
 
   for (const endpoint of endpoints.values()) {
     for (const name of endpoint.paramTypes) {
@@ -771,9 +777,23 @@ function applyDependencyGuards(
       const behindTheMount = behind.get(byModule(key));
       if (behindTheMount) pushGuard(endpoint, behindTheMount);
     }
+    const route = endpoint.meta.route;
+    for (const entry of route ? wired : []) {
+      // The method is half the claim. `articles/:slug` is guarded for PUT and DELETE and
+      // wide open for GET, and all three are written on consecutive lines.
+      if (entry.method && entry.method !== endpoint.meta.method) continue;
+      if (!matcherMatches(entry.matcher, route as string)) continue;
+      const guard = byName.get(entry.name.split('.').pop() ?? entry.name) as GuardInfo;
+      pushGuard(endpoint, { ...guard, how: 'middleware', confidence: 'likely' });
+    }
+
     for (const owner of endpoint.owners) {
       const guard = inherited(owner);
-      if (guard) pushGuard(endpoint, { ...guard, how: 'config' });
+      // Never `certain`, however certain the declaration was. A check written on a class
+      // this file does not name reaches here through the framework's own inheritance
+      // rules, and a subclass that declares guards of its own replaces them rather than
+      // adding to them — so the chain is strong evidence and not a proof.
+      if (guard) pushGuard(endpoint, { ...guard, how: 'config', confidence: 'likely' });
     }
   }
 }
@@ -924,7 +944,15 @@ function guardConfidence(endpoint: MergedEndpoint, guard: GuardFinding): Confide
 }
 
 function pushGuard(endpoint: MergedEndpoint, guard: GuardInfo): void {
-  const already = endpoint.meta.guards.find((g) => g.name === guard.name && g.path === guard.path);
+  // Two guards pointing at one line of one file are one check, whatever each of them
+  // decided to call it. A controller that declares `@UseGuards(SessionGuard)` reaches
+  // this twice — once as the decorator, once as the chain that inherits it — and
+  // listing the same lock twice on a security screen reads as two locks.
+  const already = endpoint.meta.guards.find(
+    (g) =>
+      (g.name === guard.name && g.path === guard.path) ||
+      (g.path !== null && g.path === guard.path && g.line !== null && g.line === guard.line),
+  );
   if (already) {
     if (already.confidence === 'likely' && guard.confidence === 'certain') already.confidence = 'certain';
     return;

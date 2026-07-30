@@ -10,10 +10,10 @@
  * middleware matcher in one file can protect a route declared in another.
  */
 import { Node } from 'ts-morph';
-import type { CallExpression, SourceFile } from 'ts-morph';
+import type { CallExpression, ClassDeclaration, SourceFile } from 'ts-morph';
 import type { GuardInfo } from '../../model/types.js';
 import { authProviderForPackage } from './catalog.js';
-import { argAt, dottedName, literalString, stringArray } from './ast.js';
+import { argAt, dottedName, literalString, looksLikeRouter, objectProp, stringArray } from './ast.js';
 import type { BoundaryDetector, DetectorContext } from './types.js';
 
 /** Function names that exist to answer "is this person allowed in?". */
@@ -128,12 +128,27 @@ export const authDetector: BoundaryDetector = {
 
     // `app.use(requireAuth)` and `app.use('/admin', requireAuth)` protect everything
     // mounted after them, which no per-route inspection would ever notice.
-    expressGlobalGuard(node, dotted, ctx);
+    routerMiddleware(node, dotted, ctx);
   },
 };
 
-function expressGlobalGuard(call: CallExpression, dotted: string, ctx: DetectorContext): void {
+/**
+ * A check handed to a router rather than to a route: `app.use(requireAuth)`.
+ *
+ * What it protects depends entirely on which router it was written on, and that is not
+ * a fact this file has. On the root app it is the whole application; on a sub-router it
+ * is whatever prefix that router was mounted under, which is written somewhere else
+ * again. So the pattern emitted here is relative, and `routerVar` says what it is
+ * relative *to* — the merge layer puts the address in front of it.
+ */
+function routerMiddleware(call: CallExpression, dotted: string, ctx: DetectorContext): void {
   if (!dotted.endsWith('.use')) return;
+  const parts = dotted.split('.');
+  const hostVar = parts[parts.length - 2];
+  // `queue.use(retryPolicy)` is not a route, and neither is anything else that happens
+  // to have a `.use`. Only a name this file built a router from can carry doors.
+  if (!hostVar || !looksLikeRouter(hostVar, ctx.locals)) return;
+
   const args = call.getArguments();
   if (args.length === 0) return;
 
@@ -151,9 +166,140 @@ function expressGlobalGuard(call: CallExpression, dotted: string, ctx: DetectorC
       scope: 'matcher',
       nodeId: null,
       matchers: [prefix ? `${prefix.replace(/\/$/, '')}/:path*` : '/:path*'],
+      routerVar: hostVar,
       sourceId: ctx.fileId,
     });
   }
+}
+
+// ---------------------------------------------------------------------------
+// A check written in the wiring: NestJS module middleware
+// ---------------------------------------------------------------------------
+
+/**
+ * The two HTTP statuses that mean "I do not accept who you are".
+ *
+ * Identical in spirit to the rule the Python extractor uses, and for the same reason:
+ * this is a fact about what the code does, where a name is only ever a guess about what
+ * somebody meant. `AuthMiddleware` is not a check because of the word *Auth* in it; it
+ * is a check because it throws a 401 at callers without a token.
+ */
+const REJECT_STATUS = /\b(401|403|UNAUTHORIZED|FORBIDDEN)\b/;
+
+/** Calls that are a rejection rather than a mention: `res.status(401)`, `c.json(x, 403)`. */
+const REJECT_CALLS = new Set(['status', 'sendStatus', 'json', 'send', 'abort', 'createError', 'Response']);
+
+/** The methods a framework calls to ask "may this request proceed?". */
+const CHECK_CONTRACTS = new Set(['use', 'canActivate']);
+
+/** The line where this body turns an unauthenticated caller away, if it does. */
+function rejectionLine(node: Node): number | null {
+  let line: number | null = null;
+  node.forEachDescendant((child) => {
+    if (line !== null) return;
+    if (Node.isThrowStatement(child)) {
+      if (REJECT_STATUS.test(child.getText())) line = child.getStartLineNumber();
+      return;
+    }
+    // Plenty of frameworks refuse a caller without throwing anything.
+    if (!Node.isCallExpression(child)) return;
+    const callee = dottedName(child.getExpression())?.split('.').pop();
+    if (!callee || !REJECT_CALLS.has(callee)) return;
+    if (REJECT_STATUS.test(child.getText())) line = child.getStartLineNumber();
+  });
+  return line;
+}
+
+export const wiredGuardDetector: BoundaryDetector = {
+  id: 'wired-guards',
+  enabled: (ctx) => ctx.signals.packages.has('@nestjs/common'),
+  visit(node, ctx) {
+    if (Node.isClassDeclaration(node)) checkerClass(node, ctx);
+    else if (Node.isCallExpression(node)) moduleMiddleware(node, ctx);
+  },
+};
+
+/**
+ * A class that answers a framework's "may this request proceed?" contract by saying no.
+ *
+ * Deliberately narrow. A module applies a logger with the same call it applies a lock,
+ * so the only thing separating them is that one of them refuses somebody — and asking
+ * that question of every method of every class would let an unrelated `401` in an error
+ * handler make a formatter look like a guard.
+ */
+function checkerClass(cls: ClassDeclaration, ctx: DetectorContext): void {
+  const name = cls.getName();
+  if (!name) return;
+  for (const method of cls.getMethods()) {
+    if (!CHECK_CONTRACTS.has(method.getName())) continue;
+    const line = rejectionLine(method);
+    if (line === null) continue;
+    ctx.emit({
+      type: 'auth-checker',
+      name,
+      guard: {
+        name,
+        how: 'middleware',
+        provider: 'custom',
+        path: ctx.ref.relPath,
+        // The refusal itself, so the evidence link lands on the line that proves it.
+        line,
+        confidence: 'likely',
+      },
+    });
+    return;
+  }
+}
+
+/**
+ * `consumer.apply(AuthMiddleware).forRoutes({ path: 'user', method: RequestMethod.GET })`
+ * — the whole of a NestJS application's auth, written in files no controller imports.
+ *
+ * The addresses are literals here, which makes this the rare case where the wiring says
+ * exactly what it covers. The method matters as much as the path: `articles/:slug` is
+ * guarded for PUT and DELETE and public for GET, and a rule that read only the path
+ * would report the public one as locked.
+ */
+function moduleMiddleware(call: CallExpression, ctx: DetectorContext): void {
+  if (dottedName(call.getExpression())?.split('.').pop() !== 'forRoutes') return;
+
+  // `.apply(X)` is the other half, and it is the call this one hangs off.
+  const applied = call.getExpression();
+  if (!Node.isPropertyAccessExpression(applied)) return;
+  const apply = applied.getExpression();
+  if (!Node.isCallExpression(apply) || dottedName(apply.getExpression())?.split('.').pop() !== 'apply') return;
+
+  const names = apply.getArguments().map((arg) => dottedName(arg)).filter((n): n is string => Boolean(n));
+  if (names.length === 0) return;
+
+  for (const arg of call.getArguments()) {
+    const route = routeSpec(arg);
+    if (!route) continue;
+    for (const name of names) {
+      ctx.emit({
+        type: 'path-guard',
+        name,
+        matcher: route.path,
+        method: route.method,
+        framework: 'NestJS',
+        path: ctx.ref.relPath,
+        line: call.getStartLineNumber(),
+      });
+    }
+  }
+}
+
+/** One entry of a `forRoutes(...)` list: `'user'`, or `{ path, method }`. */
+function routeSpec(arg: Node): { path: string; method: string | null } | null {
+  const absolute = (path: string) => (path.startsWith('/') ? path : `/${path}`);
+  const bare = literalString(arg);
+  if (bare) return { path: absolute(bare), method: null };
+  const raw = literalString(objectProp(arg, 'path'));
+  if (raw === null) return null;
+  const path = absolute(raw);
+  // `RequestMethod.GET` — the enum member's name is the method, and `ALL` means every one.
+  const method = dottedName(objectProp(arg, 'method'))?.split('.').pop() ?? null;
+  return { path, method: !method || method === 'ALL' ? null : method.toUpperCase() };
 }
 
 // ---------------------------------------------------------------------------

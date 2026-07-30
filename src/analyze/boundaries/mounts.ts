@@ -21,6 +21,7 @@ import type {
   BoundaryFinding,
   EndpointFinding,
   GlobalPrefixFinding,
+  GuardFinding,
   PathConstantFinding,
   RouterBuildFinding,
   RouterMountFinding,
@@ -57,6 +58,14 @@ export function composeRoutePrefixes(findings: BoundaryFinding[]): BoundaryFindi
   const chains = new Chains(builds, mounts, constants);
   const everywhere = globalPrefixes(globals);
   return findings.map((finding) => {
+    if (finding.type === 'guard') return placeMatchers(finding, chains);
+    // A module's `forRoutes('user')` names the address without the prefix the framework
+    // puts in front of every route it serves. Same one line of `main.ts`, same answer.
+    if (finding.type === 'path-guard') {
+      const global = everywhere.get(finding.framework);
+      if (!global) return finding;
+      return { ...finding, matcher: global.known === null ? '' : render([global], finding.matcher) };
+    }
     if (finding.type !== 'endpoint' || finding.route === null) return finding;
     const global = finding.framework ? everywhere.get(finding.framework) : undefined;
     const own = finding.routerVar
@@ -65,6 +74,35 @@ export function composeRoutePrefixes(findings: BoundaryFinding[]): BoundaryFindi
     if (!global && own.length === 0) return finding;
     return applyPrefix(finding, global ? [global, ...own] : own);
   });
+}
+
+/**
+ * Where a check written on a router actually reaches.
+ *
+ * `admin.use(requireAuth)` produces the pattern `/:path*`, which read literally is the
+ * whole application — so a lock on one sub-router was reporting every door in the repo
+ * as protected, including the ones deliberately left open. The pattern is relative to
+ * the router it was written on, and this is where that router's address is known.
+ *
+ * Three answers, because there are three situations. A router something mounts gets its
+ * mounted address in front of the pattern. A router nothing mounts but that hosts mounts
+ * of its own is the application itself, and its pattern was absolute all along. A router
+ * that is neither is one we cannot place — and a check we cannot place is dropped, not
+ * widened, because the widened version is a claim of protection over doors nobody
+ * checked.
+ */
+function placeMatchers(finding: GuardFinding, chains: Chains): GuardFinding {
+  if (!finding.routerVar || finding.scope !== 'matcher') return finding;
+  const key = routerKey(moduleOf(finding.guard.path ?? ''), finding.routerVar);
+  const where = chains.placeOf(key);
+  if (where === null) return { ...finding, matchers: [] };
+  if (where.length === 0) return finding;
+  // An address with a gap in it cannot say which doors are behind the check.
+  if (where.some((part) => part.known === null)) return { ...finding, matchers: [] };
+  return {
+    ...finding,
+    matchers: finding.matchers.map((matcher) => render(where, matcher.replace(/^\//, ''))),
+  };
 }
 
 /**
@@ -218,6 +256,8 @@ class Chains {
   private readonly index: Builds;
   /** `module\0var` of the child → the mounts that hang it somewhere. */
   private readonly mountedAt: Map<string, RouterMountFinding[]>;
+  /** `module\0var` of every router something is mounted *onto*. */
+  private readonly hosts = new Set<string>();
   /** Constant name → the values it was given, repo-wide. */
   private readonly constants = new Map<string, Set<string>>();
   /** `path\0name` → the value that file gave it, which beats the repo-wide answer. */
@@ -227,6 +267,7 @@ class Chains {
   constructor(builds: RouterBuildFinding[], mounts: RouterMountFinding[], constants: PathConstantFinding[]) {
     this.index = new Builds(builds);
     this.mountedAt = mountGraph(builds, mounts);
+    for (const mount of mounts) this.hosts.add(routerKey(moduleOf(mount.path), mount.hostVar));
 
     for (const constant of constants) {
       const values = this.constants.get(constant.name);
@@ -244,6 +285,17 @@ class Chains {
   prefixFor(key: string): Part[] {
     const seen = new Set<string>();
     return this.walk(key, seen);
+  }
+
+  /**
+   * Where this router sits, or null when it sits nowhere we can see.
+   *
+   * An empty list means the root: nothing mounts it, but other routers hang off it, so
+   * it is the application and addresses written on it are already absolute.
+   */
+  placeOf(key: string): Part[] | null {
+    if (this.mountedAt.has(key)) return this.prefixFor(key);
+    return this.hosts.has(key) ? [] : null;
   }
 
   private walk(key: string, seen: Set<string>): Part[] {

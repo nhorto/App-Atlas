@@ -13,7 +13,16 @@
 import { Node, SyntaxKind } from 'ts-morph';
 import type { CallExpression, ClassDeclaration, SourceFile } from 'ts-morph';
 import type { GuardInfo } from '../../model/types.js';
-import { argAt, dottedName, functionArg, hasDirective, literalString, objectProp } from './ast.js';
+import {
+  argAt,
+  dottedName,
+  functionArg,
+  hasDirective,
+  isRouterCallee,
+  literalString,
+  looksLikeRouter as isRouter,
+  objectProp,
+} from './ast.js';
 import { guardFromName } from './auth.js';
 import type { BoundaryDetector, DetectorContext } from './types.js';
 
@@ -248,17 +257,6 @@ const SERVER_PACKAGES: { pkg: string; name: string }[] = [
   { pkg: '@hapi/hapi', name: 'Hapi' },
 ];
 
-/** Names people actually give the thing they hang routes off. */
-const ROUTER_NAMES = /^(app|router|server|api|fastify|hono|koa|instance|r)$/i;
-
-/**
- * What a router is actually built by, as opposed to what it tends to be called.
- *
- * Matched loosely on purpose: `new OpenAPIHono()` and `express.Router()` are both
- * routers, and the wrappers people put around them keep the original name inside.
- */
-const ROUTER_CALLEE = /express|Router|Hono|Fastify|fastify|Koa|Server/;
-
 export const nodeRoutesDetector: BoundaryDetector = {
   id: 'node-routes',
   enabled: (ctx) => serverFrameworks(ctx).length > 0,
@@ -267,7 +265,7 @@ export const nodeRoutesDetector: BoundaryDetector = {
     // it. Emitted from the constructor rather than the name: `router` is a convention,
     // `express.Router()` is a fact.
     for (const [name, local] of ctx.locals) {
-      if (!ROUTER_CALLEE.test(local.callee)) continue;
+      if (!isRouterCallee(local.callee)) continue;
       ctx.emit({
         type: 'router-build',
         routerName: local.callee,
@@ -349,7 +347,7 @@ function mountTarget(name: string, ctx: DetectorContext): { module: string | nul
     };
   }
   const local = ctx.locals.get(name);
-  if (local && ROUTER_CALLEE.test(local.callee)) return { module: null, varName: name };
+  if (local && isRouterCallee(local.callee)) return { module: null, varName: name };
   return null;
 }
 
@@ -361,14 +359,27 @@ function mountTarget(name: string, ctx: DetectorContext): { module: string | nul
  * matches on the tail anyway.
  */
 function importedModule(fromRelPath: string, specifier: string): string {
-  if (!specifier.startsWith('.')) return specifier.replace(/^[@~#]\/?/, '').replace(/\.[^./]+$/, '');
+  if (!specifier.startsWith('.')) return withoutExtension(specifier.replace(/^[@~#]\/?/, ''));
   const parts = fromRelPath.split('/').slice(0, -1);
-  for (const segment of specifier.replace(/\.[^./]+$/, '').split('/')) {
+  for (const segment of withoutExtension(specifier).split('/')) {
     if (segment === '.' || segment === '') continue;
     if (segment === '..') parts.pop();
     else parts.push(segment);
   }
   return parts.join('/');
+}
+
+/**
+ * Drops a module extension, and only a module extension.
+ *
+ * `./admin.routes` is a whole file name, not a name with a suffix on it. Trimming
+ * everything after the last dot turns it into `./admin`, which matches nothing — and
+ * `thing.routes.ts`, `thing.controller.ts`, `thing.module.ts` is the ordinary way a
+ * NestJS repo is laid out, so the mount is lost on exactly the projects that mount most.
+ * A specifier only ever carries an extension in ESM-style imports (`./admin.routes.js`).
+ */
+function withoutExtension(specifier: string): string {
+  return specifier.replace(/\.[cm]?[jt]sx?$/, '');
 }
 
 /** `app.setGlobalPrefix('api')` — one line that renames every route NestJS serves. */
@@ -465,9 +476,41 @@ function fastifyRouteObject(call: CallExpression, ctx: DetectorContext): void {
   }
 }
 
+/**
+ * What a class contributes to the question of who may call it: the guards written on it,
+ * and the class it extends.
+ *
+ * Neither half is an answer on its own. `@UseGuards(SessionGuard)` two links up the
+ * chain is the only place a controller is locked, and the controller's own file will not
+ * mention a caller anywhere — so the chain is reported as facts and joined in the merge,
+ * where every class in the project is in view. Guard names are carried as checks in
+ * their own right because `@UseGuards` is Nest saying, in as many words, that this is
+ * what decides whether the request proceeds.
+ */
+function nestClassChain(cls: ClassDeclaration, ctx: DetectorContext): void {
+  const name = cls.getName();
+  if (!name) return;
+  const guards = decoratorGuards(cls.getDecorator('UseGuards'), ctx);
+  const bases = [cls.getExtends()?.getExpression().getText()].filter((base): base is string => Boolean(base));
+  if (guards.length === 0 && bases.length === 0) return;
+
+  for (const guard of guards) ctx.emit({ type: 'auth-checker', name: guard.name, guard });
+  ctx.emit({
+    type: 'auth-alias',
+    name,
+    depends: guards.map((guard) => guard.name),
+    binds: 'UseGuards',
+    bases,
+    path: ctx.ref.relPath,
+    line: cls.getStartLineNumber(),
+  });
+}
+
 /** `@Controller('users')` with `@Get(':id')` methods inside. */
 function nestController(cls: ClassDeclaration, ctx: DetectorContext): void {
   if (!ctx.signals.packages.has('@nestjs/common')) return;
+  nestClassChain(cls, ctx);
+
   const controller = cls.getDecorator('Controller');
   if (!controller) return;
 
@@ -492,6 +535,9 @@ function nestController(cls: ClassDeclaration, ctx: DetectorContext): void {
         guards: [...classGuards, ...decoratorGuards(method.getDecorator('UseGuards'), ctx)],
         site: ctx.site(method, `@${capitalize(name.toLowerCase())}('${sub}')`),
         handlerId: ctx.enclosing(method),
+        // The class this route was declared on, so a check written further up the chain
+        // than this file goes can still be found.
+        handlerOwner: cls.getName() ?? null,
       });
     }
   }
@@ -578,9 +624,7 @@ function middlewareGuards(call: CallExpression, ctx: DetectorContext): GuardInfo
 }
 
 function looksLikeRouter(name: string, ctx: DetectorContext): boolean {
-  if (ROUTER_NAMES.test(name)) return true;
-  const local = ctx.locals.get(name);
-  return local ? ROUTER_CALLEE.test(local.callee) : false;
+  return isRouter(name, ctx.locals);
 }
 
 function frameworkFor(name: string, ctx: DetectorContext): string | null {

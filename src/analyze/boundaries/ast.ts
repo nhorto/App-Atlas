@@ -7,6 +7,34 @@
  */
 import { Node, SyntaxKind } from 'ts-morph';
 import type { CallExpression, ObjectLiteralExpression } from 'ts-morph';
+import type { LocalBinding } from './types.js';
+
+/** Names people actually give the thing they hang routes off. */
+const ROUTER_NAMES = /^(app|router|server|api|fastify|hono|koa|instance|r)$/i;
+
+/**
+ * What a router is actually built by, as opposed to what it tends to be called.
+ *
+ * Matched loosely on purpose: `new OpenAPIHono()` and `express.Router()` are both
+ * routers, and the wrappers people put around them keep the original name inside.
+ */
+const ROUTER_CALLEE = /express|Router|Hono|Fastify|fastify|Koa|Server/;
+
+export function isRouterCallee(callee: string): boolean {
+  return ROUTER_CALLEE.test(callee);
+}
+
+/**
+ * Whether a name is the thing routes hang off. Shared between the route detectors and
+ * the auth detector because `admin.use(requireAuth)` and `admin.post('/purge')` have to
+ * agree about what `admin` is — one of them deciding it is a router and the other not
+ * is how a check ends up attached to the wrong set of doors.
+ */
+export function looksLikeRouter(name: string, locals: Map<string, LocalBinding>): boolean {
+  if (ROUTER_NAMES.test(name)) return true;
+  const local = locals.get(name);
+  return local ? ROUTER_CALLEE.test(local.callee) : false;
+}
 
 /** `a.b.c` for an identifier or property-access chain; null for anything else. */
 export function dottedName(node: Node | undefined): string | null {
