@@ -169,7 +169,7 @@ function trimPath(text: string): string {
  * TypeScript, which is why the merge layer can key both languages the same way.
  */
 export function moduleOf(relPath: string): string {
-  const withoutExt = relPath.replace(/\.(pyi?|[cm]?[jt]sx?)$/, '');
+  const withoutExt = relPath.replace(/\.(pyi?|go|[cm]?[jt]sx?)$/, '');
   return withoutExt.replace(/(^|\/)(index|__init__)$/, '');
 }
 

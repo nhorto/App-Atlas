@@ -23,6 +23,7 @@ import { buildSchemaNodes, buildSqlSchemaNodes } from './schema.js';
 import type { FileSlice, LanguagePlugin } from './plugin.js';
 import { discoverProject } from './project.js';
 import type { ProjectInfo } from './project.js';
+import { genericPlugins } from './generic/index.js';
 import { pythonPlugin } from './py/index.js';
 import { typescriptPlugin } from './ts/index.js';
 import { dominantZone } from './zones.js';
@@ -56,7 +57,12 @@ export interface AnalyzeResult {
   project: ProjectInfo;
 }
 
-const PLUGINS: LanguagePlugin[] = [typescriptPlugin, pythonPlugin];
+/**
+ * Order matters. The two deep tiers claim their files first and the tree-sitter tier
+ * takes what is left, so adding a grammar can never quietly downgrade a language that
+ * already had a compiler reading it.
+ */
+const PLUGINS: LanguagePlugin[] = [typescriptPlugin, pythonPlugin, ...genericPlugins];
 
 export async function analyzeProject(rootDir: string, options: AnalyzeOptions = {}): Promise<AnalyzeResult> {
   const started = Date.now();

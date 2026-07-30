@@ -938,8 +938,17 @@ function guardConfidence(endpoint: MergedEndpoint, guard: GuardFinding): Confide
   if (guard.nodeId && endpoint.handlerIds.has(guard.nodeId)) return 'certain';
   // A module-scope check runs for everything the file declares.
   if (guard.nodeId?.startsWith('file:')) return 'likely';
-  // We never pinned down a specific handler, so anything in the file may well guard it.
-  if ([...endpoint.handlerIds].every((id) => id.startsWith('file:'))) return 'likely';
+  // We only pinned the handler down as far as its file, so anything in that file may
+  // well guard it.
+  //
+  // The size check is the whole of the rule. "We could not find the handler at all" is a
+  // different statement from "the handler is the whole file", and `[].every(…)` is true,
+  // so the two used to give the same answer — which is how `mux.Handle("/debug/vars",
+  // expvar.Handler())` came to be reported as protected by a middleware standing in front
+  // of the route on the line above it.
+  if (endpoint.handlerIds.size > 0 && [...endpoint.handlerIds].every((id) => id.startsWith('file:'))) {
+    return 'likely';
+  }
   return null;
 }
 

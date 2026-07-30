@@ -10,6 +10,7 @@ import path from 'node:path';
 import fg from 'fast-glob';
 import ignoreFactory from 'ignore';
 import type { Zone } from '../model/types.js';
+import { goFrameworkFor } from './generic/go/frameworks.js';
 import { relPosix, toPosix } from '../util/paths.js';
 import { readSignals } from './signals.js';
 import type { ProjectSignals } from './signals.js';
@@ -50,7 +51,7 @@ export interface DiscoverOptions {
   extraIgnores?: string[];
 }
 
-export const SOURCE_GLOB = '**/*.{ts,tsx,mts,cts,js,jsx,mjs,cjs,py,pyi,ipynb}';
+export const SOURCE_GLOB = '**/*.{ts,tsx,mts,cts,js,jsx,mjs,cjs,py,pyi,ipynb,go}';
 
 export const DEFAULT_IGNORES = [
   '**/node_modules/**',
@@ -117,6 +118,7 @@ const PYTHON_FRAMEWORKS: Record<string, string> = {
   streamlit: 'Streamlit',
   'djangorestframework': 'Django REST Framework',
 };
+
 
 export async function discoverProject(rootInput: string, options: DiscoverOptions): Promise<ProjectInfo> {
   const root = path.resolve(rootInput);
@@ -231,6 +233,10 @@ function detectFrameworks(pkg: Record<string, unknown> | null, signals: ProjectS
   if (signals.workers.some((w) => w.isPages)) out.add('Cloudflare Pages');
   for (const [dep, label] of Object.entries(PYTHON_FRAMEWORKS)) {
     if (signals.pythonPackages.has(dep)) out.add(label);
+  }
+  for (const module of signals.goModules) {
+    const label = goFrameworkFor(module);
+    if (label) out.add(label);
   }
   return [...out].sort();
 }
