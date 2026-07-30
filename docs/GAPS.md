@@ -30,6 +30,10 @@ what changed since yesterday. That is the honest position.
 
 ## Gap 1. Two languages
 
+> **Closed, 30 July 2026** — [#43](https://github.com/nhorto/App-Atlas/issues/43), M6. There are now three tiers, not two extractors: `src/analyze/generic/` is one extractor over tree-sitter grammars, and a language costs a query file plus a dialect of about fifty lines. Go is the first, and deliberately the only one so far. Everything below is left as it was written, because a gap report edited after the gap is closed is a report nobody can check. What actually shipped, and what it measured on three Go repos it had never seen, is in [SPEC.md](../SPEC.md) section 13 under M6.
+>
+> Two things the entry below got right and one it did not. Right: the mechanism to copy was the generic extractor, and the honest trade had to be stated in the product — it is, in the `ATLAS.md` header and above the CLI's numbers. Wrong: it assumed the framework detectors would need per-language work. They did not. `boundaries/build.ts` needed no changes at all, so Go route prefixes compose through the machinery written for FastAPI's `include_router`.
+
 **Where we are.** `src/analyze/` has exactly two extractors: `ts/` (ts-morph) and `py/`
 (CPython's own `ast` via a subprocess). Point App Atlas at a Go, Ruby, Java, C#, PHP,
 Rust, Kotlin or Swift repo and you get file counts, folders, and an empty boundary view.

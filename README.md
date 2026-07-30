@@ -347,6 +347,37 @@ The same rule applies to auth: a FastAPI `Depends(get_current_user)` counts as a
 guard, but only ever a likely one, because a function with that name that returns
 `None` for a stranger is not a check.
 
+## Go, at the grammar tier
+
+```bash
+app-atlas ~/code/my-go-service
+```
+
+Go used to produce a blank page. It now produces its files, its packages, its
+functions and methods under the types they hang off, its structs and interfaces with
+their fields, its doc comments read verbatim — and its boundary: routes on `net/http`
+(including the `"GET /orders/{id}"` patterns Go 1.22 introduced), chi, Gin, Echo,
+gorilla/mux and Fiber, with sub-routers and groups composed into the address a
+customer actually types; `database/sql`, GORM, sqlx, Redis and MongoDB calls with the
+table named and the direction read out of the SQL; `os.Getenv`; and outbound HTTP with
+the host resolved to the company on the other end.
+
+**Middleware is judged by what it writes, not by what it is called.** `r.Use(Logger)`
+and `r.Use(RequireAuth)` are the same line of code. Only one of them ever puts a 401 or
+a 403 on the wire, and that — followed up to three calls deep, because real auth code
+hands off — is what makes it a check.
+
+There is no Go toolchain involved and none is needed: the grammar is a 212 KB
+WebAssembly file this repo ships, taken from [tree-sitter-go][ts-go] and checked
+against a recorded hash. Nothing compiles at install time.
+
+The trade is stated everywhere the tool speaks. TypeScript gets a type checker and
+Python gets the interpreter's own parser; Go gets a grammar and no resolution at all,
+so a name is matched rather than resolved and every link between files says **likely**.
+`ATLAS.md` says so in its header, and the CLI says so above the numbers.
+
+[ts-go]: https://github.com/tree-sitter/tree-sitter-go
+
 ## Monorepos get one map each
 
 ```
@@ -503,11 +534,15 @@ ships example code has the same problem.
 See [CONTRIBUTING.md](CONTRIBUTING.md) for setup and the one rule everything else
 follows. Contributions are welcome, particularly:
 
-- **Language plugins.** The analyzer takes source files and emits atlas nodes and
-  edges — see [`src/analyze/plugin.ts`](src/analyze/plugin.ts). TypeScript and Python
-  are done and sit at different depths on purpose;
-  [`src/analyze/py/`](src/analyze/py/) is the shorter of the two to read first. Go,
-  Ruby and Rust are all wide open.
+- **Language plugins.** The cheapest useful contribution in the whole repo. A new
+  language in the grammar tier is a row in
+  [`scripts/grammars.mjs`](scripts/grammars.mjs), a query file beside
+  [`queries/go.scm`](src/analyze/generic/queries/go.scm), and a dialect the size of
+  [`go/dialect.ts`](src/analyze/generic/go/dialect.ts) — after which the repo has its
+  files, functions, types and imports. Boundary detectors on top are optional and
+  separate. Ruby, Java, C#, Rust, Kotlin, PHP and Swift are all wide open. The deeper
+  tiers are [`src/analyze/ts/`](src/analyze/ts/) and
+  [`src/analyze/py/`](src/analyze/py/), at different depths on purpose.
 - **Boundary detectors.** A detector is one small file that recognises one family of
   conventions — see [`src/analyze/boundaries/`](src/analyze/boundaries/). If your
   framework, ORM or auth library is missing, that is the file to add.
