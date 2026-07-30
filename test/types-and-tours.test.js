@@ -303,6 +303,20 @@ test('code that runs on its own is listed even though auth cannot apply', () => 
   assert.match(markdown, /\*\*webhook\*\*/);
 });
 
+test('the stars in the env list add up to the number underneath them', () => {
+  // The footnote says "N of M are read by the code but written down nowhere". A reader
+  // who counts the stars must arrive at N. They used to arrive at N plus however many
+  // platform variables the repo used, because the star and the count applied different
+  // rules — which is the tool disagreeing with itself inside one paragraph.
+  const section = markdown.split('## Environment variables')[1].split('\n##')[0];
+  const claimed = Number(/— (\d+) of \d+ are read by the code/.exec(section)[1]);
+  const starred = (section.match(/`\*/g) ?? []).length;
+  assert.equal(starred, claimed, `${starred} starred names against a claim of ${claimed}`);
+
+  assert.match(section, /`NODE_ENV`†/, 'a variable the host sets gets its own mark');
+  assert.match(section, /† set by the hosting platform/);
+});
+
 test('a generated sentence is marked, and a docstring is not', () => {
   const graph = copyOfBoundary();
   const file = graph.getNodeById('file:src/lib/db.ts');

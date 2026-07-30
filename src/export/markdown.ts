@@ -185,13 +185,25 @@ export function renderAtlasMarkdown(graph: AtlasGraph, options: MarkdownOptions 
   if (insights.env.total > 0) {
     out.push('## Environment variables');
     out.push('');
-    const names = insights.env.vars.slice(0, MAX_ENV).map((v) => `\`${v.name}\`${v.documented ? '' : '*'}`);
+    // The star has to mean exactly what the footnote below says it means. It used to be
+    // `!documented`, while the count underneath excluded platform variables — so
+    // nextjs-subscription-payments printed three stars above the words "2 of 10", and a
+    // reader who counted them found the tool disagreeing with itself on the same screen.
+    // `NEXT_PUBLIC_VERCEL_URL` is set by the host; nobody forgot to write it down.
+    const names = insights.env.vars.slice(0, MAX_ENV).map((v) => {
+      const mark = v.platform ? '†' : v.documented ? '' : '*';
+      return `\`${v.name}\`${mark}`;
+    });
     out.push(names.join(', ') + (insights.env.total > MAX_ENV ? `, …${insights.env.total - MAX_ENV} more` : ''));
     if (insights.env.undocumented.length > 0) {
       out.push('');
       out.push(
         `\\* not in ${insights.env.exampleFile ?? '.env.example'} — ${insights.env.undocumented.length} of ${insights.env.total} are read by the code but written down nowhere.`,
       );
+    }
+    if (insights.env.vars.slice(0, MAX_ENV).some((v) => v.platform)) {
+      out.push('');
+      out.push('† set by the hosting platform, not by you.');
     }
     out.push('');
   }
