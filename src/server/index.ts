@@ -16,7 +16,7 @@ import type { ScopeRecord } from '../model/store.js';
 import { buildBoundaryView } from '../model/boundary.js';
 import { AtlasGraph } from '../model/graph.js';
 import { buildInsights } from '../model/insights.js';
-import { buildTours } from '../model/tours.js';
+import { buildTours, tourFor } from '../model/tours.js';
 import { buildTypeView } from '../model/typeview.js';
 import { readSource } from './source.js';
 import { Explainer } from './explain.js';
@@ -256,6 +256,18 @@ function handleRequest(
 
       case '/api/tours':
         return sendJson(res, 200, { tours: buildTours(graph) });
+
+      /**
+       * The walkthrough for one thing, built when the reader opens it. Not part of
+       * `/api/tours` because a repo with 760 doors would ship 760 walkthroughs to
+       * answer a question about one of them.
+       */
+      case '/api/tour': {
+        const id = url.searchParams.get('id') ?? '';
+        const tour = tourFor(graph, id);
+        if (!tour) return sendJson(res, 404, { error: 'No walkthrough for this one.' });
+        return sendJson(res, 200, tour);
+      }
 
       /** The code behind one step of a walkthrough, read from disk on demand. */
       case '/api/source': {

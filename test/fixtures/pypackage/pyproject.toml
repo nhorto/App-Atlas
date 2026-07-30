@@ -1,0 +1,4 @@
+[project]
+name = "toolkit"
+version = "1.0.0"
+description = "Something other code installs and imports."

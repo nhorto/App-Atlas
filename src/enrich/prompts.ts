@@ -25,6 +25,8 @@ Rules:
 - Say what a thing is FOR, not what the syntax does. "Checks a password against the database" beats "async function that queries a table".
 - Plain words. A term is allowed only if the reader would meet it in their own product: a URL, a table name, a company like Stripe, a page they can click.
 - Use the facts given. They came from a compiler and are correct. Do not contradict them.
+- Never add detail the facts do not have. If they say "Database", write "the database" — not Postgres, not MySQL. If they name no company, name none. Being more specific than the facts is the one way to be confidently wrong.
+- A blank in the facts means nobody could see it, not that it is absent. "No data store found" does not license "it stores nothing".
 - Never guess. If the facts do not say what something does, describe what it plainly is and stop. A vague true sentence beats a confident wrong one.
 - No openers ("This file is responsible for…"), no praise, no restating the name. Start with the verb or the noun that matters.
 - Present tense, second person for the app as a whole ("your app"), no first person.`;
@@ -58,9 +60,15 @@ export function overviewRequest(facts: AppFacts): EnrichRequest {
     'Main folders:',
     ...facts.topFolders.map((f) => `- ${f.path || '(root)'} — ${f.files} files, mostly ${f.zone}`),
     '',
-    facts.waysIn.length > 0 ? `Ways data gets in: ${facts.waysIn.join(', ')}` : 'No inbound routes found.',
-    facts.stores.length > 0 ? `Data is stored in: ${facts.stores.join(', ')}` : 'No data store found.',
-    facts.services.length > 0 ? `Outside services it talks to: ${facts.services.join(', ')}` : '',
+    facts.waysIn.length > 0
+      ? `Ways data gets in: ${facts.waysIn.join(', ')}`
+      : 'No way in was detected. That may mean there is none, or that we could not see it.',
+    facts.stores.length > 0
+      ? `Data is stored in: ${facts.stores.join(', ')}`
+      : 'No data store was detected. That may mean there is none, or that we could not see it. Do not name one.',
+    facts.services.length > 0
+      ? `Outside services it talks to: ${facts.services.join(', ')}`
+      : 'No outside service was detected. That may mean there are none, or that we could not see them. Do not name one.',
   ].filter(Boolean);
 
   if (facts.existingDocs.length > 0) {
@@ -71,7 +79,7 @@ export function overviewRequest(facts: AppFacts): EnrichRequest {
     system: VOICE,
     user: `${lines.join('\n')}
 
-Write one paragraph, 3 to 5 sentences, telling the owner of this app what it takes in, what it does with it, and where that data ends up. Name the real routes, tables and companies above rather than talking in general terms. No heading, no bullet points, no markdown.`,
+Write one paragraph, 3 to 5 sentences, telling the owner of this app what it takes in, what it does with it, and where that data ends up. Name the real routes, tables and companies above rather than talking in general terms — and name only those. The lists above are everything we found; this paragraph sits directly under a diagram drawn from the same lists, and a company in your sentence that is not in the diagram makes the reader distrust both. No heading, no bullet points, no markdown.`,
     maxOutputTokens: 400,
   };
 }

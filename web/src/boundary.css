@@ -343,6 +343,64 @@
   color: #a03325;
 }
 
+/*
+ * The members of a group card.
+ *
+ * A card reading "Pages · 14 pages" used to open one of the fourteen, chosen by
+ * nothing in particular — the reader saw a page they had not asked for and no sign
+ * that thirteen others existed. It opens the list now.
+ *
+ * Absolutely positioned over the stage like the cards themselves, and above them, so a
+ * long list can overlap the card below rather than reflowing the whole diagram.
+ */
+.bcard-members {
+  position: absolute;
+  z-index: 6;
+  margin: 0;
+  padding: 5px;
+  list-style: none;
+  max-height: 240px;
+  overflow-y: auto;
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+  background: var(--surface);
+  box-shadow: 0 8px 22px rgba(64, 54, 32, 0.16);
+}
+
+.bmember {
+  display: block;
+  width: 100%;
+  padding: 5px 7px;
+  border: 0;
+  border-radius: 5px;
+  background: none;
+  font: inherit;
+  font-size: 11.5px;
+  line-height: 1.35;
+  text-align: left;
+  color: var(--ink);
+  cursor: pointer;
+  overflow-wrap: anywhere;
+}
+
+.bmember:hover {
+  background: var(--surface-press);
+}
+
+.bmember.is-selected {
+  background: var(--surface-press);
+  font-weight: 650;
+}
+
+/* Says the card has more behind it without competing with the name for room. At 10px
+   this rendered as an indeterminate dot, which is worse than no affordance at all. */
+.bcard-more {
+  flex: none;
+  font-size: 12px;
+  line-height: 1;
+  color: var(--ink-soft);
+}
+
 .boundary-foot {
   margin: 12px 0 0;
   font-size: 12px;
@@ -405,6 +463,10 @@
 
 .meter-ok { background: #37845a; }
 .meter-maybe { background: #c4881c; }
+/* Open for a reason, and "I did not get to look", are neither green nor red. Giving
+   them the alarm colour is what taught readers to ignore the alarm. */
+.meter-public { background: #7a8391; }
+.meter-unknown { background: #6b5aa8; }
 .meter-open { background: #b3372a; }
 
 .score-key {
@@ -431,6 +493,8 @@
 
 .swatch-ok { background: #37845a; }
 .swatch-maybe { background: #c4881c; }
+.swatch-public { background: #7a8391; }
+.swatch-unknown { background: #6b5aa8; }
 .swatch-open { background: #b3372a; }
 
 .route-list,
@@ -562,6 +626,8 @@
 .badge-protected { background: rgba(55, 132, 90, 0.15); color: #266344; }
 .badge-likely { background: rgba(196, 136, 28, 0.16); color: #8f6210; }
 .badge-open { background: rgba(179, 55, 42, 0.12); color: #a03325; }
+.badge-public { background: rgba(122, 131, 145, 0.16); color: #5c6472; }
+.badge-unknown { background: rgba(107, 90, 168, 0.14); color: #574899; }
 
 .card-badge {
   align-self: flex-start;
@@ -593,6 +659,26 @@
   border-left-color: #37845a;
   background: rgba(55, 132, 90, 0.1);
   color: #245c3e;
+}
+
+.note-unknown {
+  border-left-color: #6b5aa8;
+  background: rgba(107, 90, 168, 0.09);
+  color: #4d4189;
+}
+
+.note-unknown code {
+  font-size: 11.5px;
+  word-break: break-all;
+}
+
+/* Why a door is open, under the door. Italic and faint: it is context for the badge
+   above it, not a second claim competing with it. */
+.route-why {
+  display: block;
+  font-style: normal;
+  color: var(--ink-faint);
+  opacity: 0.85;
 }
 
 .env-name {

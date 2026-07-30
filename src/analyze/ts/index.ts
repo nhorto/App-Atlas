@@ -42,6 +42,7 @@ import { detectBoundaries } from '../boundaries/index.js';
 import type { BoundaryFinding } from '../boundaries/types.js';
 import type { FileSlice, LanguagePlugin, PluginContext, PluginResult } from '../plugin.js';
 import type { SourceFileRef } from '../project.js';
+import { appendAll } from '../../util/append.js';
 
 const TS_EXTENSIONS = new Set(['.ts', '.tsx', '.mts', '.cts', '.js', '.jsx', '.mjs', '.cjs']);
 const MAX_TYPE_TEXT = 180;
@@ -106,9 +107,9 @@ export function analyzeTypeScript(ctx: PluginContext): PluginResult {
       staleRefs.push(ref);
       continue;
     }
-    nodes.push(...slice.nodes);
+    appendAll(nodes, slice.nodes);
     mergeEdges(edges, slice.edges);
-    boundaries.push(...slice.boundaries);
+    appendAll(boundaries, slice.boundaries);
     const posKey = normPath(ref.absPath);
     for (const [pos, id] of slice.positions) registered.byPosition.set(`${posKey}|${pos}`, id);
     for (const node of slice.nodes) {
@@ -134,7 +135,12 @@ export function analyzeTypeScript(ctx: PluginContext): PluginResult {
         positions: [],
       });
     } catch (err) {
-      warnings.push(`Could not read ${ref.relPath}: ${(err as Error).message}`);
+      const because = (err as Error).message;
+      warnings.push(`Could not read ${ref.relPath}: ${because}`);
+      // Still put it on the map. A file that silently vanishes takes its imports and
+      // whatever check it declared with it, and the auth screen then reports the
+      // routes that leaned on it as unprotected rather than as unexamined (#36).
+      nodes.push(unreadFileNode(ref, because));
     }
   }
   timings.load = Date.now() - t1;
@@ -228,9 +234,9 @@ export function analyzeTypeScript(ctx: PluginContext): PluginResult {
         .filter((edge) => edge.kind === 'imports')
         .map((edge) => edge.toId.slice(FILE_ID_PREFIX.length)),
     });
-    nodes.push(...bucket.nodes);
+    appendAll(nodes, bucket.nodes);
     mergeEdges(edges, sliceEdges);
-    boundaries.push(...bucket.boundaries);
+    appendAll(boundaries, bucket.boundaries);
   }
 
   return { nodes, edges: [...edges.values()], boundaries, warnings, timings, slices, reused };
@@ -261,6 +267,41 @@ function createProject(tsConfigPath: string | null): Project {
 // ---------------------------------------------------------------------------
 // Declarations
 // ---------------------------------------------------------------------------
+
+/**
+ * A file the compiler would not even open. It keeps its place on the map, marked, so
+ * that everything downstream can tell "nothing to protect here" apart from "I never
+ * got to look".
+ */
+function unreadFileNode(ref: SourceFileRef, because: string): AtlasNode {
+  return {
+    id: makeFileId(ref.relPath),
+    kind: 'file',
+    name: path.posix.basename(ref.relPath),
+    label: null,
+    parentId: null,
+    language: 'typescript',
+    path: ref.relPath,
+    startLine: 1,
+    endLine: 1,
+    zone: ref.zone,
+    summary: null,
+    summarySource: null,
+    docHash: null,
+    bodyHash: null,
+    hash: hashText(ref.relPath),
+    provenance: 'static',
+    meta: {
+      ext: extOf(ref.relPath),
+      loc: 0,
+      externalImports: [],
+      exportedNames: [],
+      functionCount: 0,
+      typeCount: 0,
+      unread: because,
+    },
+  };
+}
 
 function extractFile(ref: SourceFileRef, sf: SourceFile, nodes: AtlasNode[], declared: Declared): AtlasNode {
   const fileId = makeFileId(ref.relPath);

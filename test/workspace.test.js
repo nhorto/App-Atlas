@@ -21,7 +21,24 @@ test('finds every package in an npm workspace, and sorts apps first', async () =
   const scopes = await findScopes(MONO);
   assert.deepEqual(
     scopes.map((s) => `${s.name}:${s.kind}`),
-    ['api:app', 'web:app', 'ui:library'],
+    ['web:app', 'api:app', 'ui:library'],
+  );
+});
+
+/**
+ * Everything lands on `scopes[0]` — the CLI, the server and the web app all take the
+ * first one — so the order *is* the answer to "which of these is the project".
+ * Alphabetical made cal.com open on `api-proxy`, twelve files of URL rewriting, with
+ * `apps/web` sixty packages down the list and never shown.
+ */
+test('the biggest app leads, and everything after it stays alphabetical', async () => {
+  const scopes = await findScopes(MONO);
+  // `web` has two source files to `api`'s one, and loses on the alphabet.
+  assert.equal(scopes[0].name, 'web');
+  assert.deepEqual(
+    scopes.slice(1).map((s) => s.name),
+    ['api', 'ui'],
+    'only one scope moves — a switcher sorted by size would be unpredictable to scan',
   );
 });
 
@@ -50,6 +67,43 @@ test('a workspace with one package is not a monorepo', async () => {
 
   assert.deepEqual(await findScopes(dir), [], 'one app needs no switcher');
   fs.rmSync(dir, { recursive: true, force: true });
+});
+
+/**
+ * Sentry declares three workspace packages — `api-docs` and two eslint plugins, sixty
+ * files between them — and its actual application, several thousand Python files, is in
+ * none of them. The switcher offered those three and nothing else, so the tool reported
+ * on sixty files of tooling and called it Sentry.
+ */
+test('the repo itself is a scope when most of the code is not in any package', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'atlas-root-'));
+  fs.writeFileSync(path.join(dir, 'package.json'), JSON.stringify({ name: 'sentinel', workspaces: ['tools/*'] }));
+  fs.mkdirSync(path.join(dir, 'tools', 'lint'), { recursive: true });
+  fs.writeFileSync(path.join(dir, 'tools', 'lint', 'package.json'), JSON.stringify({ name: 'lint' }));
+  fs.writeFileSync(path.join(dir, 'tools', 'lint', 'index.js'), 'export const rule = 1;\n');
+  fs.mkdirSync(path.join(dir, 'tools', 'docs'), { recursive: true });
+  fs.writeFileSync(path.join(dir, 'tools', 'docs', 'package.json'), JSON.stringify({ name: 'docs' }));
+  fs.writeFileSync(path.join(dir, 'tools', 'docs', 'index.js'), 'export const page = 1;\n');
+  fs.mkdirSync(path.join(dir, 'src', 'app'), { recursive: true });
+  for (const name of ['a', 'b', 'c', 'd']) {
+    fs.writeFileSync(path.join(dir, 'src', 'app', `${name}.py`), 'x = 1\n');
+  }
+
+  const scopes = await findScopes(dir);
+  assert.equal(scopes[0].name, 'sentinel', 'the repo leads its own packages');
+  assert.equal(scopes[0].dir, '.');
+  assert.deepEqual(scopes.map((s) => s.name), ['sentinel', 'docs', 'lint']);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+/**
+ * The other half of the rule. Every monorepo has a build script and a config file at
+ * the root, and a scope for those would be one more wrong entry in the list rather than
+ * one less — so the leftovers have to outweigh every package, not merely exist.
+ */
+test('a root with less code than its packages is not a scope', async () => {
+  const scopes = await findScopes(MONO);
+  assert.ok(!scopes.some((s) => s.dir === '.'), scopes.map((s) => s.dir).join(', '));
 });
 
 test('reads pnpm workspaces too', async () => {

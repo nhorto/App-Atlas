@@ -49,9 +49,22 @@ function AuthCoverage({ auth, onReveal }: { auth: InsightsView['auth']; onReveal
     );
   }
 
-  const open = auth.routes.filter((route) => route.protection === 'open');
-  const rest = auth.routes.filter((route) => route.protection !== 'open');
-  const shown = showAll ? auth.routes : [...open, ...rest.slice(0, 6)];
+  // Unexplained first, then the ones we could not examine, then everything else —
+  // `byUrgency` in the model already put them in that order, so the only decision
+  // left here is where to stop before the reader has to ask for more.
+  const needsReading = auth.routes.filter(
+    (route) => route.open?.kind === 'worth-a-look' || route.open?.kind === 'unreadable',
+  );
+  const rest = auth.routes.filter((route) => !needsReading.includes(route));
+  const shown = showAll ? auth.routes : [...needsReading, ...rest.slice(0, 6)];
+
+  const segments = [
+    { count: auth.protectedCount, className: 'ok', label: 'checked' },
+    { count: auth.likelyCount, className: 'maybe', label: 'probably checked' },
+    { count: auth.unreadableCount, className: 'unknown', label: 'not examined' },
+    { count: auth.publicCount, className: 'public', label: 'open on purpose' },
+    { count: auth.openCount, className: 'open', label: 'nothing found' },
+  ];
 
   return (
     <Card
@@ -59,17 +72,15 @@ function AuthCoverage({ auth, onReveal }: { auth: InsightsView['auth']; onReveal
       subtitle={`${auth.total} ${auth.total === 1 ? 'door' : 'doors'} a stranger could knock on`}
     >
       <div className="score">
-        <Meter counts={[auth.protectedCount, auth.likelyCount, auth.openCount]} />
+        <Meter segments={segments} />
         <ul className="score-key">
-          <li>
-            <span className="swatch swatch-ok" /> {auth.protectedCount} checked
-          </li>
-          <li>
-            <span className="swatch swatch-maybe" /> {auth.likelyCount} probably checked
-          </li>
-          <li>
-            <span className="swatch swatch-open" /> {auth.openCount} nothing found
-          </li>
+          {segments
+            .filter((segment) => segment.count > 0)
+            .map((segment) => (
+              <li key={segment.className}>
+                <span className={`swatch swatch-${segment.className}`} /> {segment.count} {segment.label}
+              </li>
+            ))}
         </ul>
       </div>
 
@@ -80,13 +91,14 @@ function AuthCoverage({ auth, onReveal }: { auth: InsightsView['auth']; onReveal
               <span className={`method method-${(route.method ?? 'any').toLowerCase()}`}>{route.method ?? 'ANY'}</span>
               <span className="route-name">{route.route ?? route.name}</span>
               {route.writes ? <span className="tag tag-write">writes data</span> : null}
-              <ProtectionBadge protection={route.protection} guards={route.guards} />
+              <ProtectionBadge route={route} />
             </button>
-            {route.sites[0] ? (
-              <span className="route-path">
-                {route.sites[0].path}:{route.sites[0].line}
-              </span>
-            ) : null}
+            <span className="route-path">
+              {route.sites[0] ? `${route.sites[0].path}:${route.sites[0].line}` : null}
+              {/* The reason a door is open belongs beside the door, not in a footnote
+                  the reader reaches after they have already formed an impression. */}
+              {route.open?.because ? <em className="route-why">{route.open.because}</em> : null}
+            </span>
           </li>
         ))}
       </ul>
@@ -97,28 +109,71 @@ function AuthCoverage({ auth, onReveal }: { auth: InsightsView['auth']; onReveal
         </button>
       ) : null}
 
+      {auth.unread.length > 0 ? <UnreadFiles unread={auth.unread} /> : null}
+
       {auth.openCount > 0 ? (
         <p className="note">
           "Nothing found" means App Atlas could not see an auth check — not that the route is definitely
-          exploitable. A public marketing page belongs in this list; a server action that writes to your database
-          does not.
+          exploitable. Doors it can explain — a page the browser renders, the address your auth provider is
+          mounted at — are counted separately so this number stays worth reading.
         </p>
       ) : null}
     </Card>
   );
 }
 
-function ProtectionBadge({ protection, guards }: { protection: Protection; guards: RouteInsight['guards'] }) {
-  const guard = guards[0];
-  const label =
-    protection === 'open'
-      ? 'no check found'
-      : `${guard?.provider && guard.provider !== 'custom' ? guard.provider : (guard?.name ?? 'checked')}`;
+/**
+ * The one thing on this page that is not a fact about the code: a fact about the
+ * analyzer. It goes here rather than in the warnings drawer because a check hiding in
+ * a file we could not parse is the specific way every number above can be wrong.
+ */
+function UnreadFiles({ unread }: { unread: InsightsView['auth']['unread'] }) {
   return (
-    <span className={`badge badge-${protection}`} title={guardTitle(guards)}>
-      {protection === 'likely' ? `likely · ${label}` : label}
+    <p className="note note-unknown">
+      App Atlas could not read {unread.length} {unread.length === 1 ? 'file' : 'files'}, so anything they declare —
+      including a check — is missing from the counts above:
+      {' '}
+      {unread.map((file, i) => (
+        <span key={file.path}>
+          {i > 0 ? ', ' : ''}
+          <code title={file.because}>{file.path}</code>
+        </span>
+      ))}
+    </p>
+  );
+}
+
+function ProtectionBadge({ route }: { route: RouteInsight }) {
+  const guard = route.guards[0];
+  const label = openLabel(route) ?? (guard?.provider && guard.provider !== 'custom' ? guard.provider : (guard?.name ?? 'checked'));
+  const tone = route.open ? badgeTone(route.open.kind) : route.protection;
+  return (
+    <span className={`badge badge-${tone}`} title={route.open?.because ?? guardTitle(route.guards)}>
+      {route.protection === 'likely' ? `likely · ${label}` : label}
     </span>
   );
+}
+
+function openLabel(route: RouteInsight): string | null {
+  switch (route.open?.kind) {
+    case 'worth-a-look':
+      return 'no check found';
+    case 'unreadable':
+      return 'not examined';
+    case 'page':
+      return 'public page';
+    case 'auth-mount':
+      return 'the sign-in door';
+    default:
+      return null;
+  }
+}
+
+/** An unchecked door with a reason must not wear the same red as one without. */
+function badgeTone(kind: NonNullable<RouteInsight['open']>['kind']): string {
+  if (kind === 'worth-a-look') return 'open';
+  if (kind === 'unreadable') return 'unknown';
+  return 'public';
 }
 
 function guardTitle(guards: RouteInsight['guards']): string {
@@ -126,14 +181,27 @@ function guardTitle(guards: RouteInsight['guards']): string {
   return guards.map((g) => `${g.name} (${g.how}${g.path ? `, ${g.path}:${g.line ?? '?'}` : ''})`).join('\n');
 }
 
-function Meter({ counts }: { counts: [number, number, number] | number[] }) {
-  const total = counts.reduce((sum, n) => sum + n, 0) || 1;
-  const [ok, maybe, open] = counts;
+interface MeterSegment {
+  count: number;
+  className: string;
+  label: string;
+}
+
+function Meter({ segments }: { segments: MeterSegment[] }) {
+  const total = segments.reduce((sum, segment) => sum + segment.count, 0) || 1;
+  const described = segments
+    .filter((segment) => segment.count > 0)
+    .map((segment) => `${segment.count} ${segment.label}`)
+    .join(', ');
   return (
-    <div className="meter" role="img" aria-label={`${ok} checked, ${maybe} probably checked, ${open} unchecked`}>
-      <span className="meter-ok" style={{ width: `${(ok / total) * 100}%` }} />
-      <span className="meter-maybe" style={{ width: `${(maybe / total) * 100}%` }} />
-      <span className="meter-open" style={{ width: `${(open / total) * 100}%` }} />
+    <div className="meter" role="img" aria-label={described || 'no doors'}>
+      {segments.map((segment) => (
+        <span
+          key={segment.className}
+          className={`meter-${segment.className}`}
+          style={{ width: `${(segment.count / total) * 100}%` }}
+        />
+      ))}
     </div>
   );
 }
@@ -327,7 +395,11 @@ function EnvRow({ entry, documented }: { entry: EnvVarInfo; documented: boolean 
     <>
       <span className="env-name mono">{entry.name}</span>
       {entry.secret ? <span className="tag tag-secret">secret</span> : null}
-      {documented ? (
+      {/* A variable the host sets is neither documented nor a lapse, and saying so is
+          the difference between a checklist and a list of things to ignore. */}
+      {entry.platform ? (
+        <span className="badge badge-public">set by the platform</span>
+      ) : documented ? (
         <span className={`badge badge-${entry.documented ? 'protected' : 'open'}`}>
           {entry.documented ? 'documented' : 'undocumented'}
         </span>

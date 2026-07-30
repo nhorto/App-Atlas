@@ -135,13 +135,28 @@ function FieldRows({ node }: { node: LevelNode }) {
 /**
  * A door only says "no auth check" when it is a door a stranger can reach. Crons and
  * queue workers are not, and badging them would train people to ignore the badge.
+ *
+ * The same goes for the doors that are unchecked for a reason: the analyzer writes
+ * that reason onto the endpoint (`meta.open`), so this badge, the group card it sits
+ * in and the security screen all say the same thing about the same route.
  */
 function EndpointBadge({ node }: { node: LevelNode }) {
   const meta = node.meta as unknown as EndpointMeta;
   if (!['http-route', 'server-action', 'realtime'].includes(meta.endpointKind)) return null;
 
   const guard = meta.guards[0];
-  if (!guard) return <span className="card-badge badge-open">no auth check</span>;
+  if (!guard) {
+    switch (meta.open?.kind) {
+      case 'page':
+        return <span className="card-badge badge-public" title={meta.open.because ?? ''}>public page</span>;
+      case 'auth-mount':
+        return <span className="card-badge badge-public" title={meta.open.because ?? ''}>the sign-in door</span>;
+      case 'unreadable':
+        return <span className="card-badge badge-unknown" title={meta.open.because ?? ''}>not examined</span>;
+      default:
+        return <span className="card-badge badge-open">no auth check</span>;
+    }
+  }
   const certain = meta.guards.some((g) => g.confidence === 'certain');
   const name = guard.provider !== 'custom' ? guard.provider : guard.name;
   return (

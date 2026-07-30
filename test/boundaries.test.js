@@ -13,7 +13,7 @@ import assert from 'node:assert/strict';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import test from 'node:test';
-import { analyzeProject, AtlasGraph, buildBoundaryView, buildInsights } from '../dist/node/index.js';
+import { analyzeProject, AtlasGraph, buildBoundaryView, buildInsights, isAuthRelevant } from '../dist/node/index.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const FIXTURE = path.join(here, 'fixtures', 'boundary');
@@ -40,12 +40,62 @@ test('reads Next.js App Router routes off the file system', () => {
   assert.deepEqual(paths, [
     // The Supabase edge function: deployed HTTP that package.json never mentions.
     'ANY /functions/v1/greet',
+    'DELETE /api/orders',
+    'GET /api/teams',
     'GET /api/users',
     'PAGE /',
     // The `(app)` route group shapes the folder tree but not the URL.
     'PAGE /dashboard',
     'POST /api/users',
   ]);
+});
+
+test('follows a check into the helper that performs it', () => {
+  // `DELETE /api/orders` contains no auth call at all; `requireOwner` does the work.
+  // Reporting this route as unprotected would be the most expensive thing this tool
+  // could say, because it is one of the better-guarded routes in the fixture.
+  const orders = endpoint('DELETE /api/orders');
+  assert.ok(orders);
+  const guard = orders.meta.guards.find((g) => g.name.includes('requireOwner'));
+  assert.ok(guard, `no guard found through the helper: ${JSON.stringify(orders.meta.guards)}`);
+  // The label names the helper the reader will actually find in their route file,
+  // and then what it checks with.
+  assert.equal(guard.name, 'requireOwner → auth');
+  // Never `certain`: the reference graph proves the handler mentions the helper, not
+  // that every path through it runs the check.
+  assert.equal(guard.confidence, 'likely');
+  assert.equal(guard.path, 'src/lib/session.ts', 'evidence points at the real check');
+});
+
+test('follows an SDK client through the module that exports it', () => {
+  const stripe = atlas.nodes.find((n) => n.kind === 'service' && n.name === 'Stripe');
+  assert.ok(stripe, 'an app that refunds cards has a payments provider');
+  const paths = stripe.meta.sites.map((s) => s.path);
+  // The construction in the wrapper, and the call in a route that never imports the
+  // package. Before this, only files naming `stripe` directly counted.
+  assert.ok(paths.includes('src/lib/payments.ts'), 'the wrapper builds the client');
+  assert.ok(
+    paths.includes('src/app/api/orders/route.ts'),
+    `the route that charges through it is a Stripe site too: ${paths.join(', ')}`,
+  );
+});
+
+test('ordinary indirection is not a protection claim', () => {
+  // `sendWelcome` is one hop from POST /api/users exactly as `requireOwner` is from
+  // DELETE /api/orders. Only one of the two checks anything, and walking the reference
+  // graph must not turn a mail helper into a lock.
+  const hopped = endpoints.flatMap((n) => n.meta.guards).filter((g) => g.name.includes('→'));
+  assert.ok(hopped.length > 0, 'the walk does find real guards');
+  assert.ok(
+    hopped.every((g) => !/sendWelcome|prisma/.test(g.name)),
+    `a helper that checks nothing became a guard: ${hopped.map((g) => g.name).join(', ')}`,
+  );
+  // GET /api/users is covered by the Clerk matcher and by nothing else — in
+  // particular, not by the `auth()` call in the POST handler beside it.
+  assert.deepEqual(
+    endpoint('GET /api/users').meta.guards.map((g) => g.name),
+    ['clerkMiddleware'],
+  );
 });
 
 test('a Deno.serve file under supabase/functions is a door', () => {
@@ -73,6 +123,21 @@ test('promotes a route to a webhook when it verifies a signature', () => {
   const guard = hook.meta.guards.find((g) => g.provider === 'Stripe');
   assert.ok(guard, 'the signature check is what protects a webhook');
   assert.equal(guard.confidence, 'certain');
+});
+
+/**
+ * A door is also *called* a webhook on the strength of the word in its address, which
+ * is a fair guess about what the author meant and no evidence at all about who can
+ * knock. When the promotion was allowed to remove it from the auth count, an address
+ * containing `/webhooks/` was enough to make an unchecked door invisible on the one
+ * screen built to find unchecked doors.
+ */
+test('a webhook is excused from the auth count by its signature check, not by its name', () => {
+  const verified = endpoint('POST /api/webhooks/stripe');
+  assert.ok(!isAuthRelevant(verified.meta), 'the signature is the lock');
+
+  const named = { endpointKind: 'webhook', guards: [], sites: [], method: 'POST' };
+  assert.ok(isAuthRelevant(named), 'nothing verifies this one, so it is still a door anyone can post to');
 });
 
 test('folds a vercel.json cron into the route it actually calls', () => {
@@ -192,19 +257,23 @@ test('inventories every environment variable and checks it against .env.example'
   // config across two example files has documented what is in either.
   assert.equal(insights.env.exampleFile, '.env.example and .env.local.example');
   assert.deepEqual(insights.env.vars.map((v) => v.name).sort(), [
+    'GITHUB_CLIENT_SECRET',
     'NEXT_PUBLIC_APP_URL',
     'NEXT_PUBLIC_SUPABASE_ANON_KEY',
+    'NODE_ENV',
     'RESEND_API_KEY',
     'STRIPE_SECRET_KEY',
     'STRIPE_WEBHOOK_SECRET',
     'SUPABASE_ANON_KEY',
     'SUPABASE_URL',
+    'VERCEL_URL',
   ]);
   // SUPABASE_URL and SUPABASE_ANON_KEY are documented in .env.local.example, so they
   // must not appear here. Before the fix only the first template was read and both
   // were reported missing — the badge accusing you of undocumented secrets you had
   // in fact documented.
   assert.deepEqual(insights.env.undocumented.map((v) => v.name).sort(), [
+    'GITHUB_CLIENT_SECRET',
     'NEXT_PUBLIC_SUPABASE_ANON_KEY',
     'RESEND_API_KEY',
     'STRIPE_WEBHOOK_SECRET',
@@ -215,6 +284,43 @@ test('inventories every environment variable and checks it against .env.example'
   assert.equal(anonKey.secret, true);
   const resendKey = insights.env.vars.find((v) => v.name === 'RESEND_API_KEY');
   assert.equal(resendKey.sites[0].path, 'src/lib/email.ts');
+});
+
+test('a variable the runtime sets is not something you forgot to write down', () => {
+  // On taxonomy `NODE_ENV` was 100% of the "missing from .env.example" signal: the
+  // section read as one lapse, and the lapse was a variable nobody is supposed to
+  // document. A list whose only row is a false positive teaches the reader that the
+  // whole section is noise, which costs more than the section was ever worth.
+  const nodeEnv = insights.env.vars.find((v) => v.name === 'NODE_ENV');
+  assert.equal(nodeEnv.platform, true);
+  assert.equal(nodeEnv.documented, false, 'still honestly absent from the template');
+  const vercel = insights.env.vars.find((v) => v.name === 'VERCEL_URL');
+  assert.equal(vercel.platform, true, 'the host injects the whole VERCEL_* family');
+
+  // Excluded from the count, never dropped from the list.
+  assert.ok(!insights.env.undocumented.some((v) => v.platform));
+  assert.ok(insights.env.vars.some((v) => v.name === 'NODE_ENV'));
+});
+
+test('…and a credential is never excused by the prefix it happens to wear', () => {
+  // CI injects a dozen `GITHUB_*` variables, so the family looked safe to skip whole.
+  // `GITHUB_CLIENT_SECRET` is this app's own OAuth credential and one of the most
+  // important rows on the screen. Quietly excusing a secret is the same mistake as the
+  // `NODE_ENV` row, in the direction that actually costs somebody something.
+  const secret = insights.env.vars.find((v) => v.name === 'GITHUB_CLIENT_SECRET');
+  assert.equal(secret.secret, true);
+  assert.equal(secret.platform, false);
+  assert.ok(insights.env.undocumented.some((v) => v.name === 'GITHUB_CLIENT_SECRET'));
+});
+
+test('a library that runs inside the app is not a company you send data to', () => {
+  // `next-auth` keeps its sessions in the app's own database and calls nobody. Listing
+  // it beside Stripe and Resend — which are true — lends it their credibility, in the
+  // one place a reader is least able to check.
+  assert.ok(
+    !insights.services.some((s) => /NextAuth|Auth\.js|Lucia|Better Auth/.test(s.name)),
+    `an in-process auth library is not outbound: ${insights.services.map((s) => s.name).join(', ')}`,
+  );
 });
 
 test('a variable the build tool publishes on purpose is not a secret', () => {
@@ -277,7 +383,7 @@ test('counts the boundary in the headline stats', () => {
   assert.equal(s.endpoints, endpoints.length);
   assert.equal(s.stores, 2);
   assert.equal(s.externalServices, 4);
-  assert.equal(s.envVars, 7);
+  assert.equal(s.envVars, 10);
   // Crons and config are not doors a stranger can knock on.
   assert.equal(s.routes, insights.auth.routes.length);
   assert.equal(s.unprotectedRoutes, insights.auth.openCount);

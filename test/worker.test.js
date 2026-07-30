@@ -91,9 +91,20 @@ test('bindings name the stores the Worker reaches for', () => {
   const worker = readWorkers(FIXTURE).find((w) => w.configPath === 'edge/wrangler.toml');
   assert.deepEqual(
     worker.bindings.map((b) => `${b.kind}:${b.name}:${b.target}`).sort(),
-    ['durable-object:ROOM:ChatRoom', 'kv:CACHE:abc123'],
+    ['durable-object:ROOM:ChatRoom', 'kv:CACHE:null'],
     'both spellings are read — durable objects say `name`, everything else says `binding`',
   );
+});
+
+test('an opaque id is evidence, not a name', () => {
+  // A KV namespace has no name in the config, only `id = "abc123"`. Showing that as
+  // the store's name puts a hex string where the reader expects to read what the
+  // thing is; the binding the code says (`CACHE`) is the better label and the one
+  // they can grep for.
+  const worker = readWorkers(FIXTURE).find((w) => w.configPath === 'edge/wrangler.toml');
+  const kv = worker.bindings.find((b) => b.kind === 'kv');
+  assert.equal(kv.target, null);
+  assert.equal(kv.id, 'abc123');
 });
 
 test('the Worker is counted among the doors, not badged as guarded', () => {
@@ -102,4 +113,60 @@ test('the Worker is counted among the doors, not badged as guarded', () => {
   assert.ok(door, 'the Worker appears in auth coverage');
   // No check was found, and saying so is the point — a Worker with no auth is open.
   assert.equal(door.protection, 'open');
+});
+
+// ---------------------------------------------------------------------------
+// #29: a Worker whose entry has not been built yet is still a Worker
+
+const { atlas: edge } = await analyzeProject(path.join(here, 'fixtures', 'edge'), {
+  followReferences: true,
+  cache: 'off',
+});
+
+test('a `main` pointing at an unbuilt artifact still makes this an edge deploy', () => {
+  // mirrorquiz's entry is `.open-next/worker.js`, which no fresh clone contains.
+  // Deciding "is this a Worker" on whether someone had run a build meant the check
+  // never fired on the repo it was written for.
+  const worker = readWorkers(path.join(here, 'fixtures', 'edge'))[0];
+  assert.equal(worker.declaredEntry, '.open-next/worker.js');
+  assert.equal(worker.entry, null, 'and the file is honestly reported as absent');
+  assert.ok(edge.meta.frameworks.includes('Cloudflare Workers'));
+});
+
+test('the door is real even though the file behind it is not there yet', () => {
+  const door = edge.nodes.find((n) => n.kind === 'endpoint' && n.meta.framework === 'Cloudflare Workers');
+  assert.equal(door.meta.route, '/*');
+  assert.equal(door.meta.sites[0].snippet, 'main = ".open-next/worker.js"');
+  // No handler edge: there is no file to walk into, and inventing one would put a
+  // node on the map that nobody can open.
+  assert.equal(
+    edge.edges.some((e) => e.fromId === door.id && e.kind === 'exposed-by'),
+    false,
+  );
+});
+
+test('the databases the platform injects are named, not left generic', () => {
+  const stores = edge.nodes
+    .filter((n) => n.kind === 'store')
+    .map((n) => `${n.name} (${n.meta.client}/${n.meta.storeKind})`)
+    .sort();
+  assert.deepEqual(stores, [
+    'OG_CACHE (Cloudflare KV/kv)',
+    'quiz-db (Cloudflare D1/sql)',
+    'quiz-uploads (Cloudflare R2/blob)',
+  ]);
+});
+
+test('a declared binding claims no reads or writes it did not see', () => {
+  const d1 = edge.nodes.find((n) => n.kind === 'store' && n.name === 'quiz-db');
+  assert.equal(d1.meta.reads, 0);
+  assert.equal(d1.meta.writes, 0);
+  assert.equal(d1.meta.sites[0].path, 'wrangler.jsonc', 'the config is the evidence');
+});
+
+test('a queue you write into is not a place data is kept', () => {
+  assert.equal(
+    edge.nodes.some((n) => n.kind === 'store' && n.name === 'quiz-jobs'),
+    false,
+  );
 });

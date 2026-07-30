@@ -87,8 +87,12 @@ test('sees a FastAPI dependency as a guard, and says only that it is likely', { 
   assert.equal(orders.meta.guards[0].confidence, 'likely');
 
   assert.equal(endpoint('GET /users').meta.guards.length, 0);
-  assert.equal(atlas.meta.stats.routes, 3);
-  assert.equal(atlas.meta.stats.unprotectedRoutes, 2);
+  // Four, not three. `POST /webhooks/stripe` is called a webhook because of the word in
+  // its address and nothing else — no signature is verified anywhere near it — so it is
+  // a door anyone can post to. Leaving it out of the count was how an open door
+  // disappeared from the one screen that exists to find open doors.
+  assert.equal(atlas.meta.stats.routes, 4);
+  assert.equal(atlas.meta.stats.unprotectedRoutes, 3);
 });
 
 test('names the company behind an outbound call, and keeps the ones it cannot name', { skip }, () => {
@@ -145,8 +149,11 @@ test('links files that import each other', { skip }, () => {
 test('the whole atlas still answers the questions the views ask of it', { skip }, () => {
   const graph = new AtlasGraph(atlas);
   const insights = buildInsights(graph);
-  assert.equal(insights.auth.total, 3);
-  assert.equal(insights.auth.openCount, 2);
+  // The security screen and the headline count the same doors, including the webhook
+  // that verifies nothing — two screens disagreeing about how many routes there are is
+  // the fastest way to lose a reader's trust in both.
+  assert.equal(insights.auth.total, 4);
+  assert.equal(insights.auth.openCount, 3);
   assert.equal(insights.auth.likelyCount, 1);
   assert.ok(insights.services.some((s) => s.name === 'Stripe'));
 

@@ -30,11 +30,16 @@ test('a file-routed native app counts as an app, on its screens alone', async ()
   assert.ok(atlas.meta.archetype.because.some((why) => /screen/.test(why)));
 });
 
-test('exports and no doors of any kind make a library', async () => {
+test('exports and nothing answering a URL make a library', async () => {
   const { atlas } = await analyze('lib');
   assert.equal(atlas.meta.archetype.archetype, 'library');
   assert.equal(atlas.meta.archetype.label, 'Code other code imports');
-  assert.ok(atlas.meta.archetype.because.some((why) => /exported name/.test(why)));
+  assert.ok(atlas.meta.archetype.because.some((why) => /other code can import/.test(why)));
+  // Not "no doors of any kind". Those exported names become doors a moment later, and
+  // the headline that says so — "14 names in its public API" — sits directly above this
+  // sentence. A screen that argues with itself is a reader's first reason to stop
+  // believing the parts of it that are right.
+  assert.ok(!atlas.meta.archetype.because.some((why) => /no doors/.test(why)), atlas.meta.archetype.because.join(' · '));
 });
 
 test('a command-line entry point beats the exports beside it', async () => {
@@ -43,6 +48,52 @@ test('a command-line entry point beats the exports beside it', async () => {
   assert.equal(atlas.meta.archetype.label, 'Something you run');
   // The fixture exports a helper too. A thing you run is still a thing you run.
   assert.ok(atlas.meta.archetype.because.some((why) => /command-line|command/.test(why)));
+});
+
+/**
+ * `if __name__ == "__main__":` says a file *can* be run, and two files in `psf/requests`
+ * have one left over from debugging. That was enough to file the most-imported library
+ * in Python under "Something you run".
+ */
+test('a debug __main__ does not outrank a manifest that says "import me"', async () => {
+  const { atlas } = await analyze('pypackage');
+  assert.equal(atlas.meta.archetype.archetype, 'library');
+  // The runnable file is still named. The verdict changed; the fact did not.
+  assert.ok(
+    atlas.meta.archetype.because.some((why) => /can also run directly/.test(why)),
+    atlas.meta.archetype.because.join(' · '),
+  );
+});
+
+test('the same __main__ with no manifest is a script, because that is all it is', async () => {
+  const { atlas } = await analyze('pyscripts');
+  assert.equal(atlas.meta.archetype.archetype, 'pipeline');
+  assert.ok(atlas.meta.archetype.because.some((why) => /files you run directly/.test(why)));
+});
+
+/**
+ * powerfab-dashboard reported 111 ways in, among them every retired script in
+ * `scripts/categories/_archive/` and `parked/`. A door somebody cannot use is not a way
+ * in, and a count that includes them is a count nobody can act on.
+ */
+test('a script somebody parked is not a way in', async () => {
+  const { atlas } = await analyze('pyscripts');
+  const doors = atlas.nodes
+    .filter((n) => n.kind === 'endpoint' && n.meta.endpointKind === 'cli')
+    .map((n) => n.meta.sites[0].path)
+    .sort();
+  assert.deepEqual(doors, ['clean.py', 'report.py'], 'the archived and parked scripts are not doors');
+});
+
+/**
+ * A single-page app routes in the browser, so no door detector fires and nothing above
+ * catches it. `full-stack-fastapi-template`'s React frontend landed under "Code other
+ * code imports", with 235 of its own components listed as a public API nobody imports.
+ */
+test('an app that routes in the browser is still an app', async () => {
+  const { atlas } = await analyze('spa');
+  assert.equal(atlas.meta.archetype.archetype, 'web-app');
+  assert.ok(atlas.meta.archetype.because.some((why) => /routes in the browser/.test(why)));
 });
 
 test('every verdict shows the signals it was built from', async () => {

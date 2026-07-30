@@ -59,20 +59,27 @@ function unwrap(raw: string): string {
 }
 
 /**
+ * Where one sentence ends and the next begins.
+ *
+ * A full stop that ends a sentence, not every full stop. Descriptions of code are full
+ * of `next.config.js` and `v1.2`, and cutting at the first dot turns "Reads config from
+ * next.config.js and applies it" into "Reads config from next" — which is not a shorter
+ * description, it is a wrong one. So a break has to be whitespace followed by something
+ * that starts like a sentence.
+ */
+const SENTENCE_BREAK = /(?<=[.!?])\s+(?=["'(\[]?[A-Z])/;
+
+/**
  * A one-line description. Truncation is by sentence rather than by character: a
  * summary cut mid-word reads as a bug, and the first sentence is nearly always the
  * one worth keeping.
  */
 export function cleanSentence(raw: unknown, maxWords = 24): string | null {
   if (typeof raw !== 'string') return null;
-  let text = unwrap(raw).replace(/\s+/g, ' ');
+  let text = mendFilenames(unwrap(raw).replace(/\s+/g, ' '));
   if (!text || looksLikeFailure(text)) return null;
 
-  // Split on a full stop that ends a sentence, not on every full stop. Descriptions
-  // of code are full of `next.config.js` and `v1.2`, and cutting at the first dot
-  // turns "Reads config from next.config.js and applies it" into "Reads config from
-  // next" — which is not a shorter description, it is a wrong one.
-  const sentences = text.split(/(?<=[.!?])\s+(?=["'(\[]?[A-Z])/);
+  const sentences = text.split(SENTENCE_BREAK);
   if (sentences.length > 1 && countWords(sentences[0]) >= 4) text = sentences[0].trim();
 
   if (countWords(text) > maxWords) {
@@ -98,11 +105,36 @@ export function cleanLabel(raw: unknown, fallbackName: string): string | null {
 /** The app overview: a few sentences, kept whole. */
 export function cleanParagraph(raw: unknown, maxSentences = 6): string | null {
   if (typeof raw !== 'string') return null;
-  const text = unwrap(raw).replace(/[ \t]+/g, ' ').replace(/\n{2,}/g, '\n').trim();
+  const text = mendFilenames(unwrap(raw).replace(/[ \t]+/g, ' ').replace(/\n{2,}/g, '\n').trim());
   if (!text || looksLikeFailure(text)) return null;
-  const sentences = text.match(/[^.!?]+[.!?]+/g);
-  const trimmed = sentences && sentences.length > maxSentences ? sentences.slice(0, maxSentences).join(' ') : text;
+  // The same boundary rule `cleanSentence` uses, and for the same reason. Splitting on
+  // every full stop counts the dot in `analyze.py` as the end of a sentence — so a
+  // paragraph naming fourteen scripts was cut after the sixth of them, and rejoining the
+  // pieces with a space put one *inside* each filename. The model had written them
+  // correctly; this is where they were broken.
+  const sentences = text.split(SENTENCE_BREAK);
+  const trimmed = sentences.length > maxSentences ? sentences.slice(0, maxSentences).join(' ') : text;
   return trimmed.length >= 20 ? trimmed.trim() : null;
+}
+
+/** File extensions common enough that a space in front of one is always a mistake. */
+const EXTENSIONS =
+  'py|pyi|ipynb|ts|tsx|js|jsx|mjs|cjs|json|jsonc|md|mdx|toml|yaml|yml|sql|css|scss|html|sh|env|lock|txt|rs|go|rb|java|kt|swift|php|cs|prisma';
+
+/**
+ * Puts back a filename that arrived with a space inside it.
+ *
+ * powerfab-dashboard's summary read "01_list_tables. py", "02_describe_tables. py" —
+ * four times in one paragraph. A model wraps its own output, the wrap lands mid-token,
+ * and collapsing whitespace turns the newline into a space. A reader who cannot read
+ * code has no way to tell that from a real file name, so they go looking for one that
+ * is not there.
+ *
+ * Safe because there is no English sentence in which a word, a full stop and a space
+ * are followed by a bare file extension.
+ */
+function mendFilenames(text: string): string {
+  return text.replace(new RegExp(`([\\w)\\]])\\.\\s+(${EXTENSIONS})\\b`, 'g'), '$1.$2');
 }
 
 function countWords(text: string): number {

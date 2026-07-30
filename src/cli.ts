@@ -26,6 +26,7 @@ import type { EnrichReport } from './enrich/index.js';
 import { describeRun, writeTheWords } from './enrich/session.js';
 import { renderAtlasMarkdown } from './export/markdown.js';
 import { initConventions } from './init.js';
+import { authHeadline } from './model/exposure.js';
 import { AtlasGraph } from './model/graph.js';
 import type { Atlas, AtlasStats } from './model/types.js';
 import { markStaleDocs } from './model/staleness.js';
@@ -338,17 +339,11 @@ async function runSingleAnalysis(root: string, options: SharedOptions): Promise<
     console.log('');
     console.log(`  ${pad(s.endpoints)} ${plural(s.endpoints, 'way in', 'ways in').padEnd(12)}${pad(s.services)} ${plural(s.services, 'service', 'services')}`);
     console.log(`  ${pad(s.stores)} ${plural(s.stores, 'data store', 'data stores').padEnd(12)}${pad(s.envVars)} ${plural(s.envVars, 'env variable', 'env variables')}`);
-    // The one number worth interrupting for.
-    if (s.routes > 0) {
-      const line =
-        s.unprotectedRoutes === 0
-          ? s.routes === 1
-            ? '  the one route has an auth check'
-            : `  every one of the ${s.routes} routes has an auth check`
-          : s.routes === 1
-            ? '  the one route has no auth check App Atlas can see'
-            : `  ${s.unprotectedRoutes} of ${s.routes} routes have no auth check App Atlas can see`;
-      console.log(s.unprotectedRoutes > 0 ? pc.yellow(line) : pc.green(line));
+    // The one number worth interrupting for — and the caveats that keep it honest.
+    const auth = authHeadline(s);
+    if (auth) {
+      console.log(auth.tone === 'warn' ? pc.yellow(`  ${auth.headline}`) : pc.green(`  ${auth.headline}`));
+      for (const caveat of auth.caveats) console.log(pc.dim(`  ${caveat}`));
     }
     console.log('');
     const documented = s.files > 0 ? Math.round((s.documentedFiles / s.files) * 100) : 0;
@@ -458,8 +453,16 @@ function scopeLine(atlas: Atlas): string {
 
   const line = pc.dim(parts.join(pc.dim(' · ')));
   if (s.routes === 0) return line;
-  return s.unprotectedRoutes > 0
-    ? `${line}  ${pc.yellow(`${s.unprotectedRoutes} of ${s.routes} routes unprotected`)}`
+  // Short enough for a table, and never greener than the truth: a repo whose checks
+  // are hidden in a file we could not parse must not read as a clean bill of health.
+  if (s.unprotectedRoutes > 0) {
+    return `${line}  ${pc.yellow(`${s.unprotectedRoutes} of ${s.routes} routes unprotected`)}`;
+  }
+  if (s.unreadableRoutes > 0) {
+    return `${line}  ${pc.yellow(`${s.unreadableRoutes} of ${s.routes} routes behind a file I could not read`)}`;
+  }
+  return s.publicRoutes > 0
+    ? `${line}  ${pc.green('every route is checked or public on purpose')}`
     : `${line}  ${pc.green('every route checks who is calling')}`;
 }
 

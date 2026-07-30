@@ -17,6 +17,7 @@ with its error, because one syntax error in one file must not cost the user thei
 import ast
 import builtins
 import json
+import re
 import sys
 
 SCHEMA_VERSION = 1
@@ -77,16 +78,46 @@ def value_of(node):
         # An f-string: the literal parts are still the useful half of a URL.
         literal = "".join(p.value for p in node.values if isinstance(p, ast.Constant) and isinstance(p.value, str))
         return {"t": "str", "v": literal, "partial": True} if literal else {"t": "other"}
+    if isinstance(node, ast.Call):
+        text = call_text(node)
+        return {"t": "name", "v": text} if text else {"t": "other"}
     name = dotted(node)
     if name:
         return {"t": "name", "v": name}
     return {"t": "other"}
 
 
+def call_text(node):
+    """A call written as an argument, with the names it was handed.
+
+    `dotted` reduces one to `Depends()`, which is the right answer for a *callee* —
+    `get_db().query` is a query however the handle was made — and the wrong one for an
+    argument. `dependencies=[Depends(get_current_user)]` says nothing at all without the
+    name in the parentheses, and on a large service that one line is where every route's
+    auth is written down."""
+    callee = dotted(node.func)
+    if not callee:
+        return None
+    given = [dotted(arg) for arg in node.args]
+    return "%s(%s)" % (callee, ", ".join(name for name in given if name))
+
+
 def call_info(node):
-    """The callee and arguments of a call, in the shape the Node side reads."""
+    """The callee and arguments of a call, in the shape the Node side reads.
+
+    `method` is the last segment on its own, because `dotted` cannot always reach it.
+    `Path(out).write_text(text)` has a call in the middle of the chain, so its dotted
+    form is `Path()` and the part that says what happened to the file is gone.
+    """
+    func = node.func
+    method = None
+    if isinstance(func, ast.Attribute):
+        method = func.attr
+    elif isinstance(func, ast.Name):
+        method = func.id
     return {
-        "callee": dotted(node.func) or "",
+        "callee": dotted(func) or "",
+        "method": method,
         "args": [value_of(a) for a in node.args],
         "kwargs": {kw.arg: value_of(kw.value) for kw in node.keywords if kw.arg},
         "line": getattr(node, "lineno", 0),
@@ -176,6 +207,33 @@ def params_of(node):
     return out
 
 
+# The two HTTP statuses that mean "I do not accept who you are". Every framework
+# spells the rejection differently, but all of them end up naming one of these.
+REJECT_STATUS = re.compile(r"\b(401|403|HTTP_401\w*|HTTP_403\w*|UNAUTHORIZED|FORBIDDEN)\b")
+
+
+def rejection_line(node):
+    """The line where this function turns an unauthenticated caller away, if it does.
+
+    This is what makes a dependency a *check* rather than a fetch, and it is a fact
+    about the code instead of a fact about the name — so a project whose guard is
+    called `verify_api_key` or `tenant_from_header` is read as correctly as one that
+    calls it `get_current_user`. Names are a weak second signal, applied elsewhere;
+    this is the strong one."""
+    for child in ast.walk(node):
+        if isinstance(child, ast.Raise) and child.exc is not None:
+            if REJECT_STATUS.search(unparse(child.exc) or ""):
+                return child.lineno
+        # Flask's `abort(401)` and Starlette's `return Response(status_code=403)`
+        # reject without raising anything the AST calls an exception.
+        elif isinstance(child, ast.Call):
+            callee = dotted(child.func) or ""
+            if callee.split(".")[-1] in ("abort", "Response", "JSONResponse", "HTTPException"):
+                if REJECT_STATUS.search(unparse(child) or ""):
+                    return child.lineno
+    return None
+
+
 def function_def(node, owner=None):
     start, end = span(node)
     return {
@@ -189,6 +247,7 @@ def function_def(node, owner=None):
         "params": params_of(node),
         "returns": unparse(node.returns) or "",
         "decorators": [decorator_info(d) for d in node.decorator_list],
+        "rejects": rejection_line(node),
         "uses": names_used(node),
     }
 
@@ -230,6 +289,7 @@ def class_def(node):
         "endLine": end,
         "doc": ast.get_docstring(node),
         "bases": [unparse(b) or "" for b in node.bases],
+        "depends": class_dependencies(node),
         "fields": class_fields(node),
         "decorators": [decorator_info(d) for d in node.decorator_list],
         "methods": methods,
@@ -282,6 +342,194 @@ def scope_at(spans, line):
     return None
 
 
+def depends_targets(node):
+    """Every name handed to a `Depends(...)` anywhere inside this piece of syntax."""
+    out = []
+    for child in ast.walk(node):
+        if not isinstance(child, ast.Call):
+            continue
+        if (dotted(child.func) or "").split(".")[-1] != "Depends":
+            continue
+        for arg in child.args:
+            name = dotted(arg)
+            if name:
+                out.append(name)
+    return out
+
+
+def class_dependencies(node):
+    """What a class body hands to `Depends(...)`, in its own right.
+
+    The class-based-view idiom puts a route's auth on the *class*:
+    `class BaseUserController: user: PrivateUser = Depends(get_current_user)`, and every
+    controller that inherits from it three levels down declares routes that mention no
+    caller at all. Read together with `bases`, this is the only record that they are
+    guarded — mealie writes a hundred and thirty of its routes this way.
+
+    Only the class's own body counts. What its parents contribute is a fact about them,
+    joined where the whole project is in view."""
+    out = []
+    for stmt in node.body:
+        if isinstance(stmt, (ast.Assign, ast.AnnAssign)) and stmt.value is not None:
+            out.extend(depends_targets(stmt.value))
+        # `class UserAPIRouter(APIRouter)` bakes its dependency into the constructor.
+        elif isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef)) and stmt.name == "__init__":
+            out.extend(depends_targets(stmt))
+    return out
+
+
+def dependency_aliases(tree):
+    """Module-level `CurrentUser = Annotated[User, Depends(get_current_user)]`.
+
+    FastAPI's own project template writes every route's auth this way, and a handler
+    whose signature reads `current_user: CurrentUser` contains no visible check at
+    all. The alias *is* the check. Without reading it, twenty-one guarded routes are
+    reported as twenty-one open ones — which is not an imprecise answer, it is the
+    opposite of the true one."""
+    out = []
+    for stmt in tree.body:
+        if not isinstance(stmt, (ast.Assign, ast.AnnAssign)):
+            continue
+        targets = stmt.targets if isinstance(stmt, ast.Assign) else [stmt.target]
+        if len(targets) != 1 or not isinstance(targets[0], ast.Name) or stmt.value is None:
+            continue
+
+        depends = depends_targets(stmt.value)
+        if depends:
+            out.append({"name": targets[0].id, "depends": depends, "line": stmt.lineno})
+    return out
+
+
+def call_bindings(tree):
+    """Every `name = some_call(...)`, including `with some_call(...) as name`.
+
+    What a name was built from is the difference between a database read and a
+    coincidence. `conn.execute(sql)` is a query when `conn = pymysql.connect(...)`;
+    `os.environ.get("DB_HOST")` is the same shape and touches no database at all.
+    Guessing from the method name alone gave one repo a MySQL box whose evidence was a
+    list of environment lines — the right conclusion citing the wrong code, which a
+    reader checks once and then stops trusting.
+
+    Nested scopes count: connections are opened inside the function that uses them far
+    more often than at module level."""
+    out = []
+
+    def take(target, value):
+        if not isinstance(target, ast.Name) or not isinstance(value, ast.Call):
+            return
+        callee = dotted(value.func)
+        if not callee:
+            return
+        # The first literal string, which for a connection is either the database file
+        # or the URL that names the engine.
+        arg = None
+        for node in list(value.args) + [kw.value for kw in value.keywords]:
+            found = value_of(node)
+            if found.get("t") == "str" and not found.get("partial"):
+                arg = found["v"]
+                break
+        out.append({"name": target.id, "callee": callee, "arg": arg, "line": getattr(value, "lineno", 0)})
+
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Assign) and len(node.targets) == 1:
+            take(node.targets[0], node.value)
+        elif isinstance(node, ast.AnnAssign):
+            take(node.target, node.value)
+        elif isinstance(node, (ast.With, ast.AsyncWith)):
+            for item in node.items:
+                take(item.optional_vars, item.context_expr)
+    return out
+
+
+# The calls that make something routes can be hung off. Apps are here as well as
+# routers because an app is what a router is finally mounted *on*, and Starlette's
+# `app.mount("/api/v1", app=api)` is how a whole FastAPI app becomes a prefix.
+ROUTER_CALLS = {"FastAPI", "Flask", "Starlette", "Quart", "Sanic", "Blueprint"}
+
+
+def is_router_call(callee):
+    last = callee.split(".")[-1]
+    return last.endswith("Router") or last in ROUTER_CALLS
+
+
+def router_variables(tree):
+    """Module-level `locked = LockedRouter(prefix="/admin")`.
+
+    Which router a route hangs off decides whether that router's dependencies apply to
+    it. Two routers in one file is normal — one locked, one deliberately open — so
+    knowing only the file would turn a correct claim about four routes into a false one
+    about two of them.
+
+    The `prefix` is the other half of the route's real address. `@router.get("/{id}")`
+    on this router answers at `/admin/{id}`, and the decorator alone never says so."""
+    out = []
+    for stmt in tree.body:
+        if not isinstance(stmt, ast.Assign) or len(stmt.targets) != 1:
+            continue
+        target = stmt.targets[0]
+        if not isinstance(target, ast.Name) or not isinstance(stmt.value, ast.Call):
+            continue
+        callee = dotted(stmt.value.func) or ""
+        if not is_router_call(callee):
+            continue
+        router = {"var": target.id, "callee": callee, "line": stmt.lineno}
+        router.update(prefix_of(stmt.value.keywords))
+        out.append(router)
+    return out
+
+
+def prefix_of(keywords):
+    """The `prefix=` of a router call, split by whether we can read it.
+
+    A literal is the address. A name — `prefix=settings.API_V1_STR` — is a promise that
+    there *is* an address we have not read yet, and that is worth keeping: a route shown
+    at `/items/{id}` when it answers at `/api/v1/items/{id}` is a wrong address given
+    confidently, which costs the reader more than an honest gap."""
+    for kw in keywords:
+        # Flask spells it `url_prefix`; the meaning is identical.
+        if kw.arg not in ("prefix", "url_prefix"):
+            continue
+        value = value_of(kw.value)
+        if value.get("t") == "str" and not value.get("partial"):
+            return {"hasPrefix": True, "prefix": value["v"], "prefixName": None}
+        # There is a prefix; we just cannot read it here. `prefixName` is the one lead
+        # worth following — a name might be declared somewhere we *can* read.
+        return {
+            "hasPrefix": True,
+            "prefix": None,
+            "prefixName": value["v"] if value.get("t") == "name" else None,
+        }
+    return {"hasPrefix": False, "prefix": None, "prefixName": None}
+
+
+def path_constants(tree):
+    """Module- and class-level assignments of a string that looks like a URL path.
+
+    `API_V1_STR: str = "/api/v1"` on a settings class is how the most-used FastAPI
+    template in existence writes its API prefix, and nothing else in the repo spells the
+    address out. Only values starting with `/` are collected: the point is to answer
+    "what path is this name", so a name that was never a path is noise, and noise here
+    turns into a collision that makes a real prefix unreadable."""
+    out = []
+
+    def take(stmt):
+        targets = stmt.targets if isinstance(stmt, ast.Assign) else [stmt.target]
+        if len(targets) != 1 or not isinstance(targets[0], ast.Name) or stmt.value is None:
+            return
+        value = value_of(stmt.value)
+        if value.get("t") == "str" and not value.get("partial") and value["v"].startswith("/"):
+            out.append({"name": targets[0].id, "value": value["v"], "line": stmt.lineno})
+
+    for stmt in tree.body:
+        if isinstance(stmt, (ast.Assign, ast.AnnAssign)):
+            take(stmt)
+        elif isinstance(stmt, ast.ClassDef):
+            for member in stmt.body:
+                if isinstance(member, (ast.Assign, ast.AnnAssign)):
+                    take(member)
+    return out
+
+
 def analyze_source(text):
     tree = ast.parse(text)
     spans = scope_index(tree)
@@ -324,6 +572,10 @@ def analyze_source(text):
         "defs": defs,
         "calls": calls,
         "subscripts": subscripts,
+        "aliases": dependency_aliases(tree),
+        "bindings": call_bindings(tree),
+        "routers": router_variables(tree),
+        "constants": path_constants(tree),
         "uses": sorted(module_uses),
         "main": main_guard_line(tree),
         "loc": text.count("\n") + (0 if text.endswith("\n") or not text else 1),

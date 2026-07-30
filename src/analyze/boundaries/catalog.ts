@@ -62,16 +62,12 @@ const PACKAGE_SERVICES: Record<string, ServiceDef> = {
   'discord.js': { name: 'Discord', category: 'other' },
   '@octokit/rest': { name: 'GitHub', category: 'other' },
   octokit: { name: 'GitHub', category: 'other' },
-  // auth
+  // auth — hosted only; see the note below about the libraries that are not companies
   '@clerk/nextjs': { name: 'Clerk', category: 'auth' },
   '@clerk/clerk-sdk-node': { name: 'Clerk', category: 'auth' },
   '@clerk/backend': { name: 'Clerk', category: 'auth' },
-  'next-auth': { name: 'NextAuth', category: 'auth' },
-  '@auth/core': { name: 'Auth.js', category: 'auth' },
   '@auth0/nextjs-auth0': { name: 'Auth0', category: 'auth' },
   'auth0': { name: 'Auth0', category: 'auth' },
-  'better-auth': { name: 'Better Auth', category: 'auth' },
-  lucia: { name: 'Lucia', category: 'auth' },
   '@workos-inc/node': { name: 'WorkOS', category: 'auth' },
   // storage
   '@aws-sdk/client-s3': { name: 'Amazon S3', category: 'storage' },
@@ -105,6 +101,21 @@ const PACKAGE_SERVICES: Record<string, ServiceDef> = {
   '@trigger.dev/sdk': { name: 'Trigger.dev', category: 'queue' },
   '@upstash/qstash': { name: 'Upstash QStash', category: 'queue' },
 };
+
+/**
+ * Auth packages that are libraries, not companies (#30).
+ *
+ * `next-auth`, `@auth/core`, `lucia` and `better-auth` run inside the app and keep
+ * their sessions in the app's own database. Nothing about installing one sends a user's
+ * data anywhere, so listing them under "companies you send data to" is false in the one
+ * place a reader is least able to check it — and it sits next to Stripe and OpenAI,
+ * which are true, so it borrows their credibility.
+ *
+ * They stay in `AUTH_PROVIDERS` below, because naming the provider behind a guard is a
+ * different claim and a correct one. Clerk, Auth0 and WorkOS are hosted: your app calls
+ * their servers, so they belong in the catalog above.
+ */
+const IN_PROCESS_AUTH = new Set(['next-auth', '@auth/core', 'lucia', 'better-auth', 'iron-session', 'passport']);
 
 /**
  * The same idea for Python, where the import name is the thing to look up.
@@ -226,7 +237,23 @@ const AUTH_PROVIDERS: { prefix: string; name: string }[] = [
 ];
 
 export function serviceForPackage(pkg: string): ServiceDef | null {
+  if (IN_PROCESS_AUTH.has(pkg)) return null;
   return PACKAGE_SERVICES[pkg] ?? null;
+}
+
+/**
+ * Every company this tool knows how to recognise, by the name it would print.
+ *
+ * Used to check generated prose against the structure it sits beside: if a paragraph
+ * names Stripe and no detector found Stripe, one of the two layers is wrong and the
+ * reader is looking at both at once.
+ */
+export function knownServiceNames(): string[] {
+  const names = new Set<string>();
+  for (const def of Object.values(PACKAGE_SERVICES)) names.add(def.name);
+  for (const def of Object.values(PYTHON_SERVICES)) names.add(def.name);
+  for (const { def } of HOST_SERVICES) names.add(def.name);
+  return [...names].sort();
 }
 
 export function serviceForHost(host: string): ServiceDef | null {
@@ -248,6 +275,36 @@ export function serviceForPythonModule(module: string): ServiceDef | null {
 
 export function storeForPythonModule(module: string): StoreDef | null {
   return PYTHON_STORES[module.split('.')[0]] ?? null;
+}
+
+/** URL scheme → the engine it names, for a connection string we can actually read. */
+const URL_ENGINES: Record<string, string> = {
+  postgresql: 'PostgreSQL',
+  postgres: 'PostgreSQL',
+  psycopg: 'PostgreSQL',
+  cockroachdb: 'CockroachDB',
+  mysql: 'MySQL',
+  mariadb: 'MariaDB',
+  sqlite: 'SQLite',
+  mssql: 'SQL Server',
+  oracle: 'Oracle',
+  snowflake: 'Snowflake',
+  duckdb: 'DuckDB',
+  bigquery: 'BigQuery',
+  clickhouse: 'ClickHouse',
+  redshift: 'Redshift',
+};
+
+/**
+ * `create_engine("postgresql+psycopg://…")` — the engine, read from the URL.
+ *
+ * SQLAlchemy is the same library whichever database is behind it, so the import says
+ * only "a database". The connection string is the one place the answer is written
+ * down, and it is written down in a form every dialect agrees on.
+ */
+export function engineForDatabaseUrl(url: string): string | null {
+  const scheme = /^([a-z][a-z0-9]*)(\+[a-z0-9_]+)?:/i.exec(url.trim());
+  return scheme ? (URL_ENGINES[scheme[1].toLowerCase()] ?? null) : null;
 }
 
 export function authProviderForPackage(pkg: string): string | null {

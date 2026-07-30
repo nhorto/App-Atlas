@@ -36,9 +36,26 @@ import {
   makeTypeId,
 } from '../../model/types.js';
 import { hashParts } from '../../util/hash.js';
+import { isWorker } from '../wrangler.js';
+import { classifyZone } from '../zones.js';
 import { isCatchAllMatcher, matcherMatches } from './auth.js';
-import type { BoundaryFinding, EndpointFinding, GuardFinding } from './types.js';
+import { composeRoutePrefixes, moduleOf, mountGraph, routerKey as moduleRouterKey } from './mounts.js';
+import { guardThroughHops, reachableGuards, servicesThroughWrappers } from './reach.js';
+import type { ReachedGuard } from './reach.js';
+import type {
+  AuthAliasFinding,
+  AuthCheckerFinding,
+  BoundaryFinding,
+  EndpointFinding,
+  GuardFinding,
+  RouterBuildFinding,
+  PathGuardFinding,
+  RouterGuardFinding,
+  RouterMountFinding,
+  StoreFinding,
+} from './types.js';
 import type { ProjectSignals } from '../signals.js';
+import { appendAll } from '../../util/append.js';
 
 export interface BoundaryGraph {
   nodes: AtlasNode[];
@@ -51,6 +68,13 @@ export interface BuildInput {
   signals: ProjectSignals;
   /** Every file node id that exists, so we never point an edge at a ghost. */
   knownNodeIds: Set<string>;
+  /**
+   * The `references` edges the language plugins resolved: who mentions whom. Used to
+   * follow a check from the helper it is written in to the handler that runs it.
+   */
+  references?: AtlasEdge[];
+  /** Atlas id → display name, so a hop can be named rather than numbered. */
+  nodeNames?: Map<string, string>;
 }
 
 /** Names that look like a credential rather than a setting. */
@@ -74,14 +98,168 @@ function isSecretName(name: string): boolean {
   return SECRET_PATTERN.test(name);
 }
 
-export function buildBoundaryGraph(input: BuildInput): BoundaryGraph {
+/**
+ * Variables the runtime or the host sets, which no `.env.example` would ever list.
+ *
+ * On taxonomy, `NODE_ENV` was **100% of the "undocumented" signal** — the section read
+ * "1 variable is read by the code and missing from .env.example", and the one variable
+ * was the one nobody is supposed to write down. A list where the only row is a false
+ * positive teaches the reader that the whole section is noise, which costs more than
+ * the section was ever worth.
+ */
+const PLATFORM_ENV = new Set([
+  'NODE_ENV',
+  'PORT',
+  'HOST',
+  'HOSTNAME',
+  'CI',
+  'TZ',
+  'PWD',
+  'HOME',
+  'PATH',
+  'PYTHONPATH',
+  'NEXT_RUNTIME',
+  'NETLIFY',
+  'RENDER',
+  'DYNO',
+  'K_SERVICE',
+  'AWS_REGION',
+  'AWS_EXECUTION_ENV',
+  // GitHub Actions injects these; `GITHUB_` as a prefix is *not* safe — see below.
+  'GITHUB_ACTIONS',
+  'GITHUB_SHA',
+  'GITHUB_REF',
+  'GITHUB_REF_NAME',
+  'GITHUB_RUN_ID',
+  'GITHUB_WORKSPACE',
+  'GITHUB_REPOSITORY',
+]);
+
+/** Host-injected families, where the whole prefix belongs to the platform. */
+const PLATFORM_ENV_PREFIX = /^(VERCEL_|NEXT_PUBLIC_VERCEL_|CF_PAGES|FLY_|RAILWAY_|RENDER_|AWS_LAMBDA_)/;
+
+/**
+ * Whether the runtime sets this one, rather than the reader forgetting to write it down.
+ *
+ * A name that looks like a credential is never excused, whatever prefix it wears.
+ * `GITHUB_` looked like a safe family — GitHub Actions injects a dozen of them — until
+ * it swallowed taxonomy's `GITHUB_CLIENT_SECRET` and `GITHUB_ACCESS_TOKEN`, which are
+ * the app's own OAuth credentials and the single most important rows on the screen.
+ * Quietly excusing a secret is a far worse error than the noisy `NODE_ENV` row this
+ * rule exists to remove, so the secret test wins outright.
+ */
+function isPlatformName(name: string): boolean {
+  if (isSecretName(name)) return false;
+  return PLATFORM_ENV.has(name) || PLATFORM_ENV_PREFIX.test(name);
+}
+
+/**
+ * Whether a finding describes the app someone ships, rather than the code that tests
+ * it (#25).
+ *
+ * A test's outbound calls go to `example.com`; its database is a fixture; its exported
+ * helpers are not anybody's public API. `psf/requests` was reporting four outside
+ * companies, all four of them from `tests/`.
+ *
+ * Doors are deliberately exempt. `classifyZone` decides by path, and dub ships a real
+ * Stripe webhook at `app/api/stripe/integration/webhook/test/route.ts` — a URL whose
+ * last segment happens to be the word "test". Dropping a real door because of a folder
+ * name is a far worse error than listing a fixture, so the heuristic is only allowed
+ * to remove things that are not doors. (A library's exported names *are* filtered,
+ * but they never pass through here — see `exports.ts`.)
+ *
+ * Router wiring is filtered even though doors are not, because a test that assembles
+ * the app its own way is not a second address the route answers at — it is the same
+ * route, mounted twice, and letting the harness vote turns a known address into an
+ * unknown one. midday's MCP door is mounted at `/mcp` in the app and at `/mcp` under a
+ * different parent in `__tests__`, and reconciling those two produced `…/`.
+ */
+function describesTheApp(): (finding: BoundaryFinding) => boolean {
+  const zones = new Map<string, Zone>();
+  const isTest = (path: string): boolean => {
+    let zone = zones.get(path);
+    if (zone === undefined) {
+      zone = classifyZone(path);
+      zones.set(path, zone);
+    }
+    return zone === 'test';
+  };
+
+  return (finding) => {
+    if (isParked(pathOf(finding))) return false;
+    switch (finding.type) {
+      case 'service':
+      case 'store':
+        return !isTest(finding.site.path);
+      case 'router-build':
+      case 'router-mount':
+      case 'router-guard':
+      case 'path-constant':
+      case 'global-prefix':
+        return !isTest(finding.path);
+      default:
+        return true;
+    }
+  };
+}
+
+function pathOf(finding: BoundaryFinding): string {
+  if ('site' in finding && finding.site) return finding.site.path;
+  if ('path' in finding && typeof finding.path === 'string') return finding.path;
+  return '';
+}
+
+/**
+ * Directories whose name says the code in them was set aside.
+ *
+ * Deliberately short, and deliberately not `archive`, `old`, `legacy` or `backup` on
+ * their own: a Next.js app can ship `app/api/archive/route.ts`, and dropping a real
+ * door because a folder is called `archive` is a far worse error than counting a dead
+ * one. What is left is either explicitly parked or wears the underscore that says
+ * "not part of the build" — and both are unambiguous enough to act on.
+ *
+ * powerfab-dashboard reported 111 ways in, among them every retired script in
+ * `scripts/categories/_archive/` and `parked/`. A door somebody cannot use is not a
+ * way in, and a count that includes them is a count nobody can act on.
+ */
+const PARKED_SEGMENT =
+  /^(_archive[d]?|_old|_deprecated|_legacy|_unused|_bak|_backup|_graveyard|_parked|_attic|parked|graveyard|attic|deprecated)$/i;
+
+function isParked(path: string): boolean {
+  if (!path) return false;
+  return path.split('/').some((segment) => PARKED_SEGMENT.test(segment));
+}
+
+export function buildBoundaryGraph(raw: BuildInput): BoundaryGraph {
   const nodes: AtlasNode[] = [];
   const edges: AtlasEdge[] = [];
+
+  // Before anything is merged: a door's identity is its address, and half the address
+  // lives in the file that mounted its router rather than the file that declared it.
+  const shipped = composeRoutePrefixes(raw.findings.filter(describesTheApp()));
+
+  // A call made through a wrapper module is a real call to a real company; it just
+  // took two files to say so. Resolved before anything is merged, so those sites land
+  // on the same box as the direct ones rather than a second one beside it.
+  const input: BuildInput = {
+    ...raw,
+    findings: [...shipped, ...servicesThroughWrappers(shipped)],
+  };
 
   const endpoints = collectEndpoints(input);
   const guards = input.findings.filter((f): f is GuardFinding => f.type === 'guard');
   applyWebhookPromotion(endpoints, input.findings);
-  applyGuards(endpoints, guards);
+  applyHandlerWrites(endpoints, input.findings);
+  applyGuards(endpoints, guards, reachableGuards(guards, input.references ?? [], input.nodeNames ?? new Map()));
+  applyDependencyGuards(
+    endpoints,
+    input.findings.filter((f): f is AuthCheckerFinding => f.type === 'auth-checker'),
+    input.findings.filter((f): f is AuthAliasFinding => f.type === 'auth-alias'),
+    input.findings.filter((f): f is RouterBuildFinding => f.type === 'router-build'),
+    input.findings.filter((f): f is RouterMountFinding => f.type === 'router-mount'),
+    input.findings.filter((f): f is RouterGuardFinding => f.type === 'router-guard'),
+    input.findings.filter((f): f is PathGuardFinding => f.type === 'path-guard'),
+  );
 
   const envEndpoint = collectEnv(input);
   if (envEndpoint) endpoints.set(envEndpoint.id, envEndpoint);
@@ -152,6 +330,35 @@ interface MergedEndpoint {
   meta: EndpointMeta;
   /** Atlas nodes that answer this door. */
   handlerIds: Set<string>;
+  /** Unresolved type names from the handler's signature; see `EndpointFinding`. */
+  paramTypes: Set<string>;
+  /** One `routerKey` for each place this door is registered. */
+  routers: Set<string>;
+  /** The classes whose methods answer this door, for class-based views. */
+  owners: Set<string>;
+}
+
+/**
+ * Identifies a router by the variable it was assigned to, not just the file it lives
+ * in: one module holding a locked router and an open one beside it is ordinary, and
+ * claiming the open one is locked is the worse of the two possible mistakes.
+ *
+ * Written with an explicit escape rather than a literal NUL byte — the byte makes the
+ * whole source file read as binary, and `grep` then says nothing about a thousand
+ * lines of it.
+ */
+function routerKey(path: string, varName: string): string {
+  return `${path}\0${varName}`;
+}
+
+/**
+ * The same router as the mount graph spells it — by the module another file would
+ * import, rather than by the file on disk. A route knows which file it was written in;
+ * a mount only ever knows the module name it imported.
+ */
+function byModule(key: string): string {
+  const cut = key.indexOf('\0');
+  return moduleRouterKey(moduleOf(key.slice(0, cut)), key.slice(cut + 1));
 }
 
 function collectEndpoints(input: BuildInput): Map<string, MergedEndpoint> {
@@ -165,6 +372,9 @@ function collectEndpoints(input: BuildInput): Map<string, MergedEndpoint> {
       existing.meta.writes = existing.meta.writes || finding.writes;
       for (const guard of finding.guards) existing.meta.guards.push(guard);
       if (finding.handlerId) existing.handlerIds.add(finding.handlerId);
+      for (const name of finding.paramTypes ?? []) existing.paramTypes.add(name);
+      if (finding.routerVar) existing.routers.add(routerKey(finding.site.path, finding.routerVar));
+      if (finding.handlerOwner) existing.owners.add(finding.handlerOwner);
       return;
     }
     merged.set(id, {
@@ -181,6 +391,9 @@ function collectEndpoints(input: BuildInput): Map<string, MergedEndpoint> {
         sites: [finding.site],
       },
       handlerIds: new Set(finding.handlerId ? [finding.handlerId] : []),
+      paramTypes: new Set(finding.paramTypes ?? []),
+      routers: new Set(finding.routerVar ? [routerKey(finding.site.path, finding.routerVar)] : []),
+      owners: new Set(finding.handlerOwner ? [finding.handlerOwner] : []),
     });
   };
 
@@ -246,8 +459,12 @@ function collectEndpoints(input: BuildInput): Map<string, MergedEndpoint> {
  */
 function addWorkerDoors(input: BuildInput, add: (finding: EndpointFinding) => void): void {
   for (const worker of input.signals.workers) {
-    if (worker.isPages || !worker.entry) continue;
-    const label = worker.name ?? worker.entry;
+    if (!isWorker(worker)) continue;
+    // `declaredEntry` is what the config says; `entry` is null until someone has run
+    // a build. The door is real either way — the handler is only hung off the file
+    // when there is a file to hang it off.
+    const main = worker.declaredEntry as string;
+    const label = worker.name ?? main;
 
     add({
       type: 'endpoint',
@@ -263,11 +480,11 @@ function addWorkerDoors(input: BuildInput, add: (finding: EndpointFinding) => vo
         path: worker.configPath,
         line: 1,
         nodeId: null,
-        snippet: `main = "${worker.entry}"`,
+        snippet: `main = "${main}"`,
       },
       // The entry file is the handler, so the door hangs off real code and the map can
       // walk from it into whatever the Worker calls.
-      handlerId: input.knownNodeIds.has(`file:${worker.entry}`) ? `file:${worker.entry}` : null,
+      handlerId: worker.entry && input.knownNodeIds.has(`file:${worker.entry}`) ? `file:${worker.entry}` : null,
     });
 
     for (const schedule of worker.crons) {
@@ -287,7 +504,7 @@ function addWorkerDoors(input: BuildInput, add: (finding: EndpointFinding) => vo
           nodeId: null,
           snippet: `crons = ["${schedule}"]`,
         },
-        handlerId: input.knownNodeIds.has(`file:${worker.entry}`) ? `file:${worker.entry}` : null,
+        handlerId: worker.entry && input.knownNodeIds.has(`file:${worker.entry}`) ? `file:${worker.entry}` : null,
       });
     }
   }
@@ -379,6 +596,36 @@ function plural(n: number, one: string, many: string): string {
 }
 
 /**
+ * A door "writes" if the code behind it does, not only if its verb suggests it might.
+ *
+ * The verb is a decent guess for an API route and no guess at all for a page, which
+ * every framework reports as a read. A Next.js server component that inserts a row on
+ * render is a door someone should look at, and until this ran it was indistinguishable
+ * from a static marketing page — which is precisely the door the "it is only a page"
+ * rule is allowed to excuse (#24).
+ *
+ * Only ever sets the flag, never clears it: a POST route stays a writer whether or not
+ * we could see which table it touches.
+ */
+function applyHandlerWrites(endpoints: Map<string, MergedEndpoint>, findings: BoundaryFinding[]): void {
+  const writers = new Set<string>();
+  for (const finding of findings) {
+    if (finding.type !== 'store' || finding.operation !== 'write') continue;
+    if (finding.site.nodeId) writers.add(finding.site.nodeId);
+  }
+  if (writers.size === 0) return;
+
+  for (const endpoint of endpoints.values()) {
+    if (endpoint.meta.writes) continue;
+    for (const handlerId of endpoint.handlerIds) {
+      if (!writers.has(handlerId)) continue;
+      endpoint.meta.writes = true;
+      break;
+    }
+  }
+}
+
+/**
  * A file that verifies a signature is handling a webhook, whatever its route is
  * called. Promoting it matters because a webhook is never "unprotected" in the same
  * sense as a public route — the signature *is* the lock.
@@ -401,6 +648,7 @@ function applyWebhookPromotion(endpoints: Map<string, MergedEndpoint>, findings:
     endpoint.kind = 'webhook';
     endpoint.meta.endpointKind = 'webhook';
     if (provider) {
+      endpoint.meta.verified = true;
       endpoint.meta.guards.push({
         name: `${provider} signature check`,
         how: 'call',
@@ -420,8 +668,16 @@ function applyWebhookPromotion(endpoints: Map<string, MergedEndpoint>, findings:
  * to it, so a function-scoped guard only counts when it is *that* handler's. When we
  * never resolved a precise handler (a page component, say), a guard anywhere in the
  * file counts — but only as `likely`.
+ *
+ * `reached` carries the same idea one file further out: a handler that calls a helper
+ * which does the checking is protected, and saying otherwise about the best-guarded
+ * routes in a repo is the most expensive mistake this tool can make.
  */
-function applyGuards(endpoints: Map<string, MergedEndpoint>, guards: GuardFinding[]): void {
+function applyGuards(
+  endpoints: Map<string, MergedEndpoint>,
+  guards: GuardFinding[],
+  reached: Map<string, ReachedGuard[]>,
+): void {
   const byFile = new Map<string, GuardFinding[]>();
   const matchers: GuardFinding[] = [];
 
@@ -446,6 +702,10 @@ function applyGuards(endpoints: Map<string, MergedEndpoint>, guards: GuardFindin
       }
     }
 
+    for (const handlerId of endpoint.handlerIds) {
+      for (const hop of reached.get(handlerId) ?? []) pushGuard(endpoint, guardThroughHops(hop));
+    }
+
     const route = endpoint.meta.route;
     if (!route || !route.startsWith('/')) continue;
     for (const guard of matchers) {
@@ -455,6 +715,223 @@ function applyGuards(endpoints: Map<string, MergedEndpoint>, guards: GuardFindin
       if (hit) pushGuard(endpoint, { ...guard.guard, confidence: 'likely' });
     }
   }
+}
+
+/**
+ * A Python route declares its auth in its signature, through a name defined somewhere
+ * else: `def read_items(current_user: CurrentUser)`. Three facts have to meet before
+ * that is a check, and no single file can see more than one of them —
+ *
+ *   1. `get_current_user` raises a 403 at strangers, so it is a check;
+ *   2. `CurrentUser` is an alias for `Depends(get_current_user)`;
+ *   3. this handler types a parameter `CurrentUser`.
+ *
+ * Which is why FastAPI's own project template read as twenty-one wide-open routes: the
+ * signature is the only place the lock appears, and it appears there by reference.
+ */
+function applyDependencyGuards(
+  endpoints: Map<string, MergedEndpoint>,
+  checkers: AuthCheckerFinding[],
+  aliases: AuthAliasFinding[],
+  routers: RouterBuildFinding[],
+  mounts: RouterMountFinding[],
+  attached: RouterGuardFinding[],
+  byPath: PathGuardFinding[],
+): void {
+  if (checkers.length === 0) return;
+  const byName = new Map(checkers.map((checker) => [checker.name, checker.guard]));
+
+  // An alias inherits the check it stands for, and says so, because a reader looking
+  // for `get_current_user` will not find one in their route file.
+  for (const alias of aliases) {
+    if (byName.has(alias.name)) continue;
+    const target = alias.depends.find((name) => byName.has(name));
+    if (!target) continue;
+    const inherited = byName.get(target) as GuardInfo;
+    byName.set(alias.name, { ...inherited, name: `${alias.name} → ${alias.binds ?? 'Depends'}(${target})` });
+  }
+
+  // A router that carries a check guards the routes registered on *it* — matched by
+  // the variable, because one file having a locked router and an open one beside it
+  // is ordinary, and claiming the open one is locked would be the worse error.
+  const byRouter = new Map<string, GuardInfo>();
+  for (const build of routers) {
+    const guard = byName.get(build.routerName);
+    if (guard) byRouter.set(routerKey(build.path, build.varName), { ...guard, how: 'config' });
+  }
+
+  const behind = routersBehindACheck(routers, mounts, attached, byName);
+  const inherited = checkInherited(aliases, byName);
+  // Only the wiring that names something the project turns callers away with. A module
+  // applies a logger with the same two calls it applies a lock.
+  const wired = byPath.filter((entry) => entry.matcher && byName.has(entry.name.split('.').pop() ?? entry.name));
+
+  for (const endpoint of endpoints.values()) {
+    for (const name of endpoint.paramTypes) {
+      const guard = byName.get(name);
+      if (guard) pushGuard(endpoint, guard);
+    }
+    for (const key of endpoint.routers) {
+      const guard = byRouter.get(key);
+      if (guard) pushGuard(endpoint, guard);
+      const behindTheMount = behind.get(byModule(key));
+      if (behindTheMount) pushGuard(endpoint, behindTheMount);
+    }
+    const route = endpoint.meta.route;
+    for (const entry of route ? wired : []) {
+      // The method is half the claim. `articles/:slug` is guarded for PUT and DELETE and
+      // wide open for GET, and all three are written on consecutive lines.
+      if (entry.method && entry.method !== endpoint.meta.method) continue;
+      if (!matcherMatches(entry.matcher, route as string)) continue;
+      const guard = byName.get(entry.name.split('.').pop() ?? entry.name) as GuardInfo;
+      pushGuard(endpoint, { ...guard, how: 'middleware', confidence: 'likely' });
+    }
+
+    for (const owner of endpoint.owners) {
+      const guard = inherited(owner);
+      // Never `certain`, however certain the declaration was. A check written on a class
+      // this file does not name reaches here through the framework's own inheritance
+      // rules, and a subclass that declares guards of its own replaces them rather than
+      // adding to them — so the chain is strong evidence and not a proof.
+      if (guard) pushGuard(endpoint, { ...guard, how: 'config', confidence: 'likely' });
+    }
+  }
+}
+
+/**
+ * The check a controller inherits: `class AdminBackupController(BaseAdminController)`,
+ * and three classes up, `user: PrivateUser = Depends(get_current_user)`.
+ *
+ * A class-based view injects the class's dependencies into every route declared on it,
+ * so a file of eleven handlers can be entirely guarded and mention a caller nowhere.
+ * mealie writes a hundred and thirty of its routes that way.
+ *
+ * Exactly one declaration of a name or nothing: two classes in a repo sharing a name is
+ * ordinary, and following either would be attributing one team's lock to another's door.
+ */
+function checkInherited(
+  aliases: AuthAliasFinding[],
+  byName: Map<string, GuardInfo>,
+): (className: string) => GuardInfo | null {
+  const declared = new Map<string, AuthAliasFinding[]>();
+  for (const alias of aliases) {
+    if (!alias.bases) continue;
+    const list = declared.get(alias.name);
+    if (list) list.push(alias);
+    else declared.set(alias.name, [alias]);
+  }
+
+  const answers = new Map<string, GuardInfo | null>();
+  const walk = (name: string, seen: Set<string>): GuardInfo | null => {
+    const done = answers.get(name);
+    if (done !== undefined) return done;
+    if (seen.has(name)) return null;
+    seen.add(name);
+
+    let found = byName.get(name) ?? null;
+    if (!found) {
+      const only = declared.get(name);
+      if (only?.length === 1) {
+        for (const base of only[0].bases ?? []) {
+          found = walk(base, seen);
+          if (found) break;
+        }
+      }
+    }
+
+    seen.delete(name);
+    answers.set(name, found);
+    return found;
+  };
+
+  return (className: string) => walk(className, new Set());
+}
+
+/**
+ * The check written on the mount, not on the route: `api_router.include_router(rest,
+ * dependencies=[Depends(get_current_user)])`, and the ASGI middleware that does the
+ * same job for a whole application.
+ *
+ * Netflix's `dispatch` locks a hundred and sixty-three of its two hundred routes on one
+ * line of `api.py`, and not one of the files those routes live in mentions it — so the
+ * whole API read as wide open. This is the third spelling of the same idea, after a
+ * route's own dependencies and a router built with them, and it is the one a large
+ * Python service reaches for, because it is the only one that cannot be forgotten on a
+ * new file.
+ *
+ * The rule for inheriting a check down the tree is the strict one: a router is behind a
+ * check when it is mounted somewhere *and every mount of it* is behind one. A router
+ * that also answers at a second, open address is not protected, and saying otherwise
+ * about the routes somebody deliberately left open is the most expensive thing this
+ * tool could say.
+ */
+function routersBehindACheck(
+  builds: RouterBuildFinding[],
+  mounts: RouterMountFinding[],
+  attached: RouterGuardFinding[],
+  byName: Map<string, GuardInfo>,
+): Map<string, GuardInfo> {
+  if (mounts.length === 0 && attached.length === 0) return new Map();
+
+  // What a router carries in its own right: the dependencies it was built with, and
+  // any middleware added to it. Both are names until they are looked up here.
+  const own = new Map<string, GuardInfo>();
+  const claim = (path: string, varName: string, names: string[] | undefined, how: 'config' | 'middleware') => {
+    const key = routerKey(moduleOf(path), varName);
+    if (own.has(key)) return;
+    const guard = firstCheck(names, byName);
+    if (guard) own.set(key, { ...guard, how });
+  };
+  for (const build of builds) claim(build.path, build.varName, build.dependencies, 'config');
+  for (const guard of attached) claim(guard.path, guard.varName, guard.names, guard.how);
+
+  const mountedAt = mountGraph(builds, mounts);
+  const answers = new Map<string, GuardInfo | null>();
+
+  const guardFor = (key: string, seen: Set<string>): GuardInfo | null => {
+    const done = answers.get(key);
+    if (done !== undefined) return done;
+    // A router mounted on itself, round however long a loop, tells us nothing.
+    if (seen.has(key)) return null;
+    seen.add(key);
+
+    let found = own.get(key) ?? null;
+    if (!found) {
+      const parents = mountedAt.get(key) ?? [];
+      // A router nobody mounts is a root: whatever it carries is all it has.
+      if (parents.length > 0) {
+        const guards = parents.map((mount) => {
+          const onTheMount = firstCheck(mount.dependencies, byName);
+          // Written in the wiring, not in the handler — which is what `config` says,
+          // and the difference a reader needs when they go looking for it.
+          if (onTheMount) return { ...onTheMount, how: 'config' as const };
+          return guardFor(routerKey(moduleOf(mount.path), mount.hostVar), seen);
+        });
+        found = guards.every((guard) => guard !== null) ? guards[0] : null;
+      }
+    }
+
+    seen.delete(key);
+    answers.set(key, found);
+    return found;
+  };
+
+  const out = new Map<string, GuardInfo>();
+  for (const build of builds) {
+    const key = routerKey(moduleOf(build.path), build.varName);
+    const guard = guardFor(key, new Set());
+    if (guard) out.set(key, { ...guard, confidence: 'likely' });
+  }
+  return out;
+}
+
+/** The first of these names the project knows to be a check, if any of them is. */
+function firstCheck(names: string[] | undefined, byName: Map<string, GuardInfo>): GuardInfo | null {
+  for (const name of names ?? []) {
+    const guard = byName.get(name.split('.').pop() ?? name);
+    if (guard) return guard;
+  }
+  return null;
 }
 
 function guardConfidence(endpoint: MergedEndpoint, guard: GuardFinding): Confidence | null {
@@ -467,7 +944,15 @@ function guardConfidence(endpoint: MergedEndpoint, guard: GuardFinding): Confide
 }
 
 function pushGuard(endpoint: MergedEndpoint, guard: GuardInfo): void {
-  const already = endpoint.meta.guards.find((g) => g.name === guard.name && g.path === guard.path);
+  // Two guards pointing at one line of one file are one check, whatever each of them
+  // decided to call it. A controller that declares `@UseGuards(SessionGuard)` reaches
+  // this twice — once as the decorator, once as the chain that inherits it — and
+  // listing the same lock twice on a security screen reads as two locks.
+  const already = endpoint.meta.guards.find(
+    (g) =>
+      (g.name === guard.name && g.path === guard.path) ||
+      (g.path !== null && g.path === guard.path && g.line !== null && g.line === guard.line),
+  );
   if (already) {
     if (already.confidence === 'likely' && guard.confidence === 'certain') already.confidence = 'certain';
     return;
@@ -500,6 +985,7 @@ function collectEnv(input: BuildInput): MergedEndpoint | null {
       sites: sites.sort(compareSites),
       documented: input.signals.envExample.has(name),
       secret: isSecretName(name),
+      platform: isPlatformName(name),
     }))
     .sort((a, b) => a.name.localeCompare(b.name));
 
@@ -520,6 +1006,9 @@ function collectEnv(input: BuildInput): MergedEndpoint | null {
       envExample: input.signals.envExamplePath,
     },
     handlerIds: new Set(sites.map((site) => makeFileId(site.path))),
+    paramTypes: new Set(),
+    routers: new Set(),
+    owners: new Set(),
   };
 }
 
@@ -574,6 +1063,8 @@ function collectServices(input: BuildInput): Map<string, MergedService> {
 interface MergedStore {
   id: string;
   name: string;
+  /** True while nothing has named the client — see `nameTheAnonymousDatabase`. */
+  generic?: boolean;
   meta: StoreMeta;
   /** Kept apart so a function that only reads never gets a "writes to" arrow. */
   readSites: CodeSite[];
@@ -582,14 +1073,80 @@ interface MergedStore {
   tableSites: Map<string, CodeSite[]>;
 }
 
+/**
+ * What a Cloudflare binding is, in the vocabulary the rest of the map already uses.
+ * Queue producers are left out on purpose: a queue you write into is somewhere data
+ * goes, not somewhere it is kept, and calling it a store would put it on the wrong
+ * half of the picture.
+ */
+const BINDING_STORES: Record<string, { client: string; storeKind: StoreKind }> = {
+  d1: { client: 'Cloudflare D1', storeKind: 'sql' },
+  kv: { client: 'Cloudflare KV', storeKind: 'kv' },
+  r2: { client: 'Cloudflare R2', storeKind: 'blob' },
+  'durable-object': { client: 'Durable Objects', storeKind: 'kv' },
+  hyperdrive: { client: 'Cloudflare Hyperdrive', storeKind: 'sql' },
+  vectorize: { client: 'Cloudflare Vectorize', storeKind: 'nosql' },
+};
+
+/**
+ * Databases a Worker is bound to, read out of its config (#29).
+ *
+ * Nothing in the code says which database `env.DB` is — the platform injects it, and
+ * the config is the only place its name and kind are written down. Without this the
+ * map offered mirrorquiz a nameless "Database", and the words layer, asked to describe
+ * a nameless database, confidently called it Postgres. It is D1.
+ *
+ * Reads and writes stay at zero because none were observed: this is a declaration, not
+ * a call site, and the evidence shown is the config line itself. An ORM store found in
+ * the code is deliberately left as its own box rather than folded into this one —
+ * guessing that the app's one Drizzle client points at the app's one D1 database would
+ * be right most of the time, and the times it is wrong it would print a false sentence
+ * about where a customer's data lives.
+ */
+function addWorkerBindings(input: BuildInput, merged: Map<string, MergedStore>): void {
+  for (const worker of input.signals.workers) {
+    if (!isWorker(worker)) continue;
+    for (const binding of worker.bindings) {
+      const shape = BINDING_STORES[binding.kind];
+      if (!shape) continue;
+      const id = makeStoreId(`cloudflare:${binding.kind}:${binding.target ?? binding.id ?? binding.name}`);
+      if (merged.has(id)) continue;
+      const site: CodeSite = {
+        path: worker.configPath,
+        line: 1,
+        nodeId: null,
+        // What the code sees on `env`, and what the dashboard calls it — the two ways
+        // a reader might go looking for this thing.
+        snippet: `env.${binding.name} → ${binding.target ?? binding.id ?? shape.client}`,
+      };
+      merged.set(id, {
+        id,
+        // The name in the dashboard when the config gives one, else the name the code
+        // sees on `env` — both are things a reader can search for.
+        name: binding.target ?? binding.name,
+        readSites: [],
+        writeSites: [],
+        tableSites: new Map(),
+        meta: { storeKind: shape.storeKind, client: shape.client, tables: [], reads: 0, writes: 0, sites: [site] },
+      });
+    }
+  }
+}
+
 function collectStores(input: BuildInput): Map<string, MergedStore> {
   const merged = new Map<string, MergedStore>();
 
   const noteTable = (store: MergedStore, table: string | null, site: CodeSite) => {
     if (!table) return;
-    const sites = store.tableSites.get(table);
+    // `session.get(Item, id)` names the model and the migration beside it names the
+    // table, so one table arrives spelled two ways. SQL identifiers do not distinguish
+    // them either, and counting both turns two tables into four.
+    const seen = store.meta.tables.find((known) => known.toLowerCase() === table.toLowerCase());
+    if (!seen) store.meta.tables.push(table);
+    const name = seen ?? table;
+    const sites = store.tableSites.get(name);
     if (sites) sites.push(site);
-    else store.tableSites.set(table, [site]);
+    else store.tableSites.set(name, [site]);
   };
 
   for (const finding of input.findings) {
@@ -601,24 +1158,25 @@ function collectStores(input: BuildInput): Map<string, MergedStore> {
       if (finding.operation === 'read') {
         existing.meta.reads++;
         existing.readSites.push(finding.site);
-      } else {
+      } else if (finding.operation === 'write') {
         existing.meta.writes++;
         existing.writeSites.push(finding.site);
       }
-      if (finding.table && !existing.meta.tables.includes(finding.table)) existing.meta.tables.push(finding.table);
       noteTable(existing, finding.table, finding.site);
+      nameTheClient(existing, finding);
       continue;
     }
     const store: MergedStore = {
       id,
       name: finding.name,
+      generic: finding.generic,
       readSites: finding.operation === 'read' ? [finding.site] : [],
       writeSites: finding.operation === 'write' ? [finding.site] : [],
       tableSites: new Map(),
       meta: {
         storeKind: finding.storeKind,
         client: finding.client,
-        tables: finding.table ? [finding.table] : [],
+        tables: [],
         reads: finding.operation === 'read' ? 1 : 0,
         writes: finding.operation === 'write' ? 1 : 0,
         sites: [finding.site],
@@ -627,6 +1185,9 @@ function collectStores(input: BuildInput): Map<string, MergedStore> {
     noteTable(store, finding.table, finding.site);
     merged.set(id, store);
   }
+
+  nameTheAnonymousDatabase(merged);
+  addWorkerBindings(input, merged);
 
   // A Prisma schema lists every table, including ones no code has touched yet.
   const prisma = merged.get(makeStoreId('prisma'));
@@ -638,6 +1199,64 @@ function collectStores(input: BuildInput): Map<string, MergedStore> {
 
   for (const store of merged.values()) store.meta.tables.sort();
   return merged;
+}
+
+/**
+ * Keeps a store's client honest when more than one thing writes to it.
+ *
+ * One disk, two languages: naming only whichever file was read first puts "Node fs" on
+ * a box whose evidence is a hundred lines of Python. A placeholder never wins — a
+ * finding that could not name its client yields to one that could.
+ */
+function nameTheClient(store: MergedStore, finding: StoreFinding): void {
+  if (finding.generic) return;
+  if (store.generic) {
+    store.generic = false;
+    store.name = finding.name;
+    store.meta.client = finding.client;
+    return;
+  }
+  const named = store.meta.client.split(' and ');
+  if (named.includes(finding.client) || named.length >= 3) return;
+  store.meta.client = [...named, finding.client].join(' and ');
+}
+
+/**
+ * Gives the queries whose client we never saw the name of the one we did.
+ *
+ * A repo of scripts opens its connection in a helper module and imports the helper, so
+ * the file with `pymysql.connect` and the twenty files with `SELECT` in them are not the
+ * same file — and a per-file detector can only ever see one of them. Left apart they are
+ * two boxes for one database, which reads as an app with two databases.
+ *
+ * Exactly one candidate or nothing: with two named SQL stores in the repo, which one
+ * those queries went to is a guess, and the honest answer is a box that says only
+ * "Database".
+ */
+function nameTheAnonymousDatabase(merged: Map<string, MergedStore>): void {
+  const anonymous = [...merged.values()].filter((store) => store.generic);
+  if (anonymous.length === 0) return;
+  const named = [...merged.values()].filter((store) => !store.generic && store.meta.storeKind === 'sql');
+  if (named.length !== 1) return;
+
+  const target = named[0];
+  for (const store of anonymous) {
+    if (store.meta.storeKind !== 'sql') continue;
+    appendAll(target.meta.sites, store.meta.sites);
+    target.meta.reads += store.meta.reads;
+    target.meta.writes += store.meta.writes;
+    appendAll(target.readSites, store.readSites);
+    appendAll(target.writeSites, store.writeSites);
+    for (const table of store.meta.tables) {
+      if (!target.meta.tables.includes(table)) target.meta.tables.push(table);
+    }
+    for (const [table, sites] of store.tableSites) {
+      const existing = target.tableSites.get(table);
+      if (existing) appendAll(existing, sites);
+      else target.tableSites.set(table, sites);
+    }
+    merged.delete(store.id);
+  }
 }
 
 // ---------------------------------------------------------------------------

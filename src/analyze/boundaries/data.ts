@@ -10,6 +10,7 @@
 import { Node } from 'ts-morph';
 import type { CallExpression, NewExpression } from 'ts-morph';
 import type { StoreKind } from '../../model/types.js';
+import { readSqlStatement } from '../sql.js';
 import { prismaProviderName, storeForPackage } from './catalog.js';
 import { dottedName, literalString } from './ast.js';
 import type { BoundaryDetector, DetectorContext, StoreFinding } from './types.js';
@@ -35,6 +36,15 @@ const FS_WRITES = new Set([
   'rename',
 ]);
 
+/**
+ * Reading a file is touching the same store as writing one.
+ *
+ * These used to be a door of their own, called "Files on disk" — beside a store also
+ * called "Files on disk", which is the same sentence written twice. One box, two
+ * directions, and the same shape Python already reports.
+ */
+const FS_READS = new Set(['readFile', 'readFileSync', 'createReadStream', 'readdir', 'readdirSync', 'readJson', 'readJSON']);
+
 export const storeDetector: BoundaryDetector = {
   id: 'stores',
   // Browser storage needs no dependency at all, so this one always runs; every
@@ -53,9 +63,10 @@ export const storeDetector: BoundaryDetector = {
       supabase(node, dotted, ctx) ||
       mongoose(node, dotted, ctx) ||
       rawSql(node, dotted, ctx) ||
+      keyValue(node, dotted, ctx) ||
       blobWrite(node, dotted, ctx) ||
       browserStorage(node, dotted, ctx) ||
-      fileWrite(node, dotted, ctx);
+      fileAccess(node, dotted, ctx);
   },
 };
 
@@ -263,7 +274,8 @@ function rawSql(call: CallExpression, dotted: string, ctx: DetectorContext): boo
   if (!sqlPackage) return false;
 
   const sql = literalString(call.getArguments()[0]) ?? templateSql(call);
-  if (!sql || !/^\s*(select|insert|update|delete|with)\b/i.test(sql)) return false;
+  const statement = sql ? readSqlStatement(sql) : null;
+  if (!statement) return false;
 
   const def = storeForPackage(sqlPackage);
   emit(ctx, call, {
@@ -271,8 +283,8 @@ function rawSql(call: CallExpression, dotted: string, ctx: DetectorContext): boo
     name: def?.fallbackName ?? 'Database',
     client: def?.client ?? sqlPackage,
     storeKind: 'sql',
-    table: tableFromSql(sql),
-    operation: /^\s*select|^\s*with/i.test(sql) ? 'read' : 'write',
+    table: statement.table,
+    operation: statement.operation,
   });
   return true;
 }
@@ -283,12 +295,63 @@ function templateSql(call: CallExpression): string | null {
   return null;
 }
 
-function tableFromSql(sql: string): string | null {
-  const match =
-    /\bfrom\s+["'`]?(\w+)/i.exec(sql) ??
-    /\binto\s+["'`]?(\w+)/i.exec(sql) ??
-    /\bupdate\s+["'`]?(\w+)/i.exec(sql);
-  return match?.[1] ?? null;
+// ---------------------------------------------------------------------------
+// Redis and key–value stores
+// ---------------------------------------------------------------------------
+
+/** Redis commands, split by whether they change anything. */
+const KV_READS = new Set([
+  'get', 'mget', 'hget', 'hgetall', 'hmget', 'exists', 'ttl', 'keys', 'scan', 'smembers',
+  'sismember', 'lrange', 'llen', 'zrange', 'zscore', 'zcard', 'getdel', 'hkeys', 'hvals',
+]);
+const KV_WRITES = new Set([
+  'set', 'mset', 'setex', 'setnx', 'hset', 'hmset', 'del', 'unlink', 'expire', 'incr',
+  'incrby', 'decr', 'decrby', 'sadd', 'srem', 'lpush', 'rpush', 'lpop', 'rpop', 'zadd',
+  'zrem', 'flushall', 'flushdb', 'hincrby', 'hdel', 'persist', 'rename',
+]);
+
+/** Client names that are conventionally the Redis handle, so `redis.get` reads as one. */
+const KV_RECEIVERS = /^(kv|redis|redisClient|cache|cacheClient|client|store)$/i;
+
+/**
+ * `kv.get(key)`, `redis.set(key, value)`.
+ *
+ * A cache is where a surprising amount of an app's real state ends up living —
+ * sessions, rate limits, whole storage layers behind a "just a cache" name — so an app
+ * whose only persistence is Redis should not read as an app with no database.
+ */
+function keyValue(call: CallExpression, dotted: string, ctx: DetectorContext): boolean {
+  const parts = dotted.split('.');
+  const operation = (parts[parts.length - 1] ?? '').toLowerCase();
+  const reads = KV_READS.has(operation);
+  const writes = KV_WRITES.has(operation);
+  if (!reads && !writes) return false;
+
+  const root = parts[0];
+  const pkg = ['@vercel/kv', '@upstash/redis', 'ioredis', 'redis'].find((name) =>
+    ctx.signals.packages.has(name),
+  );
+  if (!pkg) return false;
+
+  // Either the name was imported from the client itself (`import { kv } from
+  // "@vercel/kv"`), built by it, or is one of the handful of names everybody uses.
+  const imported = ctx.imports.get(root);
+  const known =
+    imported?.module === pkg ||
+    ctx.locals.get(root)?.module === pkg ||
+    (KV_RECEIVERS.test(root) && parts.length === 2);
+  if (!known) return false;
+
+  const def = storeForPackage(pkg);
+  emit(ctx, call, {
+    key: 'kv',
+    name: def?.fallbackName ?? 'Redis',
+    client: def?.client ?? pkg,
+    storeKind: 'kv',
+    table: null,
+    operation: writes ? 'write' : 'read',
+  });
+  return true;
 }
 
 // ---------------------------------------------------------------------------
@@ -383,10 +446,11 @@ function browserStorage(call: CallExpression, dotted: string, ctx: DetectorConte
   return false;
 }
 
-function fileWrite(call: CallExpression, dotted: string, ctx: DetectorContext): boolean {
+function fileAccess(call: CallExpression, dotted: string, ctx: DetectorContext): boolean {
   const parts = dotted.split('.');
   const last = parts[parts.length - 1];
-  if (!FS_WRITES.has(last)) return false;
+  const writes = FS_WRITES.has(last);
+  if (!writes && !FS_READS.has(last)) return false;
 
   const root = parts[0];
   const viaNamespace = ctx.imports.get(root)?.module === 'fs' || /^(fs|fsp|fsPromises)$/.test(root);
@@ -399,7 +463,7 @@ function fileWrite(call: CallExpression, dotted: string, ctx: DetectorContext): 
     client: 'Node fs',
     storeKind: 'filesystem',
     table: null,
-    operation: 'write',
+    operation: writes ? 'write' : 'read',
   });
   return true;
 }

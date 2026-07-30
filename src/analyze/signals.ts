@@ -75,6 +75,14 @@ export interface ProjectSignals {
   pythonPackages: Set<string>;
   /** Which file the Python dependencies came from, if any. */
   pythonManifest: string | null;
+  /**
+   * Whether the project declares itself something other code installs and imports —
+   * a `setup.py`, a `[project]` table, a `package.json` with an entry point.
+   *
+   * A declaration, not a count. It is what tells a library with a couple of debug
+   * `if __name__ == "__main__":` blocks from a folder of scripts that has nothing else.
+   */
+  declaresAPackage: boolean;
   /** Repo-relative directory of the Next.js App Router, if there is one. */
   nextAppDir: string | null;
   /** Repo-relative directory of the Next.js Pages Router, if there is one. */
@@ -109,7 +117,36 @@ export function readSignals(root: string, packageJson: Record<string, unknown> |
     sqlSchema: readSqlSchema(root, prisma !== null),
     ...readPythonPackages(root),
     ...readEnvExample(root),
+    declaresAPackage: readsAsAPackage(root, packageJson),
   };
+}
+
+/**
+ * Whether this repo says, in a manifest, that it is meant to be installed and imported.
+ *
+ * `psf/requests` has two files with `if __name__ == "__main__":` in them, left over from
+ * debugging, and that was enough to classify the most-imported library in Python as
+ * "Something you run". Counting entry points cannot separate those two files from the
+ * thirty-five around them; the `setup.py` sitting beside them says it outright.
+ *
+ * `requirements.txt` is deliberately not a signal. It lists what this code needs, which
+ * every script also has, and says nothing about what anybody does with this code.
+ */
+function readsAsAPackage(root: string, packageJson: Record<string, unknown> | null): boolean {
+  if (fs.existsSync(path.join(root, 'setup.py')) || fs.existsSync(path.join(root, 'setup.cfg'))) return true;
+
+  const pyproject = path.join(root, 'pyproject.toml');
+  if (fs.existsSync(pyproject)) {
+    const text = readText(pyproject);
+    if (/^\s*\[project\]/m.test(text) || /^\s*\[tool\.poetry\]/m.test(text)) return true;
+  }
+
+  // `private: true` is not consulted. It means "do not publish to the registry", which
+  // every internal package in a monorepo says, and `cal.com/packages/ui` is a component
+  // library whether or not npm has heard of it. An `exports` field is the declaration
+  // that matters: it says where to import this from.
+  if (!packageJson) return false;
+  return ['main', 'module', 'exports', 'types'].some((field) => packageJson[field] !== undefined);
 }
 
 /** The migration folders projects actually use. Checked, not globbed — a glob over an

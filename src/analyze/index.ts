@@ -7,8 +7,11 @@
  * the whole pipeline.
  */
 import type { Atlas, AtlasEdge, AtlasNode, AtlasStats, EndpointMeta, Zone } from '../model/types.js';
+import { classifyOpenDoors, isAuthRelevant, tallyOpenDoors } from '../model/exposure.js';
+import { authProviderForPackage } from './boundaries/catalog.js';
 import { countStaleDocs } from '../model/staleness.js';
 import { FORMAT_VERSION, makeAppId, makeEdgeId } from '../model/types.js';
+import { appendAll } from '../util/append.js';
 import { hashParts } from '../util/hash.js';
 import { classifyArchetype } from './archetype.js';
 import { buildBoundaryGraph } from './boundaries/build.js';
@@ -24,7 +27,7 @@ import { pythonPlugin } from './py/index.js';
 import { typescriptPlugin } from './ts/index.js';
 import { dominantZone } from './zones.js';
 
-export const TOOL_VERSION = '0.5.0';
+export const TOOL_VERSION = '0.6.0';
 
 export interface AnalyzeOptions {
   maxFiles?: number;
@@ -127,11 +130,11 @@ export async function analyzeProject(rootDir: string, options: AnalyzeOptions = 
       hashes: plan?.hashes,
       onProgress: options.onProgress,
     });
-    nodes.push(...result.nodes);
-    edges.push(...result.edges);
-    findings.push(...result.boundaries);
-    warnings.push(...result.warnings);
-    slices.push(...(result.slices ?? []));
+    appendAll(nodes, result.nodes);
+    appendAll(edges, result.edges);
+    appendAll(findings, result.boundaries);
+    appendAll(warnings, result.warnings);
+    appendAll(slices, result.slices ?? []);
     reused += result.reused ?? 0;
     analyzed += claimed.length - (result.reused ?? 0);
   }
@@ -150,11 +153,11 @@ export async function analyzeProject(rootDir: string, options: AnalyzeOptions = 
   // Read before the containment tree is built, because the schema file has to be in
   // the folder tree like any other file for its tables to have somewhere to live.
   const schema = buildSchemaNodes(project.signals.prisma);
-  nodes.push(...schema.nodes);
-  edges.push(...schema.edges);
+  appendAll(nodes, schema.nodes);
+  appendAll(edges, schema.edges);
   const sqlSchema = buildSqlSchemaNodes(project.signals.sqlSchema, project.signals.prisma);
-  nodes.push(...sqlSchema.nodes);
-  edges.push(...sqlSchema.edges);
+  appendAll(nodes, sqlSchema.nodes);
+  appendAll(edges, sqlSchema.edges);
 
   // --- boundaries ---
   // Merged once across every language, so a Python route and a TypeScript route land
@@ -165,9 +168,13 @@ export async function analyzeProject(rootDir: string, options: AnalyzeOptions = 
       appId,
       signals: project.signals,
       knownNodeIds: new Set(nodes.map((n) => n.id)),
+      // What the compiler already resolved about who mentions whom, so a guard written
+      // in a helper can be followed back to the handler that runs it.
+      references: edges.filter((edge) => edge.kind === 'references'),
+      nodeNames: new Map(nodes.map((node) => [node.id, node.name])),
     });
-    nodes.push(...boundary.nodes);
-    edges.push(...boundary.edges);
+    appendAll(nodes, boundary.nodes);
+    appendAll(edges, boundary.edges);
   }
 
   // --- what kind of project this is ---
@@ -178,8 +185,8 @@ export async function analyzeProject(rootDir: string, options: AnalyzeOptions = 
   const archetype = classifyArchetype({ project, nodes });
   if (detectBoundaries && archetype.archetype === 'library') {
     const surface = buildExportDoors({ nodes, appId });
-    nodes.push(...surface.nodes);
-    edges.push(...surface.edges);
+    appendAll(nodes, surface.nodes);
+    appendAll(edges, surface.edges);
   }
 
   // --- containment tree ---
@@ -188,7 +195,7 @@ export async function analyzeProject(rootDir: string, options: AnalyzeOptions = 
   if (schema.filePath) treeFiles.push({ relPath: schema.filePath, zone: 'data' });
   for (const relPath of sqlSchema.filePaths) treeFiles.push({ relPath, zone: 'data' });
   const { modules, parentForFile } = buildModuleTree(treeFiles, appId);
-  nodes.push(...modules);
+  appendAll(nodes, modules);
 
   for (const node of nodes) {
     if (node.kind !== 'file' || !node.path) continue;
@@ -214,6 +221,35 @@ export async function analyzeProject(rootDir: string, options: AnalyzeOptions = 
   // Drop edges that point at nodes we never created (e.g. a file that failed to parse).
   const known = new Set(nodes.map((n) => n.id));
   const liveEdges = edges.filter((e) => known.has(e.fromId) && known.has(e.toId));
+
+  // Which files bring an auth library in. Stamped here, where the catalog lives, so
+  // that `src/model` can read a plain field instead of importing the analyzer — and so
+  // the fact survives into `atlas.json` for anything reading it later. Kept separate
+  // from the service boxes on purpose: `next-auth` runs inside the app and is not a
+  // company anybody sends data to, but it is still what makes a wildcard route the
+  // door people sign in through.
+  for (const node of nodes) {
+    if (node.kind !== 'file') continue;
+    const imports = node.meta.externalImports;
+    if (!Array.isArray(imports)) continue;
+    for (const pkg of imports) {
+      const provider = typeof pkg === 'string' ? authProviderForPackage(pkg) : null;
+      if (provider) {
+        node.meta.authPackage = provider;
+        break;
+      }
+    }
+  }
+
+  // Why each unchecked door is unchecked, written onto the door. Every screen that
+  // badges an endpoint then reads one field instead of re-deriving its own answer,
+  // which is how the card, the card's group and the summary line stay in agreement.
+  const byId = new Map(nodes.map((node) => [node.id, node]));
+  for (const [id, verdict] of classifyOpenDoors(nodes, liveEdges)) {
+    const node = byId.get(id);
+    if (node) node.meta.open = verdict;
+  }
+
   options.onProgress?.('Building the map', 1, 1);
 
   const atlas: Atlas = {
@@ -292,7 +328,7 @@ export function computeStats(nodes: AtlasNode[], edges: AtlasEdge[]): AtlasStats
   let aiFiles = 0;
   let endpoints = 0;
   let routes = 0;
-  let unprotectedRoutes = 0;
+  let unreadFiles = 0;
   let services = 0;
   let externalServices = 0;
   let stores = 0;
@@ -304,6 +340,7 @@ export function computeStats(nodes: AtlasNode[], edges: AtlasEdge[]): AtlasStats
       case 'file':
         files++;
         linesOfCode += Number(node.meta.loc ?? 0);
+        if (node.meta.unread) unreadFiles++;
         if (node.summarySource === 'docs') documentedFiles++;
         else if (node.summarySource === 'ai') aiFiles++;
         break;
@@ -321,10 +358,7 @@ export function computeStats(nodes: AtlasNode[], edges: AtlasEdge[]): AtlasStats
         endpoints++;
         const meta = node.meta as unknown as EndpointMeta;
         if (meta.endpointKind === 'env') envVars += meta.vars?.length ?? 0;
-        if (isAuthRelevant(meta)) {
-          routes++;
-          if (meta.guards.length === 0) unprotectedRoutes++;
-        }
+        if (isAuthRelevant(meta)) routes++;
         break;
       }
       case 'service':
@@ -346,6 +380,11 @@ export function computeStats(nodes: AtlasNode[], edges: AtlasEdge[]): AtlasStats
     else if (edge.kind === 'references') references++;
   }
 
+  // "No check found" is three different statements wearing one number. Splitting them
+  // here rather than at each screen is what stops the CLI, the walkthrough and the
+  // security page from quoting three different totals (#24, #36).
+  const open = tallyOpenDoors(classifyOpenDoors(nodes, edges).values());
+
   return {
     files,
     functions,
@@ -361,7 +400,10 @@ export function computeStats(nodes: AtlasNode[], edges: AtlasEdge[]): AtlasStats
     aiFiles,
     endpoints,
     routes,
-    unprotectedRoutes,
+    unprotectedRoutes: open.worthALook,
+    publicRoutes: open.page + open.authMount,
+    unreadableRoutes: open.unreadable,
+    unreadFiles,
     services,
     externalServices,
     stores,
@@ -369,15 +411,6 @@ export function computeStats(nodes: AtlasNode[], edges: AtlasEdge[]): AtlasStats
   };
 }
 
-/**
- * Auth coverage is measured over the doors a stranger can knock on. A cron job or a
- * queue worker is not reachable from the internet, so counting it as "unprotected"
- * would inflate the number that matters and teach people to ignore it.
- */
-export function isAuthRelevant(meta: EndpointMeta): boolean {
-  return (
-    meta.endpointKind === 'http-route' ||
-    meta.endpointKind === 'server-action' ||
-    meta.endpointKind === 'realtime'
-  );
-}
+// The rule itself lives beside the classification it belongs to, so the denominator and
+// the numerator can never be computed from two different ideas of what a route is.
+export { isAuthRelevant } from '../model/exposure.js';

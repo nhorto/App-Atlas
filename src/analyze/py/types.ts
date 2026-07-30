@@ -17,6 +17,11 @@ export type PyValue =
 export interface PyCall {
   /** Dotted callee: `app.get`, `os.getenv`, `requests.post`. */
   callee: string;
+  /**
+   * The last segment on its own. `Path(out).write_text(t)` has a call in the middle of
+   * its chain, so `callee` is only `Path()` and the verb is missing from it.
+   */
+  method?: string | null;
   args: PyValue[];
   kwargs: Record<string, PyValue>;
   line: number;
@@ -53,9 +58,21 @@ export interface PyDef {
   params?: PyParam[];
   returns?: string;
   bases?: string[];
+  /**
+   * Classes only: the names this class body hands to `Depends(...)`, its own
+   * `__init__` included. A controller's auth is written here and nowhere near the
+   * routes it declares.
+   */
+  depends?: string[];
   fields?: PyField[];
   methods?: PyDef[];
   decorators: PyCall[];
+  /**
+   * Line where this function turns an unauthenticated caller away — a 401 or 403 it
+   * raises or returns. What makes a dependency a check rather than a fetch, read from
+   * the code rather than from the function's name.
+   */
+  rejects?: number | null;
   /** Every identifier mentioned inside, for the reference pass to resolve. */
   uses: string[];
 }
@@ -68,6 +85,68 @@ export interface PyImport {
   /** `[exported name, local name]` pairs from `from x import a as b`. */
   names: [string, string][];
   alias: string | null;
+  line: number;
+}
+
+/**
+ * A module-level name bound to something with a `Depends(...)` in it —
+ * `CurrentUser = Annotated[User, Depends(get_current_user)]`.
+ *
+ * The route that uses it writes only `current_user: CurrentUser`, so this is the only
+ * place the check is visible at all.
+ */
+export interface PyAlias {
+  name: string;
+  /** Every function handed to a `Depends(...)` inside the value. */
+  depends: string[];
+  line: number;
+}
+
+/**
+ * A module-level router: `locked = LockedRouter(prefix="/admin")`.
+ *
+ * Which router a route hangs off decides which dependencies reach it, and one file
+ * having both a locked router and an open one is ordinary.
+ */
+export interface PyRouter {
+  /** The variable, which is what a route decorator will name. */
+  var: string;
+  /** What built it: `APIRouter`, `UserAPIRouter`. */
+  callee: string;
+  /** Whether a `prefix=` was passed at all — separate from whether we could read it. */
+  hasPrefix?: boolean;
+  /** The prefix when it was written as a literal. */
+  prefix?: string | null;
+  /** The prefix when it was written as a name: `prefix=settings.API_V1_STR`. */
+  prefixName?: string | null;
+  line: number;
+}
+
+/**
+ * A module- or class-level name bound to a string that starts with `/` —
+ * `API_V1_STR: str = "/api/v1"`.
+ *
+ * Collected only so that a `prefix=` written as a name can still be turned into the
+ * address it stands for.
+ */
+export interface PyConstant {
+  name: string;
+  value: string;
+  line: number;
+}
+
+/**
+ * `conn = pymysql.connect(...)` — a local name and the call that produced it.
+ *
+ * The Python half of what `ctx.locals` is for the TypeScript detectors: it says what a
+ * receiver *is*, so `conn.execute(...)` can be told apart from every other `.execute`.
+ */
+export interface PyBinding {
+  name: string;
+  /** Dotted callee of the right-hand side: `pymysql.connect`, `conn.cursor`. */
+  callee: string;
+  /** Its first literal string argument — the database file, or the connection URL. */
+  arg: string | null;
   line: number;
 }
 
@@ -89,6 +168,10 @@ export interface PyFile {
   defs?: PyDef[];
   calls?: PyCall[];
   subscripts?: PySubscript[];
+  aliases?: PyAlias[];
+  bindings?: PyBinding[];
+  routers?: PyRouter[];
+  constants?: PyConstant[];
   uses?: string[];
   /** Line of a module-level `if __name__ == "__main__":` — this file is meant to be run. */
   main?: number | null;

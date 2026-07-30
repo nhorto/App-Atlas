@@ -23,6 +23,8 @@ import type {
   TypeMeta,
 } from './types.js';
 import type { AtlasGraph } from './graph.js';
+import { classifyOpenDoors, isAuthRelevant, unreadableFiles } from './exposure.js';
+import type { OpenVerdict } from './exposure.js';
 
 /** How sure we are that something is checking who is calling. */
 export type Protection = 'protected' | 'likely' | 'open';
@@ -37,6 +39,12 @@ export interface RouteInsight {
   /** The handler writes data — an open door here is worth more attention. */
   writes: boolean;
   protection: Protection;
+  /**
+   * When nothing checks this door, what explains it — a page, the sign-in mount, or a
+   * file we could not read. `null` when something does check it, and `worth-a-look`
+   * when nothing explains it. See `exposure.ts`.
+   */
+  open: OpenVerdict | null;
   guards: GuardInfo[];
   sites: CodeSite[];
 }
@@ -93,7 +101,17 @@ export interface InsightsView {
     total: number;
     protectedCount: number;
     likelyCount: number;
+    /** Nothing checks it and nothing explains why. The number worth reading. */
     openCount: number;
+    /** Unchecked with a reason — a page, or the door people sign in through. */
+    publicCount: number;
+    /** Unchecked, but a file they import could not be read. Unknown, not open. */
+    unreadableCount: number;
+    /**
+     * Every file that could not be parsed. Present even when no route imports one,
+     * because "I could not read 3 files" is a caveat on every number on this page.
+     */
+    unread: { path: string; because: string }[];
     /** Open doors that write data, first. */
     routes: RouteInsight[];
   };
@@ -117,11 +135,11 @@ export interface InsightsView {
   };
 }
 
-/** Doors a stranger on the internet can knock on. Crons and queues are not. */
-const AUTH_RELEVANT: EndpointKind[] = ['http-route', 'server-action', 'realtime'];
 
 export function buildInsights(graph: AtlasGraph): InsightsView {
   const endpoints = graph.nodesOfKind('endpoint');
+  const nodes = graph.allNodes();
+  const openDoors = classifyOpenDoors(nodes, graph.allEdges());
 
   const routes: RouteInsight[] = [];
   let envMeta: EndpointMeta | null = null;
@@ -132,7 +150,7 @@ export function buildInsights(graph: AtlasGraph): InsightsView {
       envMeta = meta;
       continue;
     }
-    if (!AUTH_RELEVANT.includes(meta.endpointKind)) continue;
+    if (!isAuthRelevant(meta)) continue;
 
     routes.push({
       id: node.id,
@@ -143,6 +161,7 @@ export function buildInsights(graph: AtlasGraph): InsightsView {
       framework: meta.framework,
       writes: meta.writes,
       protection: protectionOf(meta.guards),
+      open: openDoors.get(node.id) ?? null,
       guards: meta.guards,
       sites: meta.sites,
     });
@@ -150,12 +169,18 @@ export function buildInsights(graph: AtlasGraph): InsightsView {
 
   routes.sort(byUrgency);
 
+  const openOfKind = (kind: OpenVerdict['kind']) =>
+    routes.filter((route) => route.open?.kind === kind).length;
+
   return {
     auth: {
       total: routes.length,
       protectedCount: routes.filter((route) => route.protection === 'protected').length,
       likelyCount: routes.filter((route) => route.protection === 'likely').length,
-      openCount: routes.filter((route) => route.protection === 'open').length,
+      openCount: openOfKind('worth-a-look'),
+      publicCount: openOfKind('page') + openOfKind('auth-mount'),
+      unreadableCount: openOfKind('unreadable'),
+      unread: unreadableFiles(nodes),
       routes,
     },
     services: buildServices(graph),
@@ -212,15 +237,25 @@ function protectionOf(guards: GuardInfo[]): Protection {
 }
 
 /**
- * An open door that writes data comes first, then open doors, then the rest. This is
- * the order someone should read the list in, so it is the order we return it in.
+ * The order someone should read the list in, so it is the order we return it in:
+ * unexplained open doors that write data, then the rest of the unexplained ones, then
+ * the ones we could not examine — an admission of ignorance outranks any reassurance
+ * — then the checks we are less sure of, and only then the doors that are open for a
+ * reason and the doors that are shut.
  */
 function byUrgency(a: RouteInsight, b: RouteInsight): number {
   const rank = (route: RouteInsight): number => {
-    if (route.protection === 'open' && route.writes) return 0;
-    if (route.protection === 'open') return 1;
-    if (route.protection === 'likely') return 2;
-    return 3;
+    switch (route.open?.kind) {
+      case 'worth-a-look':
+        return route.writes ? 0 : 1;
+      case 'unreadable':
+        return 2;
+      case 'page':
+      case 'auth-mount':
+        return 4;
+      default:
+        return route.protection === 'likely' ? 3 : 5;
+    }
   };
   return rank(a) - rank(b) || (a.route ?? a.name).localeCompare(b.route ?? b.name);
 }
@@ -269,8 +304,11 @@ function buildEnv(meta: EndpointMeta | null): InsightsView['env'] {
     total: vars.length,
     // Secrets first: a missing `.env.example` entry for an API key is a different
     // problem from a missing entry for a feature flag.
+    // Platform variables are excluded, not hidden: they still appear in the full list,
+    // badged as set by the host. What they must not do is inflate a count whose whole
+    // meaning is "you forgot to write these down".
     undocumented: vars
-      .filter((entry) => !entry.documented)
+      .filter((entry) => !entry.documented && !entry.platform)
       .sort((a, b) => Number(b.secret) - Number(a.secret) || a.name.localeCompare(b.name)),
     vars,
   };

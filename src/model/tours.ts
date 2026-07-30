@@ -16,6 +16,7 @@
  * Nothing in this file calls a model. Tours are free, work offline, and are the same
  * on every run.
  */
+import { authHeadline } from './exposure.js';
 import type { AtlasGraph } from './graph.js';
 import type { AtlasNode, EndpointMeta, ServiceMeta, StoreMeta, SummarySource } from './types.js';
 
@@ -45,7 +46,7 @@ export interface Tour {
   steps: TourStep[];
 }
 
-/** How many flows to offer. More than a handful stops being a suggestion. */
+/** How many flows to offer up front. More than a handful stops being a suggestion. */
 const MAX_FLOW_TOURS = 5;
 const MAX_TRACE_DEPTH = 3;
 const MAX_TRACED_NODES = 40;
@@ -60,12 +61,47 @@ export function buildTours(graph: AtlasGraph): Tour[] {
   return tours;
 }
 
+/**
+ * The walkthrough for whatever the reader just opened, built when they open it.
+ *
+ * The offered list is short on purpose — five suggestions is a suggestion and twenty-four
+ * is a directory — but "we only suggested five" was silently becoming "only five exist".
+ * A reader who searched their way to the twelfth route found no button and no reason
+ * given, which reads as *this door is not worth explaining*.
+ *
+ * Given a door, this is its own flow. Given a file or a function, it is the flow of the
+ * door that leads there — the question somebody looking at `checkout.ts` is actually
+ * asking is what reaches it. Exactly one door or nothing: two doors is two answers, and
+ * picking one of them would be inventing the reader's question for them.
+ */
+export function tourFor(graph: AtlasGraph, nodeId: string): Tour | null {
+  const node = graph.getNodeById(nodeId);
+  if (!node) return null;
+
+  const door = node.kind === 'endpoint' ? node : theDoorThatLeadsHere(graph, node);
+  if (!door) return null;
+
+  const tour = flowTour(graph, door);
+  return tour && tour.steps.length >= 2 ? tour : null;
+}
+
+function theDoorThatLeadsHere(graph: AtlasGraph, node: AtlasNode): AtlasNode | null {
+  const doors = graph
+    .edgesTo(node.id)
+    .filter((edge) => edge.kind === 'exposed-by')
+    .map((edge) => graph.getNodeById(edge.fromId))
+    .filter((found): found is AtlasNode => found?.kind === 'endpoint');
+  const distinct = new Map(doors.map((found) => [found.id, found]));
+  return distinct.size === 1 ? [...distinct.values()][0] : null;
+}
+
 // ---------------------------------------------------------------------------
 // Welcome to your codebase
 // ---------------------------------------------------------------------------
 
 function welcomeTour(graph: AtlasGraph): Tour {
   const stats = graph.meta.stats;
+  const auth = authHeadline(stats);
   const app = graph.getNodeById(graph.rootId) ?? null;
   const overview = graph.getOverview();
   // Sorted by size, because the welcome step introduces them as "the biggest" —
@@ -108,11 +144,10 @@ function welcomeTour(graph: AtlasGraph): Tour {
         ? 'App Atlas found no routes, webhooks or scheduled jobs — nothing here answers the outside world directly.'
         : [
             `${sentenceCase(countOf(stats.endpoints, 'way'))} in: ${describeDoors(endpoints)}.`,
-            stats.routes === 0
-              ? null
-              : stats.unprotectedRoutes === 0
-                ? `Every one of the ${stats.routes} a stranger can reach has an auth check.`
-                : `${stats.unprotectedRoutes} of the ${stats.routes} a stranger can reach have no auth check App Atlas can see.`,
+            auth ? `${sentenceCase(auth.headline)}.` : null,
+            // Only the first caveat: a walkthrough card is three lines, and the
+            // security screen is where the full accounting belongs.
+            auth?.caveats[0] ? `${sentenceCase(auth.caveats[0])}.` : null,
           ]
             .filter(Boolean)
             .join(' '),
@@ -121,7 +156,7 @@ function welcomeTour(graph: AtlasGraph): Tour {
     focusIds: endpoints.slice(0, 12).map((node) => node.id),
     levelId: graph.rootId,
     codeId: null,
-    tone: stats.unprotectedRoutes > 0 ? 'warn' : undefined,
+    tone: auth?.tone === 'warn' ? 'warn' : undefined,
   });
 
   if (modules.length > 0) {

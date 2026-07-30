@@ -210,6 +210,16 @@ export function describeRun(report: EnrichReport): string[] {
   if (report.failedRequests > 0) {
     lines.push(`  ${report.failedRequests} of ${report.requests} requests failed, so some descriptions are missing.`);
   }
+  if (report.contradictions.length > 0) {
+    // The paragraph and the diagram are drawn from the same list and shown together, so
+    // a company in one and not the other is visible to the reader before it is visible
+    // to us. Nothing here changes a box — a generated sentence is not evidence — but a
+    // lead this specific is worth printing.
+    lines.push(
+      `  The description names ${report.contradictions.join(', ')}, which no detector found.`,
+      '  Either the write-up over-reached or something real is missing from the map.',
+    );
+  }
   // A pass that ran and produced nothing usable has to say so. Silence here reads as
   // "there was nothing to describe", which is the opposite of what happened.
   if (written === 0 && report.requests > 0 && report.failedRequests === 0) {

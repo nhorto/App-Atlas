@@ -151,6 +151,16 @@ export class AtlasGraph {
     return out.sort((a, b) => a.id.localeCompare(b.id));
   }
 
+  /** Everything, for the passes that ask a question of the whole atlas at once. */
+  allNodes(): AtlasNode[] {
+    return [...this.nodes.values()];
+  }
+
+  /** Every edge except containment, which is the tree rather than a relationship. */
+  allEdges(): AtlasEdge[] {
+    return this.relations;
+  }
+
   edgesFrom(id: string): AtlasEdge[] {
     return this.outgoing.get(id) ?? [];
   }

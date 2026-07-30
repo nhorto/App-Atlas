@@ -79,6 +79,10 @@ export function buildExportDoors({ nodes, appId }: ExportDoorInput): BoundaryGra
  * listing both would count one commitment twice.
  */
 function isExported(node: AtlasNode): boolean {
+  // A helper a test file exports is not something anyone imports on purpose.
+  // FastAPI's template offered `randomEmail` and `findLastEmail` as part of its public
+  // API; psf/requests offered its fixtures. Nobody's semver depends on those (#25).
+  if (node.zone === 'test') return false;
   if (node.kind === 'function') {
     const meta = node.meta as unknown as FunctionMeta;
     return meta.isExported === true && meta.isMethod !== true;

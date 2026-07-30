@@ -1,0 +1,11 @@
+{
+  "name": "exposure-fixture",
+  "private": true,
+  "version": "0.0.0",
+  "dependencies": {
+    "@prisma/client": "^6.0.0",
+    "next": "^15.0.0",
+    "next-auth": "^4.24.0",
+    "react": "^19.0.0"
+  }
+}

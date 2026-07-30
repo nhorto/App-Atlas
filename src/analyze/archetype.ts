@@ -40,6 +40,22 @@ const UI_FRAMEWORKS = new Set([
   'Electron',
 ]);
 
+/**
+ * Libraries whose file I/O is somebody working through a dataset rather than an app
+ * keeping state. Read off the stores the data detectors found, which is why this
+ * archetype could not exist until they could see a `pd.read_csv`.
+ */
+const ANALYSIS_CLIENTS = new Set(['pandas', 'polars', 'NumPy', 'joblib', 'PyTorch']);
+
+/**
+ * Command-line doors somebody designed, as opposed to a file that merely can be run.
+ *
+ * An argument parser is an interface: someone wrote down the flags. `__main__` is a
+ * Python idiom that also appears at the bottom of library modules nobody runs, so it
+ * cannot outrank a repo that declares itself a package.
+ */
+const DECLARED_CLI = new Set(['argparse', 'Click', 'Typer', 'Node']);
+
 export interface ArchetypeInput {
   project: ProjectInfo;
   nodes: AtlasNode[];
@@ -70,10 +86,33 @@ export function classifyArchetype({ project, nodes }: ArchetypeInput): Archetype
     return verdict('service', 'A service other things call', because);
   }
 
-  // No network doors and nobody looking at it: the remaining question is whether this
-  // runs, or gets imported.
-  if (doors.cli > 0 || bin.length > 0) {
-    if (doors.cli > 0) because.push(plural(doors.cli, 'command-line entry point'));
+  // No network doors and nobody looking at it. The remaining question is what the code
+  // is *for*, and a repo whose inputs are datasets answers it before the others do:
+  // a notebook is not a script that happens to run, and its functions are not an API.
+  const analysis = readsDatasets(nodes, project);
+  if (analysis.length > 0) {
+    because.push(...analysis);
+    if (doors.declaredCli > 0) because.push(plural(doors.declaredCli, 'command-line entry point'));
+    return verdict('analysis', 'Code that turns data into answers', because);
+  }
+
+  // A single-page app routes in the browser, so it has no door on the file system and
+  // nothing above catches it. `full-stack-fastapi-template`'s React frontend was filed
+  // under "Code other code imports", with two hundred and thirty-five of its own
+  // components listed as the public API nobody imports.
+  //
+  // What keeps a component library out is the manifest: `packages/ui` says where to
+  // import it from, and an app that is only ever built and served does not.
+  if (uiFrameworks.length > 0 && hasUiFiles && !project.signals.declaresAPackage) {
+    because.push(uiFrameworks.join(', '));
+    because.push('routes in the browser, not on the file system');
+    return verdict('web-app', 'An app with a front end', because);
+  }
+
+  // Otherwise: does this run, or does it get imported? A designed command line settles
+  // it outright.
+  if (doors.declaredCli > 0 || bin.length > 0) {
+    if (doors.declaredCli > 0) because.push(plural(doors.declaredCli, 'command-line entry point'));
     if (bin.length > 0) because.push(`${plural(bin.length, 'command')} in package.json`);
     if (doors.scheduled > 0) because.push(plural(doors.scheduled, 'scheduled job'));
     because.push('nothing answers a URL');
@@ -86,9 +125,25 @@ export function classifyArchetype({ project, nodes }: ArchetypeInput): Archetype
     return verdict('pipeline', 'Something you run', because);
   }
 
+  // `if __name__ == "__main__":` says a file *can* be run. So can the two files in
+  // `psf/requests` that have one left over from debugging, which was enough to file the
+  // most-imported library in Python under "Something you run". A manifest that says
+  // "install me and import me" is a decision somebody wrote down, and it outranks an
+  // idiom. Without one, a folder of runnable scripts is exactly what this is.
+  if (doors.runnableFiles > 0 && !project.signals.declaresAPackage) {
+    because.push(plural(doors.runnableFiles, 'file you run directly', 'files you run directly'));
+    because.push('nothing answers a URL');
+    return verdict('pipeline', 'Something you run', because);
+  }
+
   if (exported > 0) {
-    because.push(plural(exported, 'exported name'));
-    because.push('no doors of any kind');
+    // Files, not names — `countExports` counts modules on purpose, and "28 exported
+    // names" sat one line under a headline reading "118 names in its public API".
+    because.push(plural(exported, 'file other code can import', 'files other code can import'));
+    if (doors.runnableFiles > 0) because.push(plural(doors.runnableFiles, 'file you can also run directly', 'files you can also run directly'));
+    // Not "no doors of any kind": a library's exported names *become* doors a moment
+    // from now, and the screen that says so is the same screen this sentence sits on.
+    because.push('nothing answers a URL');
     return verdict('library', 'Code other code imports', because);
   }
 
@@ -102,21 +157,60 @@ export function classifyArchetype({ project, nodes }: ArchetypeInput): Archetype
 interface DoorCounts {
   network: number;
   screen: number;
-  cli: number;
+  /** A command line somebody designed: an argument parser, or a declared `bin`. */
+  declaredCli: number;
+  /** A file that merely can be run — `if __name__ == "__main__":` and nothing more. */
+  runnableFiles: number;
   scheduled: number;
 }
 
 function countDoors(nodes: AtlasNode[]): DoorCounts {
-  const counts: DoorCounts = { network: 0, screen: 0, cli: 0, scheduled: 0 };
+  const counts: DoorCounts = { network: 0, screen: 0, declaredCli: 0, runnableFiles: 0, scheduled: 0 };
   for (const node of nodes) {
     if (node.kind !== 'endpoint') continue;
-    const kind = (node.meta as unknown as EndpointMeta).endpointKind;
+    const meta = node.meta as unknown as EndpointMeta;
+    const kind = meta.endpointKind;
     if (NETWORK_DOORS.has(kind)) counts.network++;
     else if (kind === 'screen') counts.screen++;
-    else if (kind === 'cli') counts.cli++;
-    else if (kind === 'cron' || kind === 'queue') counts.scheduled++;
+    else if (kind === 'cli') {
+      if (DECLARED_CLI.has(meta.framework)) counts.declaredCli++;
+      else counts.runnableFiles++;
+    } else if (kind === 'cron' || kind === 'queue') counts.scheduled++;
   }
   return counts;
+}
+
+/**
+ * Whether this repo's inputs are datasets, and the evidence for saying so.
+ *
+ * Two signals, either of which is enough. A notebook *is* an analysis — nobody writes
+ * one to ship it. And a store the code reads whose client is pandas or NumPy is a
+ * dataset going in, which is the thing this archetype exists to put on the left-hand
+ * side of the boundary screen.
+ *
+ * The read matters. A library that writes a CSV is not doing analysis; one that opens
+ * somebody's data and works through it is.
+ */
+function readsDatasets(nodes: AtlasNode[], project: ProjectInfo): string[] {
+  // A repo that ships as a package is what its manifest says it is. The notebook in it
+  // is a demo, and the CSV it reads is an example — neither is what the code is for.
+  if (project.signals.declaresAPackage) return [];
+
+  const because: string[] = [];
+
+  const notebooks = project.files.filter((file) => file.relPath.endsWith('.ipynb')).length;
+  if (notebooks > 0) because.push(plural(notebooks, 'notebook'));
+
+  const clients = new Set<string>();
+  for (const node of nodes) {
+    if (node.kind !== 'store') continue;
+    const meta = node.meta as { client?: unknown; reads?: unknown };
+    if (typeof meta.client !== 'string' || !ANALYSIS_CLIENTS.has(meta.client)) continue;
+    if (typeof meta.reads === 'number' && meta.reads > 0) clients.add(meta.client);
+  }
+  if (clients.size > 0) because.push(`reads data files with ${[...clients].sort().join(', ')}`);
+
+  return because.length > 0 ? because : [];
 }
 
 /**

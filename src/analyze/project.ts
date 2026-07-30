@@ -13,6 +13,7 @@ import type { Zone } from '../model/types.js';
 import { relPosix, toPosix } from '../util/paths.js';
 import { readSignals } from './signals.js';
 import type { ProjectSignals } from './signals.js';
+import { isWorker } from './wrangler.js';
 import { classifyZone } from './zones.js';
 
 export interface SourceFileRef {
@@ -30,7 +31,14 @@ export interface ProjectInfo {
   frameworks: string[];
   /** What the config files say: routers, crons, the database engine, `.env.example`. */
   signals: ProjectSignals;
-  /** Workspace globs, if this looks like a monorepo. Informational in M1. */
+  /**
+   * Workspace globs, if this looks like a monorepo.
+   *
+   * No warning goes with them any more. It used to say per-app scopes were still to
+   * come, and it was printed at the top of a run that had just listed the apps by name
+   * — a warning that contradicts the screen it is on teaches the reader to skip the
+   * warnings, which is where the real ones live.
+   */
   workspaces: string[];
   /** Extra patterns the caller asked to leave out. Part of the cache fingerprint. */
   ignored: string[];
@@ -42,9 +50,9 @@ export interface DiscoverOptions {
   extraIgnores?: string[];
 }
 
-const SOURCE_GLOB = '**/*.{ts,tsx,mts,cts,js,jsx,mjs,cjs,py,pyi,ipynb}';
+export const SOURCE_GLOB = '**/*.{ts,tsx,mts,cts,js,jsx,mjs,cjs,py,pyi,ipynb}';
 
-const DEFAULT_IGNORES = [
+export const DEFAULT_IGNORES = [
   '**/node_modules/**',
   '**/.git/**',
   '**/.app-atlas/**',
@@ -124,11 +132,6 @@ export async function discoverProject(rootInput: string, options: DiscoverOption
   const tsConfigPath = findTsConfig(root);
   const signals = readSignals(root, packageJson);
   const workspaces = readWorkspaces(root, packageJson);
-  if (workspaces.length > 0) {
-    warnings.push(
-      `This looks like a monorepo (${workspaces.length} workspace globs). M1 analyzes the whole tree as one atlas; per-app scopes arrive in M5.`,
-    );
-  }
 
   const found = await fg(SOURCE_GLOB, {
     cwd: root,
@@ -224,7 +227,7 @@ function detectFrameworks(pkg: Record<string, unknown> | null, signals: ProjectS
   if (signals.crons.length > 0) out.add('Vercel Cron');
   // A wrangler config is the only place a Cloudflare deploy is written down; the
   // dependency list often does not mention it at all.
-  if (signals.workers.some((w) => !w.isPages && w.entry)) out.add('Cloudflare Workers');
+  if (signals.workers.some(isWorker)) out.add('Cloudflare Workers');
   if (signals.workers.some((w) => w.isPages)) out.add('Cloudflare Pages');
   for (const [dep, label] of Object.entries(PYTHON_FRAMEWORKS)) {
     if (signals.pythonPackages.has(dep)) out.add(label);

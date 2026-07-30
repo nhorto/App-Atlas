@@ -11,7 +11,7 @@
  */
 import { Node } from 'ts-morph';
 import type { SourceFile } from 'ts-morph';
-import { authDetector, middlewareDetector } from './auth.js';
+import { authDetector, middlewareDetector, wiredGuardDetector } from './auth.js';
 import { argAt, dottedName, isBareSpecifier, literalString, packageRoot, snippetOf } from './ast.js';
 import { storeDetector } from './data.js';
 import { envDetector } from './env.js';
@@ -42,6 +42,7 @@ const DETECTORS: BoundaryDetector[] = [
   outboundDetector,
   authDetector,
   middlewareDetector,
+  wiredGuardDetector,
   envDetector,
 ];
 

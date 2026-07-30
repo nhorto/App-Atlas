@@ -23,9 +23,13 @@ import type {
 import { zoneLabel } from './AtlasNodeCard';
 import { Summary, TrustLabel } from './Trust';
 
+/** Which screen the panel is sitting beside — the instructions differ per screen. */
+export type PanelView = 'boundaries' | 'overview' | 'map' | 'types' | 'insights';
+
 interface Props {
   detail: NodeView | null;
   overview: OverviewView | null;
+  view: PanelView;
   aiEnabled: boolean;
   /** The walkthrough that starts at this node, when there is one. */
   tour: Tour | null;
@@ -35,12 +39,12 @@ interface Props {
   onClose: () => void;
 }
 
-export function DetailPanel({ detail, overview, aiEnabled, tour, onReveal, onDrill, onStartTour, onClose }: Props) {
+export function DetailPanel({ detail, overview, view, aiEnabled, tour, onReveal, onDrill, onStartTour, onClose }: Props) {
   // A description generated from this panel has to appear in this panel, and the atlas
   // on the server is the copy that got updated — not the one we were handed.
   const [written, setWritten] = useState<{ id: string; text: string } | null>(null);
 
-  if (!detail) return <OverviewPanel overview={overview} onReveal={onReveal} />;
+  if (!detail) return <OverviewPanel overview={overview} view={view} onReveal={onReveal} />;
 
   const node =
     written && written.id === detail.node.id
@@ -67,10 +71,16 @@ export function DetailPanel({ detail, overview, aiEnabled, tour, onReveal, onDri
             Look inside →
           </button>
         ) : null}
-        {/* SPEC.md 6.5's "explain like I'm new": the same facts, walked instead of listed. */}
+        {/* SPEC.md 6.5's "explain like I'm new": the same facts, walked instead of listed.
+            When the walk belongs to a door the reader did not click — they opened the
+            file that answers it — the button says whose walk it is, because "walk me
+            through what happens" beside a helper function is a promise about the wrong
+            thing. */}
         {tour ? (
           <button className="btn-tour" onClick={() => onStartTour(tour.id)}>
-            Walk me through what happens →
+            {tour.id === `tour:${node.id}`
+              ? 'Walk me through what happens →'
+              : `Walk me through ${lowerFirst(tour.title)} →`}
           </button>
         ) : null}
       </header>
@@ -297,7 +307,9 @@ function EnvVars({ node }: { node: AtlasNode }) {
   const meta = node.meta as unknown as EndpointMeta;
   const vars = meta.vars ?? [];
   if (vars.length === 0) return null;
-  const undocumented = vars.filter((entry) => !entry.documented).length;
+  // `NODE_ENV` and `PORT` are set by whatever runs the app, so counting them here
+  // would put the reader on a hunt for something nobody forgot.
+  const undocumented = vars.filter((entry) => !entry.documented && !entry.platform).length;
 
   return (
     <Section
@@ -317,7 +329,9 @@ function EnvVars({ node }: { node: AtlasNode }) {
                 {entry.sites.length} {entry.sites.length === 1 ? 'read' : 'reads'}
               </td>
               <td>
-                {meta.envExample ? (
+                {entry.platform ? (
+                  <span className="badge badge-public">set by the platform</span>
+                ) : meta.envExample ? (
                   <span className={`badge badge-${entry.documented ? 'protected' : 'open'}`}>
                     {entry.documented ? 'documented' : 'missing'}
                   </span>
@@ -394,7 +408,36 @@ function Section({ title, hint, children }: { title: string; hint?: string; chil
   );
 }
 
-function OverviewPanel({ overview, onReveal }: { overview: OverviewView | null; onReveal: (id: string) => void }) {
+/**
+ * What to do next, on the screen the reader is actually looking at.
+ *
+ * The old text described the Map's `›` button and its breadcrumb from every screen,
+ * including three that have neither. Instructions for a control that is not on the
+ * page are worse than no instructions: the reader hunts for it, does not find it, and
+ * now has a reason to doubt everything else the panel says.
+ */
+function howToRead(view: PanelView): string {
+  switch (view) {
+    case 'boundaries':
+      return 'Click a card to see what it is and what it connects to. A card that stands for several things opens the list, so you choose which one.';
+    case 'types':
+      return 'Click a shape to see its fields and everywhere it is used.';
+    case 'insights':
+      return 'Click a route or a variable to see the code behind it.';
+    default:
+      return 'Click any box to see what it is and what it connects to. Press its › button to look inside, and the breadcrumb above to come back out.';
+  }
+}
+
+function OverviewPanel({
+  overview,
+  view,
+  onReveal,
+}: {
+  overview: OverviewView | null;
+  view: PanelView;
+  onReveal: (id: string) => void;
+}) {
   if (!overview) return <aside className="panel" />;
   const { meta, busiestFiles } = overview;
   const documented = meta.stats.files > 0 ? Math.round((meta.stats.documentedFiles / meta.stats.files) * 100) : 0;
@@ -410,10 +453,11 @@ function OverviewPanel({ overview, onReveal }: { overview: OverviewView | null; 
       </header>
 
       <section className="panel-section">
-        <p className="summary-empty">
-          Click any box to see what it is and what it connects to. Press its <strong>›</strong> button to look
-          inside, and the breadcrumb above to come back out.
-        </p>
+        {/* The panel sits beside four different screens, and only one of them has a
+            `›` button and a breadcrumb. Telling somebody on the Boundaries screen to
+            press a control that is not there is a small thing that makes them doubt
+            the rest of the panel. */}
+        <p className="summary-empty">{howToRead(view)}</p>
       </section>
 
       <section className="panel-section">
@@ -499,6 +543,11 @@ function edgeWord(kind: string): string {
     default:
       return 'uses';
   }
+}
+
+/** A tour title dropped into the middle of a sentence: "Walk me through what happens…". */
+function lowerFirst(text: string): string {
+  return text.charAt(0).toLowerCase() + text.slice(1);
 }
 
 function kindWord(node: AtlasNode): string {

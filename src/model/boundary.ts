@@ -26,6 +26,8 @@ import type {
   StoreMeta,
   Zone,
 } from './types.js';
+import { classifyOpenDoors } from './exposure.js';
+import type { OpenVerdict } from './exposure.js';
 import type { AtlasGraph } from './graph.js';
 
 export interface BoundaryCard {
@@ -37,6 +39,12 @@ export interface BoundaryCard {
   count: number;
   /** The atlas nodes it represents, so clicking it can open the real thing. */
   memberIds: string[];
+  /**
+   * Those same nodes with their names, so a card standing for fourteen pages can list
+   * the fourteen instead of silently opening one of them (#30). Only carried when the
+   * card is a group; a card that *is* a node has nothing to expand into.
+   */
+  members?: { id: string; name: string }[];
   /** Set when every member is one node — the card *is* that node. */
   nodeId: string | null;
   /** Endpoint family or service category, for the icon and grouping. */
@@ -96,6 +104,7 @@ const CAPTIONS: Record<Archetype, BoundaryCaptions> = {
   service: { inputs: 'What calls it', app: 'Your service', outputs: 'Where data goes' },
   library: { inputs: 'What consumers can call', app: 'Your library', outputs: 'What it reaches for' },
   pipeline: { inputs: 'What it reads', app: 'Your code', outputs: 'What it writes' },
+  analysis: { inputs: 'Where the data comes from', app: 'The analysis', outputs: 'What it produces' },
   unknown: { inputs: 'What gets in', app: 'Your code', outputs: 'Where data goes' },
 };
 
@@ -134,7 +143,9 @@ const INPUT_FAMILIES: InputFamily[] = [
   },
   { family: 'cli', label: 'Command line', kinds: ['cli'] },
   { family: 'env', label: 'Environment & config', kinds: ['env'] },
-  { family: 'files', label: 'Files on disk', kinds: ['file-read'] },
+  // `file-read` is deliberately absent: the filesystem is a store, and it was a door
+  // and a store at once, both drawn and both called "Files on disk". Old atlases still
+  // carry the kind, so the type keeps it; nothing emits it any more.
 ];
 
 const ZONE_ORDER: Zone[] = ['ui', 'api', 'logic', 'data', 'config', 'test', 'unknown'];
@@ -159,10 +170,30 @@ export function buildBoundaryView(graph: AtlasGraph): BoundaryView {
   const flows: BoundaryFlow[] = [];
   const zoneWeights = new Map<Zone, number>();
 
-  const inputs = buildInputs(graph, endpoints, flows, zoneWeights);
-  const outputs = buildOutputs(graph, services, stores, flows, zoneWeights);
-
+  // Card badges and the summary line under them have to be counting the same thing,
+  // or the screen argues with itself: "8 open" on the Pages card above "1 route has
+  // no auth check" is a reader's first reason to distrust both (#24).
+  const openDoors = classifyOpenDoors(graph.allNodes(), graph.allEdges());
   const archetype = graph.meta.archetype?.archetype;
+
+  // For an app, the request comes first and the database is somewhere data is put. For
+  // an analysis, the data comes first: the file is where the work starts, and the whole
+  // left-hand column is the answer to "where did this come from". The pipeline caption
+  // has promised "What it reads" since the archetypes were built, and until now that
+  // column held environment variables.
+  const readsFirst = archetype === 'analysis' || archetype === 'pipeline';
+  const sources = readsFirst ? stores.filter((node) => (node.meta as unknown as StoreMeta).reads > 0) : [];
+  const sourceIds = new Set(sources.map((node) => node.id));
+
+  const inputs = [
+    ...buildInputs(graph, endpoints, flows, zoneWeights, openDoors),
+    ...buildSources(graph, sources, flows, zoneWeights),
+  ];
+  // A store that is read and never written belongs on the left and nowhere else. One
+  // that is both is genuinely both, and saying so twice — "6 reads" in, "1 write" out —
+  // is the shape of the work rather than a duplicate.
+  const kept = stores.filter((node) => !sourceIds.has(node.id) || (node.meta as unknown as StoreMeta).writes > 0);
+  const outputs = buildOutputs(graph, services, kept, flows, zoneWeights);
 
   return {
     appName: graph.meta.name,
@@ -191,6 +222,7 @@ function buildInputs(
   endpoints: AtlasNode[],
   flows: BoundaryFlow[],
   zoneWeights: Map<Zone, number>,
+  openDoors: Map<string, OpenVerdict>,
 ): BoundaryCard[] {
   const cards: BoundaryCard[] = [];
 
@@ -207,7 +239,7 @@ function buildInputs(
     for (const node of members) {
       const meta = node.meta as unknown as EndpointMeta;
       paths += Math.max(1, meta.sites.length);
-      if (meta.guards.length === 0) open++;
+      if (openDoors.get(node.id)?.kind === 'worth-a-look') open++;
 
       // A door's flow lands in the zone of whatever code answers it.
       for (const edge of graph.edgesFrom(node.id)) {
@@ -229,6 +261,7 @@ function buildInputs(
       detail: inputDetail(family, members),
       count: paths,
       memberIds: members.map((node) => node.id),
+      members: members.length > 1 ? members.map((node) => ({ id: node.id, name: node.name })) : undefined,
       nodeId: members.length === 1 ? members[0].id : null,
       family,
       openCount: isAuthFamily(family) ? open : undefined,
@@ -236,6 +269,44 @@ function buildInputs(
   }
 
   return cards;
+}
+
+/**
+ * The stores an analysis or a pipeline reads, drawn as the inputs they are.
+ *
+ * Same node as the output card when the code writes to it as well, so clicking either
+ * lands on the same box on the Map. Only the direction differs, because only the
+ * direction did.
+ */
+function buildSources(
+  graph: AtlasGraph,
+  sources: AtlasNode[],
+  flows: BoundaryFlow[],
+  zoneWeights: Map<Zone, number>,
+): BoundaryCard[] {
+  return sources.map((node) => {
+    const meta = node.meta as unknown as StoreMeta;
+    const id = `input:${node.id}`;
+
+    for (const edge of graph.edgesTo(node.id)) {
+      if (edge.kind !== 'reads-from') continue;
+      const zone = graph.getNodeById(edge.fromId)?.zone;
+      if (zone) addFlow(flows, zoneWeights, id, `zone:${zone}`, edge.weight);
+    }
+    if (!flows.some((flow) => flow.fromId === id)) {
+      addFlow(flows, zoneWeights, id, `zone:${node.zone}`, meta.reads);
+    }
+
+    return {
+      id,
+      name: node.name,
+      detail: `${meta.client} · ${meta.reads} ${meta.reads === 1 ? 'read' : 'reads'}`,
+      count: meta.reads,
+      memberIds: [node.id],
+      nodeId: node.id,
+      family: 'source',
+    };
+  });
 }
 
 function isAuthFamily(family: string): boolean {
@@ -353,6 +424,7 @@ function buildOutputs(
         .join(', '),
       count: rest.reduce((sum, entry) => sum + entry.card.count, 0),
       memberIds: rest.map((entry) => entry.node.id),
+      members: rest.map((entry) => ({ id: entry.node.id, name: entry.card.name })),
       nodeId: null,
       family: 'other',
     });
@@ -367,6 +439,9 @@ function storeDetail(meta: StoreMeta): string {
     parts.push(`${meta.tables.length} ${meta.tables.length === 1 ? 'table' : 'tables'}`);
   }
   if (meta.writes > 0) parts.push(`${meta.writes} ${meta.writes === 1 ? 'write' : 'writes'}`);
+  // A store nothing writes to is still a store something reads, and a card that says
+  // only "pandas" looks like a box we could not finish.
+  else if (meta.reads > 0) parts.push(`${meta.reads} ${meta.reads === 1 ? 'read' : 'reads'}`);
   return parts.join(' · ');
 }
 
