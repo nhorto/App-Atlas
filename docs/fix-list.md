@@ -555,3 +555,112 @@ Every phase-1 "the screen says too little" finding **is** resolved by prose — 
 AI paragraph is a genuine stakeholder brief and answers all five persona questions. The
 words layer works and is cheap. What it cannot do is correct a false structural fact; it
 can only expose it, or inherit the gap and guess.
+
+---
+
+## Phase 3 — the same questions, asked of TypeScript
+
+The Python drive established where a check is actually written: on the mount, in
+middleware, on a class three links up — never in the file declaring the route. Phase 3
+asked whether TypeScript reads any of those, and it read none of them correctly. Found
+by building a fixture hostile to name-matching and then measuring against
+`lujakob/nestjs-realworld-example-app`.
+
+- [x] **35. A check on a sub-router claimed the whole application** — *Tier 1, and the
+      worst class of error this tool can make.*
+      `admin.use(requireAuth)` produces the pattern `/:path*`. Read literally that is
+      every route in the repo, so one line on one sub-router reported every door in the
+      application as protected — including the ones deliberately left open beside it.
+      The pattern is relative to a mount written in another file, and nothing put the
+      two together.
+      **Done.** Router-scoped patterns go through the same address machinery the routes
+      do, which is the only way the two can be made to agree. Three answers, because
+      there are three situations: a router something mounts gets its mounted address in
+      front of the pattern; a router nothing mounts but that hosts mounts of its own is
+      the application, and its pattern was absolute all along; a router that is neither
+      is one we cannot place, and is **dropped rather than widened** — the widened
+      version is a claim of protection over doors nobody checked.
+      *Known limit:* a router that is unreachable from any mount loses its check
+      entirely. It is unreachable from the mount graph, so there is no address at which
+      to state the claim, and inventing one is the error this item exists to remove.
+
+- [x] **36. A NestJS module's `forRoutes` was invisible** — *Tier 1.*
+      `consumer.apply(AuthMiddleware).forRoutes({ path: 'user', method: RequestMethod.GET })`
+      is how a real NestJS application locks its API, and every fact it needs lives in a
+      different file from the routes it covers: the addresses in the module, the prefix
+      in `main.ts`, and whether the applied class checks anything at all in its own file.
+      On `nestjs-realworld`: **twenty-one doors, all twenty-one reported wide open**,
+      twelve of them behind a JWT check written exactly this way.
+      **Done — 21 open of 21 → 9 of 21**, and the twelve match the twelve the modules
+      declare, line for line. The nine that remain are registration, login, the public
+      article reads and tags, which genuinely are open.
+      What counts as a check stays a fact about the code, the same rule the Python
+      extractor uses: `Doorman` is a lock because it throws a 401, and `Tally` is not one
+      because it logs — though a module applies them with the same two calls. **The
+      method is half the claim**: `articles/:slug` is guarded for PUT and DELETE and
+      public for GET, on consecutive lines of one file, and a rule that read only the
+      path would lock the public one.
+
+- [x] **37. A controller inherited a check TypeScript never followed** — *Tier 2.*
+      The mealie shape, in another language: `@UseGuards` on a base class, a controller
+      two links down, and no auth vocabulary anywhere in the controller's own file.
+      **Done**, reusing the chain walker the Python fix built — the merge layer is
+      language-neutral, so this was a matter of emitting the same findings. An inherited
+      check is never `certain`: it reaches the route through the framework's own
+      inheritance rules, and a subclass that declares guards of its own replaces them
+      rather than adding to them.
+
+- [x] **38. `./admin.routes` resolved to `./admin`** — *Tier 2, found on the way.*
+      The extension trim took everything past the last dot, so a whole file name lost its
+      last segment, the mount was dropped, and the route lost its prefix. On exactly the
+      naming convention NestJS repos are built from — `.routes`, `.controller`,
+      `.module`. **Done**: only a module extension is a module extension.
+
+### What phase 3 settled
+
+The merge layer generalises and the detectors do not. Every rule the Python drive built —
+one candidate or nothing, evidence over vocabulary, the strict rule for inheriting a check
+down a tree — worked unchanged for TypeScript; all four fixes were a matter of emitting
+the findings it already knew how to join. Six real repos measured byte-identical where no
+change was intended.
+
+---
+
+## Phase 4 — what the live re-runs found
+
+Item 22/23 left three of the four repos unverified against a real model. Running them
+found the #35 fixes holding, and one new bug that only a live run could have shown.
+
+- [x] **39. A filename full of dots was read as six sentences** — *Tier 1.*
+      powerfab-dashboard's overview reached the screen as **198 characters, cut off
+      mid-list**, reading `analyze. py, ask_compare. py, compare. py`. The model had
+      written all fourteen script names correctly; both halves of the damage were ours.
+      `cleanParagraph` split on every full stop, so each filename's dot ended a
+      "sentence" — the six-sentence cap fired after six *filenames*, and rejoining the
+      pieces with a space put one inside each name.
+      Item 24's repair for a hard-wrapped filename runs before this and could not have
+      helped: there was nothing wrong with the text when it arrived. `cleanSentence`
+      already had the right rule, with a comment explaining this exact hazard; the
+      paragraph path never used it.
+      **Done — 198 characters → 1389**, no broken names, and the two rules now share one
+      definition of where a sentence ends.
+
+### What the three re-runs settled
+
+- **taxonomy.** Every company the paragraph names — GitHub, Postmark, Stripe — is in the
+  diagram beside it, all three of three. The store and its five tables match exactly, and
+  every route named is a real door. *One slip that is not #35:* the prose says the editor
+  saves through `GET /api/posts` and `DELETE /api/posts/:postId`, where the saving routes
+  are `POST /api/posts` and `PATCH /api/posts/:postId`. Both doors it names are real; the
+  verb attached to two of them is wrong. Nothing structural is claimed that does not
+  exist.
+- **powerfab-dashboard.** No detector found an outside service, and the prose says so
+  rather than filling the gap: *"No outside service was detected, so nothing here is
+  confirmed to leave your own machines and database — though absence of a sighting is not
+  proof of absence."* It calls the store "a database" and never names an engine, which is
+  the #29/#35 pair working as designed.
+- **NBA.** *"Everything it reads and everything it writes lives in CSV files on disk;
+  there is no database behind it"*, and the missing entry point is reported as a limit of
+  what we can see rather than as an absence.
+
+**All four #35 repos are now verified against a live model**, not one.

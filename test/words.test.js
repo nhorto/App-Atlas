@@ -385,6 +385,35 @@ test('a filename split across a line break is put back together', () => {
   );
 });
 
+/**
+ * Found by re-running powerfab-dashboard against a live model.
+ *
+ * The model wrote fourteen script names correctly — `analyze.py, ask_compare.py,
+ * compare.py, …`. What reached the screen was `analyze. py, ask_compare. py` and then
+ * nothing: a 198-character paragraph cut off mid-list. Splitting on every full stop
+ * counted each filename's dot as the end of a sentence, so the six-sentence cap fired
+ * after six *filenames*, and rejoining the pieces with a space put one inside each name.
+ *
+ * Both halves of the damage came from us. The repair for a model's hard-wrapped
+ * filename runs before this and could not have helped: there was nothing wrong with the
+ * text when it arrived.
+ */
+test('a filename full of dots is not six sentences', () => {
+  const listing =
+    'Your app runs Python entry points — analyze.py, ask_compare.py, compare.py, ' +
+    'cross_model.py, flag.py, floor.py, judge.py and report.py — which score the ' +
+    'prototype. The bulk of the work sits in two folders.';
+  const out = cleanParagraph(listing);
+  assert.equal(out, listing, 'nothing was cut and no filename was broken open');
+  assert.ok(!/\w\.\s+py\b/.test(out), out);
+});
+
+test('a real paragraph is still capped at the sentence it says to cap at', () => {
+  const seven = Array.from({ length: 7 }, (_, i) => `Sentence number ${i + 1} says a thing.`).join(' ');
+  const out = cleanParagraph(seven, 3);
+  assert.equal(out, 'Sentence number 1 says a thing. Sentence number 2 says a thing. Sentence number 3 says a thing.');
+});
+
 test('rejects a folder label that just re-spells the folder name', () => {
   assert.equal(cleanLabel('User accounts', 'auth'), 'User accounts');
   assert.equal(cleanLabel('components', 'components'), null);
