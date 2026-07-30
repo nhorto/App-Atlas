@@ -6,3 +6,6 @@ dist/
 .vite/
 __pycache__/
 *.pyc
+
+# Competitor output from bake-off runs; never ours to commit.
+.codeboarding/
