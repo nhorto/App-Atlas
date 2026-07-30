@@ -329,8 +329,103 @@ accurate claim is narrower and still true:
 > badge, every table and its RLS status — came out of `--no-ai`. CodeBoarding with no
 > model produces an empty log directory.
 
-Whether its output is *better* than ours with a model is still unmeasured, and remains the
-one open item in [#12](https://github.com/nhorto/App-Atlas/issues/12).
+## CodeBoarding with a model — the comparison #12 was opened for
+
+*Two runs against the fixture, Claude Sonnet 4.6, the second with `.codeboarding/` deleted
+so nothing came from its LLM cache.*
+
+| | Run 1 | Run 2 |
+|---|---|---|
+| Wall clock | 5m 16s | 5m 42s |
+| Model calls | 32 | 37 |
+| Tokens | 215,728 | 230,291 |
+| Components | 3 | 3 |
+| Citations | 7 | 8 |
+
+For scale: App Atlas reads the same fixture in **0.4 seconds** and no tokens, and returns
+23 doors.
+
+### It is very good at the thing it does
+
+Nothing about its prose is vague, and the July write-up's implication that a model
+composing from static input would produce mush was wrong. From run 1, unedited:
+
+> …two auth patterns (requireOwner helper guard and withTeam HOF wrapper) that coexist by
+> design. Data flows from browser → route handler → lib singleton → external service
+> (Stripe, Resend, Supabase, Clerk), with the cron digest route representing a scheduled,
+> server-initiated variant of the same pattern.
+
+It identified Next.js 15 App Router, **both** auth patterns including the higher-order
+function wrapper — which it separated into its own component precisely because the wrapper
+"makes the auth check structurally invisible at the call site" — `createOrder` as
+*intentionally* unguarded, and every outbound service. It also worked out unprompted that
+the fixture is a fixture: *"a reference fixture for automated security analyzers."*
+
+That is a better paragraph than App Atlas's overview writes for the same repo.
+
+### And it cites, which corrects a claim in this document
+
+**#12 asked "does anything in its output say where a sentence came from?" The answer is
+yes.** Each component carries `key_entities` with `reference_file`, `reference_start_line`
+and `reference_end_line` — `src/lib/guards.ts:7-13`, `src/app/api/teams/route.ts:4-7`, and
+so on. Seven citations in run 1, eight in run 2.
+
+The difference from App Atlas is granularity, not presence: they cite a *component* to a
+handful of line ranges; App Atlas labels every individual sentence with whether it came
+from a docstring or a model. Both are real provenance.
+
+### Stability: the decomposition is deterministic, the words are not
+
+This was the sharpest testable claim in #12, and the result is more interesting than
+either side of it.
+
+**Component membership was byte-identical across both runs.** All three components held
+exactly the same files, in the same order, down to `supabase/functions/greet/index.ts`
+landing in the guarded core both times. Relations: 2 and 2.
+
+**Every single label changed.**
+
+| Run 1 | Run 2 |
+|---|---|
+| Guarded API & Lib Services Core | Guarded API & Dashboard Core |
+| Public Entry & Unauthenticated Server Action | Public Entry Surface |
+| Teams Route (HOF-Wrapped Guard Pattern) | Team-Scoped Route Handler |
+
+The reason is visible in their logs: clustering happens in `step_clusters_grouping` from
+static analysis, and the model is called to *name and describe* the clusters, not to form
+them. So **"ours are deterministic, theirs are LLM-composed" was wrong** and should not be
+used as a differentiator. Their structure is as reproducible as ours. What is not
+reproducible is what the structure is called — which matters to a reader who ran it twice
+and thinks the second answer describes a different app.
+
+### Where it is a different product
+
+It returned **3 components** where App Atlas returned **23 doors**. It groups files into
+architectural zones and describes them well; it does not enumerate what is reachable from
+the internet, and it puts no verdict on any of it. There is no unprotected-route count, no
+per-door badge, no RLS reading, no confidence level — and its own description of the
+guarded component is a claim *about a group of files*, not about a door.
+
+One more thing worth recording, because it bears directly on
+[Gap 1](GAPS.md): its static tier struggled badly on TypeScript. The logs show
+`Built 0 static inter-component relations from CFG edges` and nine
+`No reference found for src.app.api.orders.route.POST in any language` errors — Python-style
+dotted module paths asked of a Next.js repo. Both relations in the final output came from
+the model, not the analyzer. A tool with eight languages configured was, on this repo,
+running almost entirely on the model.
+
+### The honest scoreboard
+
+| | App Atlas | CodeBoarding |
+|---|---|---|
+| Runs with no model | **yes** | no — empty log directory |
+| Time / cost on the fixture | 0.4s, free | ~5.5 min, ~220k tokens |
+| Doors enumerated | **23** | 0 (3 component groups) |
+| Verdict on whether a door is guarded | **yes, with confidence** | no |
+| Cites its sources | yes, per sentence | yes, per component |
+| Reproducible structure | yes | **yes** |
+| Reproducible wording | yes (templated) | **no** |
+| Quality of the prose | adequate | **better** |
 
 ## What the re-run changes
 
@@ -345,6 +440,12 @@ one open item in [#12](https://github.com/nhorto/App-Atlas/issues/12).
    [LANDSCAPE.md](LANDSCAPE.md#codeatlas--this-is-the-closest-competitor-and-july-filed-it-under-naming).
    Eleven languages, per-route sequence diagrams with middleware, local, free, and
    the same headline as ours.
+5. **Drop "deterministic vs LLM-composed" from the pitch.** CodeBoarding's clustering is
+   static and reproduced byte-for-byte across two cold runs. Only the naming drifts. The
+   claim was untested when it was made and it does not survive testing.
+6. **Their prose is better than ours and that is worth studying, not defending.** The
+   thing to take is not the model — it is that they ask it to describe *a group with a
+   shape* rather than a file at a time.
 
 ---
 
