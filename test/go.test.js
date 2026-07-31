@@ -1,11 +1,12 @@
 /**
  * @fileoverview End-to-end tests for the generic tier, proved on Go.
  *
- * Three fixtures, because Go services come in shapes that break different rules.
+ * Four fixtures, because Go services come in shapes that break different rules.
  * `gohttp` uses chi, which is where sub-routers, closures and middleware live; `gostd`
  * uses nothing at all but `net/http`, which is a large fraction of real Go and would be a
  * blank page for anything that only knows frameworks; `gomount` splits its routes across
- * packages, which is what every Go service does once it outgrows one file.
+ * packages, which is what every Go service does once it outgrows one file; and `goecho`
+ * writes its route calls back to front from every other router in the language.
  *
  * Nothing here needs Go installed. The grammar is a WebAssembly file this repo ships, so
  * these run identically on a machine that has never had a Go toolchain on it — which is
@@ -21,16 +22,26 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 const CHI = path.join(here, 'fixtures', 'gohttp');
 const STDLIB = path.join(here, 'fixtures', 'gostd');
 const PACKAGES = path.join(here, 'fixtures', 'gomount');
+const ECHO = path.join(here, 'fixtures', 'goecho');
 
 const { atlas } = await analyzeProject(CHI, { followReferences: true, cache: 'off' });
 const std = (await analyzeProject(STDLIB, { followReferences: true, cache: 'off' })).atlas;
 const split = (await analyzeProject(PACKAGES, { followReferences: true, cache: 'off' })).atlas;
+const echo = (await analyzeProject(ECHO, { followReferences: true, cache: 'off' })).atlas;
 
 const find = (kind, name) => atlas.nodes.find((n) => n.kind === kind && n.name === name);
 const file = (relPath) => atlas.nodes.find((n) => n.kind === 'file' && n.path === relPath);
 const door = (source, name) => source.nodes.find((n) => n.kind === 'endpoint' && n.name === name);
 const doors = (source) => source.nodes.filter((n) => n.meta.endpointKind === 'http-route').map((n) => n.name).sort();
 const guardNames = (node) => (node.meta.guards ?? []).map((g) => g.name).sort();
+/** What a door says answers it — the thing the reader is sent to go and look at. */
+const answeredBy = (source, name) => {
+  const endpoint = door(source, name);
+  return source.edges
+    .filter((e) => e.kind === 'exposed-by' && e.fromId === endpoint.id)
+    .map((e) => source.nodes.find((n) => n.id === e.toId)?.name)
+    .sort();
+};
 
 // ---------------------------------------------------------------------------
 // Structure
@@ -200,6 +211,41 @@ test('a door whose handler we could not find inherits nothing', () => {
   const unknown = door(std, 'ANY /debug/vars');
   assert.deepEqual(guardNames(unknown), []);
   assert.equal(unknown.meta.open.kind, 'worth-a-look');
+});
+
+// ---------------------------------------------------------------------------
+// Which argument is the handler
+// ---------------------------------------------------------------------------
+
+test('Echo writes the handler before its middleware, and the door points at the handler', () => {
+  // `e.GET("/reports/:id", showReport, RequireToken)`. Read gin's way round, the last
+  // name wins and the door is sent to the lock instead of to what is behind it.
+  assert.deepEqual(echo.meta.warnings, [], 'a silent parse failure must not pass as a pass');
+  assert.deepEqual(doors(echo), ['GET /health', 'GET /reports/:id', 'POST /reports']);
+  assert.deepEqual(answeredBy(echo, 'GET /reports/:id'), ['showReport']);
+  assert.deepEqual(answeredBy(echo, 'POST /reports'), ['createReport'], 'not the last of two middlewares');
+});
+
+test('the names after an Echo handler are the checks, and only the rejecting ones count', () => {
+  // `AuditLog` and `RequireToken` are attached by the same call on the same line, and
+  // only one of them ever puts a 401 on the wire.
+  assert.deepEqual(guardNames(door(echo, 'GET /reports/:id')), ['RequireToken']);
+  assert.deepEqual(guardNames(door(echo, 'POST /reports')), ['RequireToken']);
+  assert.deepEqual(guardNames(door(echo, 'GET /health')), [], 'and a route written with no middleware has none');
+});
+
+test('a check read off an argument list is likely, and never certain', () => {
+  // Read gin's way round, Echo's middleware *is* the handler — and a guard sitting on
+  // the handler's own node comes back `certain`, the badge that means a compiler said
+  // so. The lock was real; the reason given for it was not.
+  assert.equal(door(echo, 'GET /reports/:id').meta.guards[0].confidence, 'likely');
+});
+
+test('a router handed in as a parameter still belongs to the framework that built it', () => {
+  // `registerRoutes(e *echo.Echo)` never says `echo.New()`. The type is the evidence,
+  // and it is what tells this file which end of the argument list to read.
+  assert.deepEqual(echo.meta.frameworks, ['Echo']);
+  assert.equal(door(echo, 'GET /health').meta.framework, 'Echo');
 });
 
 // ---------------------------------------------------------------------------

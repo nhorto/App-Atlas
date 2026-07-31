@@ -46,6 +46,24 @@ const METHODS = new Set(['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIO
 /** Methods that change something on the other side. */
 const WRITE_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
 
+/**
+ * Frameworks that name the handler before the checks standing in front of it.
+ *
+ * Echo's method reads `GET(path string, h HandlerFunc, m ...MiddlewareFunc)`: the handler
+ * has to come first, because the middleware is the variadic tail. gin writes the same
+ * line the other way round, `GET(path string, handlers ...HandlerFunc)` with the real
+ * handler last — and so does the standard library, and so does every router that takes
+ * exactly one argument after the path.
+ *
+ * Reading an Echo route the gin way names the last middleware as the handler. The door
+ * then points at the lock rather than at what is behind it, and the search for checks
+ * "one hop out from the handler" begins in the wrong function.
+ *
+ * Keyed on the label `frameworks.ts` gives a declared dependency, so this is a fact about
+ * what the repo's `go.mod` brings in rather than about a variable somebody named `e`.
+ */
+const HANDLER_FIRST = new Set(['Echo']);
+
 /** How the standard library and the routers register a handler without naming a verb. */
 const HANDLERS = new Set(['HandleFunc', 'Handle', 'Any', 'All', 'Match']);
 
@@ -347,9 +365,12 @@ function detectRoutes(
     //
     // Naming the *first* name as the handler put gitea's `DeleteProjectColumn` on screen
     // as the thing protecting `DELETE /projects/{id}` — a handler wearing the label of a
-    // lock, on the screen where that distinction is the whole point.
+    // lock, on the screen where that distinction is the whole point. Echo is the one
+    // framework that really does write it that way round, and it says so in `go.mod`.
     const after = call.args.slice(1).map(nameOf).filter((name): name is string => name !== null);
-    const handler = after[after.length - 1] ?? null;
+    const handlerFirst = HANDLER_FIRST.has(host.framework);
+    const handler = (handlerFirst ? after[0] : after[after.length - 1]) ?? null;
+    const middleware = handlerFirst ? after.slice(1) : after.slice(0, -1);
     const handlerScope = handler?.includes('.') ? (handler.split('.').pop() ?? null) : handler;
     const finding: EndpointFinding = {
       type: 'endpoint',
@@ -370,7 +391,7 @@ function detectRoutes(
       routerVar: host.varName,
       // Every name on the line except the handler. Whether any of them is really a check
       // is decided in the merge, against what the project's functions actually do.
-      paramTypes: after.slice(0, -1).map((name) => name.split('.').pop() ?? name),
+      paramTypes: middleware.map((name) => name.split('.').pop() ?? name),
     };
     doorsAt.set(call.startIndex, finding);
     if (call.scope) wiring.add(call.scope.split('.').pop() ?? call.scope);
