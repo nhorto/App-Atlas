@@ -49,7 +49,11 @@ export function AtlasNodeCard({ data, selected }: NodeProps) {
 
         <div className="card-head">
           <span className="card-kind">{kindGlyph(node)}</span>
-          <span className="card-name">{node.label ?? node.name}</span>
+          {/* The folder's real name leads. A generated label reads as the structure when
+              it is the only thing on the card, and a reader who wants to open "Estimating
+              Toolkit" in their editor has nothing to search for — the string is not in
+              the repo. The generated name still earns its place underneath, marked. */}
+          <span className="card-name">{node.name}</span>
           {node.drillable ? (
             // A visible way in. Double-click works too, but a button beats a gesture
             // nobody told you about.
@@ -66,6 +70,12 @@ export function AtlasNodeCard({ data, selected }: NodeProps) {
             </button>
           ) : null}
         </div>
+
+        {node.label && node.label !== node.name ? (
+          <div className="card-alias" title="Written by the AI layer, not a name in your repo">
+            {node.label} <span className="card-alias-mark">ai</span>
+          </div>
+        ) : null}
 
         <div className="card-sub">{subtitle(node)}</div>
 
