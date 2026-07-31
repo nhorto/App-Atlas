@@ -257,8 +257,12 @@ export interface RouterMountFinding {
   /** The variable being mounted *onto* — the parent in the chain. */
   hostVar: string;
   /**
-   * The file owning the mounted router, as the importing file spelled it: slashes, no
+   * Where the mounted router lives, as the importing file spelled it: slashes, no
    * extension, no `__init__`/`index`. Null when the import could not be followed.
+   *
+   * A **file** in Python and TypeScript, and a **directory** in Go, where an import names
+   * a package and every `.go` file in that folder is the package. The merge layer tries
+   * both readings, file first, so this field cannot promise which one it holds.
    *
    * Not a repo-relative path on purpose. A Python module name is relative to whichever
    * directory the app is started from, which nothing in the repo records, so the merge
