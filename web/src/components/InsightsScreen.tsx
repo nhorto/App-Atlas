@@ -38,6 +38,22 @@ export function InsightsScreen({ insights, onReveal }: Props) {
 function AuthCoverage({ auth, onReveal }: { auth: InsightsView['auth']; onReveal: (id: string) => void }) {
   const [showAll, setShowAll] = useState(false);
 
+  // Finding no doors is either good news or a report from an analyzer that had its eyes
+  // shut, and the two look identical on this page unless it says which one happened. A
+  // Python project read on a machine whose interpreter never answered lands here with
+  // every file unread and no doors at all (issue #58).
+  if (auth.total === 0 && auth.unread.length > 0) {
+    return (
+      <Card title="Who can get in" subtitle="No routes found — but not every file could be read.">
+        <p className="muted">
+          Nothing here answered a URL, and that is not the same as there being nothing to protect: the files below
+          were never read, so any door in them is missing from this page entirely.
+        </p>
+        <UnreadFiles unread={auth.unread} />
+      </Card>
+    );
+  }
+
   if (auth.total === 0) {
     return (
       <Card title="Who can get in" subtitle="No routes, pages or server actions found in this project.">
@@ -131,7 +147,7 @@ function UnreadFiles({ unread }: { unread: InsightsView['auth']['unread'] }) {
   return (
     <p className="note note-unknown">
       App Atlas could not read {unread.length} {unread.length === 1 ? 'file' : 'files'}, so anything they declare —
-      including a check — is missing from the counts above:
+      including a check — is missing from every number on this page:
       {' '}
       {unread.map((file, i) => (
         <span key={file.path}>
