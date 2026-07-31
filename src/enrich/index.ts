@@ -560,12 +560,20 @@ function collectAppFacts(atlas: Atlas, groups: Group[]): AppFacts {
   // Where the top-level folder list used to go. The groups are the same idea carried one
   // step further: they are cut to a size worth describing, and each one says which of the
   // others it feeds, which is the fact a paragraph about architecture is built out of.
-  const outline: GroupOutline[] = groups.slice(0, MAX_GROUPS_IN_OVERVIEW).map((group) => ({
-    path: group.path,
-    files: group.fileCount,
-    zone: group.zone,
-    handsOffTo: group.dependsOn.slice(0, 4).map((link) => link.toPath || 'the repo root'),
-  }));
+  // Retired folders are left out of this list and this list only. The paragraph built
+  // from it is the one that says how the app works *now*, and a model handed `parked/`
+  // beside `scripts/` will quite reasonably run a data flow through it — which is how an
+  // app's headline architecture came to start in a folder its owner had set aside. The
+  // group is still described on its own further down, where saying so is useful.
+  const outline: GroupOutline[] = groups
+    .filter((group) => !group.retired)
+    .slice(0, MAX_GROUPS_IN_OVERVIEW)
+    .map((group) => ({
+      path: group.path,
+      files: group.fileCount,
+      zone: group.zone,
+      handsOffTo: group.dependsOn.slice(0, 4).map((link) => link.toPath || 'the repo root'),
+    }));
 
   // The repo's own docstrings are the best evidence there is, and they are free.
   const existingDocs = atlas.nodes

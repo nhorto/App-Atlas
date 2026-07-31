@@ -42,6 +42,7 @@ import type {
   StoreMeta,
   Zone,
 } from './types.js';
+import { isRetired } from './retired.js';
 
 /**
  * A folder big enough to be worth splitting into its subfolders.
@@ -150,6 +151,15 @@ export interface Group {
   /** Outside companies its files call. */
   services: string[];
   /** Groups it imports from, heaviest first. */
+  /**
+   * Every file in here says it has been retired — an `_archive` folder, or docstrings
+   * that open `DEPRECATED`.
+   *
+   * The group is still built and still described, because a backstop somebody runs by
+   * hand is worth knowing about. What it must not do is take a place in the sentence
+   * that says how the app works today.
+   */
+  retired: boolean;
   dependsOn: GroupLink[];
   /** Groups that import from it, heaviest first. */
   usedBy: GroupLink[];
@@ -480,6 +490,9 @@ function finish(entry: Draft, pathOf: Map<string, string>): Group {
     services: [...entry.services].sort((a, b) => a.localeCompare(b)),
     dependsOn: toLinks(entry.dependsOn, pathOf),
     usedBy: toLinks(entry.usedBy, pathOf),
+    // Every file retired means the group is. One retired file in a live folder does not
+    // retire the folder, and a group with none is the ordinary case that costs nothing.
+    retired: entry.files.length > 0 && entry.files.every(isRetired),
   };
 }
 

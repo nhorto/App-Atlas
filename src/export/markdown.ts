@@ -18,6 +18,7 @@
 import type { AtlasGraph } from '../model/graph.js';
 import { describeChanges } from '../model/changes.js';
 import type { AtlasChanges, AtlasNode, DoorChange } from '../model/types.js';
+import { retirementOf } from '../model/retired.js';
 import { authHeadline } from '../model/exposure.js';
 import { buildInsights } from '../model/insights.js';
 import type { RouteInsight } from '../model/insights.js';
@@ -197,9 +198,13 @@ export function renderAtlasMarkdown(graph: AtlasGraph, options: MarkdownOptions 
     for (const part of parts) {
       const files = Number(part.meta.descendantFileCount ?? part.childCount);
       const summary = part.summary ? ` — ${oneLine(part.summary)}${mark(part.summarySource)}` : '';
-      out.push(`- \`${part.path || part.name}\` (${files} ${plural(files, 'file')}, ${part.zone})${summary}`);
+      // A folder the repo has retired is still listed — a backstop somebody runs by hand
+      // is worth knowing about — but it is said out loud, so it is not read as current.
+      const retired = retirementOf(part) ? ' **[retired]**' : '';
+      out.push(`- \`${part.path || part.name}\` (${files} ${plural(files, 'file')}, ${part.zone})${retired}${summary}`);
     }
     out.push('');
+    appendRetired(out, graph);
   }
 
   // --- what nothing points at ---
@@ -389,23 +394,26 @@ function doorLines(nodes: AtlasNode[]): string[] {
 
   // A door is folded with its siblings only when it is the same kind of thing living in
   // the same folder. A cron beside a CLI script is not a repetition of it.
-  const groups = new Map<string, Door[]>();
+  //
+  // The kind and the folder are kept on the bucket rather than encoded into its key
+  // and split back out. A folder name can contain whatever character you picked as a
+  // separator, and a key that has to be parsed is a second place for that to go wrong.
+  const groups = new Map<string, { kind: string; folder: string; doors: Door[] }>();
   for (const door of doors) {
     const folder = door.path ? door.path.split('/').slice(0, -1).join('/') : '';
-    const key = `${door.kind} ${folder}`;
+    const key = JSON.stringify([door.kind, folder]);
     const bucket = groups.get(key);
-    if (bucket) bucket.push(door);
-    else groups.set(key, [door]);
+    if (bucket) bucket.doors.push(door);
+    else groups.set(key, { kind: door.kind, folder, doors: [door] });
   }
 
   const out: string[] = [];
-  for (const [key, bucket] of groups) {
-    const folder = key.split(' ')[1];
+  for (const { kind, folder, doors: bucket } of groups.values()) {
     const fold = bucket.length > FOLD_DOORS_ABOVE && folder !== '';
     for (const door of fold ? bucket.slice(0, DOORS_SHOWN_PER_FOLDER) : bucket) out.push(doorLine(door));
     if (fold) {
       const rest = bucket.length - DOORS_SHOWN_PER_FOLDER;
-      out.push(`- …and ${rest} more **${bucket[0].kind}** ${plural(rest, 'door')} under \`${folder}/\``);
+      out.push(`- …and ${rest} more **${kind}** ${plural(rest, 'door')} under \`${folder}/\``);
     }
   }
   return out;
@@ -416,6 +424,36 @@ function doorLines(nodes: AtlasNode[]): string[] {
     if (door.path && door.label.includes(door.path)) return `- **${door.kind}** \`${door.label}\`${door.when}`;
     return `- **${door.kind}** ${door.label}${door.when} — \`${door.path ?? '—'}\``;
   }
+}
+
+/**
+ * The files that say, in their own words, that they are no longer the live path.
+ *
+ * Counted out loud rather than quietly dropped. These files are kept out of the reading
+ * order and out of the paragraph describing how the app works today, and a reader who is
+ * not told that has been done will wonder why a folder they can see is never mentioned.
+ * The other direction is worse: silence lets a retired module be read as current.
+ */
+function appendRetired(out: string[], graph: AtlasGraph): void {
+  const retired = graph.nodesOfKind('file').filter((node) => retirementOf(node) !== null);
+  if (retired.length === 0) return;
+
+  const reasons = new Map<string, number>();
+  for (const node of retired) {
+    const because = retirementOf(node)?.because ?? '';
+    reasons.set(because, (reasons.get(because) ?? 0) + 1);
+  }
+  const why = [...reasons.entries()]
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+    .map(([because, count]) => `${count} because ${because}`)
+    .join(', ');
+
+  out.push(
+    `**${retired.length} ${plural(retired.length, 'file')} in this app say they have been retired** (${why}). ` +
+      'They are still in the atlas and still counted, and they are left out of the reading order below and out of ' +
+      'the description of how the app works today.',
+  );
+  out.push('');
 }
 
 function appendPorts(out: string[], graph: AtlasGraph): void {

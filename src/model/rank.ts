@@ -34,6 +34,7 @@
  *     rule existed.
  */
 import type { AtlasEdge, AtlasNode } from './types.js';
+import { isRetired } from './retired.js';
 
 /** How much of a file's score it passes on rather than keeps. The usual 0.85. */
 const DAMPING = 0.85;
@@ -67,7 +68,10 @@ export interface RankedFile {
 export function rankFiles(nodes: Iterable<AtlasNode>, edges: Iterable<AtlasEdge>, limit = 10): RankedFile[] {
   const files = new Map<string, AtlasNode>();
   for (const node of nodes) {
-    if (node.kind === 'file' && node.zone !== 'test') files.set(node.id, node);
+    // Retired code is left out for the same reason tests are: this list answers "where do
+    // I start reading to understand the app", and a file whose own docstring says it was
+    // replaced is the one place a newcomer should not start.
+    if (node.kind === 'file' && node.zone !== 'test' && !isRetired(node)) files.set(node.id, node);
   }
   if (files.size === 0) return [];
 
