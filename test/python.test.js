@@ -10,7 +10,7 @@ import assert from 'node:assert/strict';
 import path from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
-import { analyzeProject, AtlasGraph, buildInsights, classifyZone } from '../dist/node/index.js';
+import { analyzeProject, AtlasGraph, buildBoundaryView, buildInsights, classifyZone } from '../dist/node/index.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const FIXTURE = path.join(here, 'fixtures', 'pyapp');
@@ -114,6 +114,8 @@ test('collects environment variables however they are read', { skip }, () => {
   const env = atlas.nodes.find((n) => n.kind === 'endpoint' && n.meta.endpointKind === 'env');
   const names = env.meta.vars.map((v) => v.name).sort();
   assert.deepEqual(names, ['DATABASE_URL', 'STRIPE_SECRET_KEY']);
+  // The config is read from `.py` files, so the runtime that reads it is Python, not Node.
+  assert.equal(env.meta.framework, 'Python');
 });
 
 /**
@@ -184,6 +186,16 @@ test('`if __name__ == "__main__"` is a command-line door', { skip: skipScripts }
     cli.every((n) => n.meta.framework === '__main__'),
     'the guard is named as what made it a door',
   );
+});
+
+test('the command-line card counts every script, not just the first', { skip: skipScripts }, () => {
+  const view = buildBoundaryView(new AtlasGraph(scripts));
+  const cli = view.inputs.find((c) => c.family === 'cli');
+  assert.ok(cli, 'the runnable scripts are a way in');
+  // clean.py and report.py are two doors — the card read the first member's site count
+  // and said "1 place" for both.
+  assert.equal(cli.count, 2);
+  assert.equal(cli.detail, '2 places');
 });
 
 test('a folder of runnable scripts is a pipeline, not a library', { skip: skipScripts }, () => {
