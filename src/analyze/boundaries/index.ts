@@ -15,6 +15,12 @@ import { authDetector, middlewareDetector, wiredGuardDetector } from './auth.js'
 import { argAt, dottedName, isBareSpecifier, literalString, packageRoot, snippetOf } from './ast.js';
 import { storeDetector } from './data.js';
 import { envDetector } from './env.js';
+import {
+  refusalDetector,
+  remixRoutesDetector,
+  svelteHooksDetector,
+  svelteRoutesDetector,
+} from './fileroutes.js';
 import { edgeFunctionDetector, expoRoutesDetector, nextRoutesDetector, nodeRoutesDetector, trpcDetector } from './http.js';
 import { jobsDetector } from './jobs.js';
 import { outboundDetector } from './outbound.js';
@@ -34,6 +40,10 @@ export type { BoundaryFinding, DetectorContext } from './types.js';
 const DETECTORS: BoundaryDetector[] = [
   nextRoutesDetector,
   expoRoutesDetector,
+  svelteRoutesDetector,
+  svelteHooksDetector,
+  remixRoutesDetector,
+  refusalDetector,
   nodeRoutesDetector,
   trpcDetector,
   edgeFunctionDetector,

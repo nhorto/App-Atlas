@@ -98,6 +98,13 @@ export interface ProjectSignals {
   nextPagesDir: string | null;
   /** Repo-relative directory Expo Router treats as the route tree, if there is one. */
   expoRouterDir: string | null;
+  /** Repo-relative directory SvelteKit treats as the route tree, if there is one. */
+  svelteKitRoutesDir: string | null;
+  /**
+   * Repo-relative directory Remix — or React Router 7 running as a framework — reads
+   * its routes out of, if there is one.
+   */
+  remixRoutesDir: string | null;
   crons: CronSignal[];
   /** Cloudflare Workers and Pages deploys, read out of their wrangler configs. */
   workers: WorkerSignal[];
@@ -118,6 +125,11 @@ export function readSignals(root: string, packageJson: Record<string, unknown> |
     // Expo Router owns `app/` the same way Next's App Router does, but declares itself
     // through the dependency rather than a config file. Same candidate dirs.
     expoRouterDir: packages.has('expo-router') ? firstExistingDir(root, ['app', 'src/app']) : null,
+    // SvelteKit's route tree can be moved in `svelte.config.js`, which is a JavaScript
+    // module this layer will not execute. The default is what all but a handful of
+    // projects use, and a directory that is not there produces no signal at all.
+    svelteKitRoutesDir: packages.has('@sveltejs/kit') ? firstExistingDir(root, ['src/routes', 'routes']) : null,
+    remixRoutesDir: hasRemix(packages) ? firstExistingDir(root, ['app/routes']) : null,
     crons: readVercelCrons(root),
     workers: readWorkers(root),
     prisma,
@@ -129,6 +141,31 @@ export function readSignals(root: string, packageJson: Record<string, unknown> |
     ...readEnvExample(root),
     declaresAPackage: readsAsAPackage(root, packageJson),
   };
+}
+
+/**
+ * The packages that mean "this repo lets a framework own its route files".
+ *
+ * `react-router` on its own is deliberately not one of them. Half the single-page apps
+ * ever written depend on it and route inside the browser, where no file is a door — so
+ * the declaration that matters is the framework-mode package (`@react-router/dev` and
+ * friends), which is what turns `app/routes/` into a server.
+ */
+const REMIX_PACKAGES = [
+  '@remix-run/node',
+  '@remix-run/react',
+  '@remix-run/serve',
+  '@remix-run/server-runtime',
+  '@remix-run/cloudflare',
+  '@remix-run/deno',
+  '@react-router/dev',
+  '@react-router/node',
+  '@react-router/serve',
+];
+
+/** Whether the project depends on Remix, or on React Router running as a framework. */
+function hasRemix(packages: Set<string>): boolean {
+  return REMIX_PACKAGES.some((name) => packages.has(name));
 }
 
 /**

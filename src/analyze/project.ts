@@ -78,6 +78,10 @@ export const DEFAULT_IGNORES = [
 /** Package-name → friendly framework label. First-pass detection only; M2 adds real plugins. */
 const FRAMEWORK_SIGNALS: Record<string, string> = {
   next: 'Next.js',
+  '@sveltejs/kit': 'SvelteKit',
+  '@remix-run/react': 'Remix',
+  '@remix-run/node': 'Remix',
+  '@react-router/dev': 'React Router',
   react: 'React',
   'react-native': 'React Native',
   vue: 'Vue',

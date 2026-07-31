@@ -76,15 +76,21 @@ left. Start with Go — one stdlib parser, one dominant router idiom, and a clea
 
 ## Gap 2. Frameworks, even inside the two languages we do read
 
-**Where we are.** The detectors emit routes under eleven framework labels — Next.js,
-NestJS, Fastify, tRPC, Expo Router, Cloudflare Workers, Vercel Cron, Supabase Edge
-Function, Supabase PostgREST, Django, and bare Node — and recognise Express, Hono, Koa,
-FastAPI, Flask, aiohttp, Sanic and Quart at the call level, with data-layer signals for
-Prisma, Drizzle, Supabase, Mongoose, Knex and Kysely.
+**Where we are.** The detectors emit routes under thirteen framework labels — Next.js,
+SvelteKit, Remix / React Router, NestJS, Fastify, tRPC, Expo Router, Cloudflare Workers,
+Vercel Cron, Supabase Edge Function, Supabase PostgREST, Django, and bare Node — and
+recognise Express, Hono, Koa, FastAPI, Flask, aiohttp, Sanic and Quart at the call level,
+with data-layer signals for Prisma, Drizzle, Supabase, Mongoose, Knex and Kysely.
 
-Missing, in rough order of how likely a weekend-built app is to use them: **SvelteKit**,
-**Remix / React Router 7**, **Nuxt**, **Astro**, **Litestar**, **Elysia**, **AdonisJS**,
-Bottle, Falcon, Pyramid, Tornado.
+Missing, in rough order of how likely a weekend-built app is to use them: **Nuxt**,
+**Astro**, **Litestar**, **Elysia**, **AdonisJS**, Bottle, Falcon, Pyramid, Tornado.
+
+> *SvelteKit and Remix landed in [fileroutes.ts](../src/analyze/boundaries/fileroutes.ts)
+> (issue #44). Two things they cannot see, so that nobody has to find out the hard way: a
+> SvelteKit page whose route folder holds only a `+page.svelte` is missing from the map,
+> because `.svelte` is not a file the TypeScript reader opens — and a check written in a
+> `+layout.server.ts` is deliberately not reported, because the only pattern available to
+> express its reach would also cover the endpoints that layout never runs for.*
 
 > *An earlier draft of this document said Django was absent. It is not — routes come from
 > `urlpatterns` ([py/boundaries.ts:195](../src/analyze/py/boundaries.ts)), guards from
@@ -99,8 +105,9 @@ is not research, it is a long tail of small, testable additions — which makes 
 issue material and bad architecture work.
 
 **Shape.** One issue per framework family, each self-contained: a fixture, a detector, a
-test asserting the doors and their guards. SvelteKit and Remix first — they are the two
-most likely to turn up in an app someone built over a weekend with an agent.
+test asserting the doors and their guards. SvelteKit and Remix went first, being the two
+most likely to turn up in an app someone built over a weekend with an agent; both cost one
+new file and no change at all to the merge layer, which is the shape the rest should take.
 
 ---
 
