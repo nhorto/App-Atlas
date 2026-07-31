@@ -1,14 +1,15 @@
 /**
  * @fileoverview End-to-end tests for the generic tier, proved on Go.
  *
- * Five fixtures, because Go services come in shapes that break different rules.
+ * Six fixtures, because Go services come in shapes that break different rules.
  * `gohttp` uses chi, which is where sub-routers, closures and middleware live; `gostd`
  * uses nothing at all but `net/http`, which is a large fraction of real Go and would be a
  * blank page for anything that only knows frameworks; `gomount` splits its routes across
  * packages, which is what every Go service does once it outgrows one file; `goecho`
- * writes its route calls back to front from every other router in the language; and
- * `gowrap` never names a router library at all, because it wrapped one in a type of its
- * own first — which is what gitea and PocketBase both do.
+ * writes its route calls back to front from every other router in the language; `gowrap`
+ * never names a router library at all, because it wrapped one in a type of its own first
+ * — which is what gitea and PocketBase both do; and `gochain` writes its prefixes as
+ * names rather than as strings, two mounts deep.
  *
  * Nothing here needs Go installed. The grammar is a WebAssembly file this repo ships, so
  * these run identically on a machine that has never had a Go toolchain on it — which is
@@ -26,12 +27,14 @@ const STDLIB = path.join(here, 'fixtures', 'gostd');
 const PACKAGES = path.join(here, 'fixtures', 'gomount');
 const ECHO = path.join(here, 'fixtures', 'goecho');
 const WRAPPED = path.join(here, 'fixtures', 'gowrap');
+const NAMED = path.join(here, 'fixtures', 'gochain');
 
 const { atlas } = await analyzeProject(CHI, { followReferences: true, cache: 'off' });
 const std = (await analyzeProject(STDLIB, { followReferences: true, cache: 'off' })).atlas;
 const split = (await analyzeProject(PACKAGES, { followReferences: true, cache: 'off' })).atlas;
 const echo = (await analyzeProject(ECHO, { followReferences: true, cache: 'off' })).atlas;
 const wrapped = (await analyzeProject(WRAPPED, { followReferences: true, cache: 'off' })).atlas;
+const named = (await analyzeProject(NAMED, { followReferences: true, cache: 'off' })).atlas;
 
 const find = (kind, name) => atlas.nodes.find((n) => n.kind === kind && n.name === name);
 const file = (relPath) => atlas.nodes.find((n) => n.kind === 'file' && n.path === relPath);
@@ -175,6 +178,61 @@ test('a router handed in as a parameter is already at its full address', () => {
   // prefix to add, and adding one would be inventing an address nobody serves.
   assert.ok(doors(split).includes('GET /admin/status'));
   assert.ok(!doors(split).some((name) => name.includes('/api/v1/admin')));
+});
+
+// ---------------------------------------------------------------------------
+// Prefixes written as names rather than as strings (issue #60)
+// ---------------------------------------------------------------------------
+
+test('a group prefix written as a name is read, not silently dropped', () => {
+  // `m.Group(artifactBase, func(){ m.Put("/{artifact_hash}/upload", …) })`, with
+  // `artifactBase` declared as a constant elsewhere in the file. Read only for string
+  // arguments, the group contributes nothing and the door prints
+  // `PUT /{artifact_hash}/upload` — the failure this issue is about, because the prefix is
+  // missing and the address still looks complete enough to read out to a customer.
+  assert.deepEqual(named.meta.warnings, [], 'a silent parse failure must not pass as a pass');
+  assert.ok(doors(named).includes('PUT …/_apis/pipelines/workflows/{run_id}/artifacts/{artifact_hash}/upload'));
+  assert.ok(doors(named).includes('GET …/_apis/pipelines/workflows/{run_id}/artifacts/{artifact_id}/download'));
+});
+
+test('a mount prefix written as a name is looked up and composed', () => {
+  // `r.Mount(reportBase, reports.Routes())` with `const reportBase = "/reports"` in the
+  // same file. Nothing about this address is unknowable, so nothing about it is a gap.
+  assert.ok(doors(named).includes('GET /reports/daily'));
+  assert.ok(!doors(named).some((name) => name.includes('…/reports')), 'and it is not hedged');
+});
+
+test('a mount whose prefix cannot be pinned to one value is a gap, not a short address', () => {
+  // `prefix := "/api/pipeline"` … `prefix = "/api/runner"`, one variable holding two
+  // addresses in one function. Neither is *the* answer, so `…` is the honest reading —
+  // and the rule that decides this tie is that no door beats a short door.
+  assert.ok(doors(named).includes('GET …/register'));
+  assert.ok(!doors(named).includes('GET /register'), 'the prefix-less spelling is gone');
+});
+
+test('a router named as a mount prefix is still found behind it', () => {
+  // `r.Mount(prefix, pipeline.ArtifactRoutes(prefix))` puts two names on one line, and the
+  // first is the address rather than the router. Read the other way round the mount points
+  // at a router called `prefix` that nothing builds, and the whole chain behind it is
+  // lost — both the outer prefix and the group prefix underneath it.
+  const address = doors(named).find((name) => name.includes('{artifact_id}'));
+  assert.ok(address.startsWith('GET …/'), 'the outer mount was followed');
+  assert.ok(address.includes('/_apis/'), 'and so was the group inside it');
+});
+
+test('a prefix constant is not offered as a check', () => {
+  // The name sits where a middleware sits in `Group("/x", RequireAuth)`, and it is an
+  // address. A door badged as protected by a string constant is the worst kind of wrong.
+  for (const name of doors(named)) {
+    assert.deepEqual(guardNames(door(named, name)), [], `${name} claims no check it has not got`);
+  }
+});
+
+test('a route with nothing in front of it collects no gap it did not earn', () => {
+  // The guard that matters most on any prefix change: an address written whole stays
+  // exactly as written, and no `…` leaks onto it from the mounts around it.
+  assert.ok(doors(named).includes('GET /healthz'));
+  assert.equal(doors(named).length, 5, 'and nothing was invented or lost');
 });
 
 // ---------------------------------------------------------------------------

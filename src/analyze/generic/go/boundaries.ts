@@ -147,6 +147,7 @@ export function detectGoBoundaries(input: BoundaryInput): BoundaryFinding[] {
 
   const wiring = detectRoutes(input, imports, findings, at);
   detectCheckers(input, wiring, findings);
+  detectPathConstants(file, findings);
   detectEnv(file, imports, findings, at);
   detectStores(file, importsModule, findings, at);
   detectOutbound(file, imports, findings, at);
@@ -379,7 +380,7 @@ function detectRoutes(
 
     const host = routerOf(call);
     if (!host || !SUBROUTERS.has(method)) continue;
-    const prefix = firstString(call.args);
+    const pattern = patternOf(call.args);
     const closure = call.args.find((arg): arg is Extract<GValue, { t: 'func' }> => arg.t === 'func');
 
     // `admin := r.Group("/admin")` — a real variable, and every route on it says its
@@ -403,9 +404,9 @@ function detectRoutes(
       hostVar: host.varName,
       childModule: null,
       childVar: varName,
-      hasPrefix: prefix !== null,
-      prefix,
-      prefixName: null,
+      hasPrefix: pattern.prefix !== null || pattern.prefixName !== null,
+      prefix: pattern.prefix,
+      prefixName: pattern.prefixName,
       line: call.line,
     });
 
@@ -413,7 +414,12 @@ function detectRoutes(
     // `g.Group("/plugin/", RequireClient)`, gin and echo — or chained onto the result:
     // `rg.Group("/collections").Bind(RequireSuperuserAuth())`. Carried as written; the
     // merge decides whether the name checks anything.
-    const attached = call.args.map(nameOf).filter((name): name is string => name !== null);
+    //
+    // A pattern written as a name is skipped, because it is the address rather than
+    // something standing in front of it, and offering it as a candidate check invites the
+    // merge to answer a question about a constant.
+    const args = pattern.prefixName === null ? call.args : call.args.slice(1);
+    const attached = args.map(nameOf).filter((name): name is string => name !== null);
     for (const chained of byPosition) {
       if (chained.startIndex !== call.startIndex || !ATTACHES.has(chained.method ?? '')) continue;
       for (const name of chained.args.map(nameOf)) if (name) attached.push(name);
@@ -444,7 +450,16 @@ function detectRoutes(
 
     // `r.Mount("/admin", adminRouter)` — a router built somewhere else entirely.
     if (method === 'Mount') {
-      const child = call.args.map(nameOf).find((name) => name !== null) ?? null;
+      // `Mount(pattern, handler)` is how every Go router carrying this method spells it,
+      // so the address comes first — and when it is a variable rather than a literal it is
+      // a name exactly as the router is. Taking the first name on the line as the router
+      // is what left `r.Mount(prefix, actions.ArtifactsRoutes(prefix))` pointing at a
+      // router called `prefix` that nothing builds, losing the address and the link to the
+      // routes behind it at once. One name on its own has no second candidate, so it can
+      // only be the router and there is no address to read.
+      const named = call.args.map(nameOf).filter((name): name is string => name !== null);
+      const pattern = named.length > 1 ? patternOf(call.args) : { prefix: firstString(call.args), prefixName: null };
+      const child = (pattern.prefixName === null ? named[0] : named[1]) ?? null;
       const dot = child?.indexOf('.') ?? -1;
       const module = dot > 0 ? (imports.get(child!.slice(0, dot)) ?? null) : null;
       findings.push({
@@ -455,9 +470,9 @@ function detectRoutes(
         // `api.Routes()` names the call that hands the router over, not the variable it
         // was built under — which is why the package it came from has to answer instead.
         childVar: dot > 0 ? child!.slice(dot + 1).replace(/\(\)$/, '') : child,
-        hasPrefix: firstString(call.args) !== null,
-        prefix: firstString(call.args),
-        prefixName: null,
+        hasPrefix: pattern.prefix !== null || pattern.prefixName !== null,
+        prefix: pattern.prefix,
+        prefixName: pattern.prefixName,
         line: call.line,
       });
       continue;
@@ -522,6 +537,55 @@ function detectRoutes(
   }
 
   return wiring;
+}
+
+/**
+ * The address written at the front of a routing call, whether it was spelled out or named.
+ *
+ * `Group("/admin", …)` and `Group(adminBase, …)` say the same thing, and only the first is
+ * a string this file can read. Carrying the second as a *name* is what lets the merge
+ * layer look the constant up — and, when it cannot, print a gap. Dropping it is the one
+ * outcome that must not happen, because the address that comes out then is shorter than
+ * the real one and still looks complete.
+ *
+ * The first argument rather than the first string among them. Every Go router that takes a
+ * pattern takes it first, and chi's `r.Group(func(r chi.Router){ … })` takes none at all —
+ * so a string further along the line is somebody's argument to a middleware, not an
+ * address, and reading it as one would put it in front of every route in the group.
+ */
+function patternOf(args: GValue[]): { prefix: string | null; prefixName: string | null } {
+  const first = args[0];
+  if (first?.t === 'str') return { prefix: first.v, prefixName: null };
+  if (first?.t === 'name') return { prefix: null, prefixName: first.v };
+  return { prefix: null, prefixName: null };
+}
+
+/**
+ * String constants shaped like a path, offered to the merge layer so that a prefix written
+ * as a name can be turned back into the address it stands for.
+ *
+ * `m.Group(artifactRouteBase, …)` names its address instead of writing it, and the
+ * declaration is a different statement somewhere else in the file. Only the merge layer
+ * sees both, so this is where the two halves are handed over.
+ *
+ * Path-shaped values only, and that filter is load-bearing rather than tidy. The index
+ * these join is keyed by bare name across the whole repo, so every unrelated constant put
+ * into it is a chance to answer a prefix with something that is not an address at all: one
+ * real repo declares `prefix = "gitea-gitignore"` in a build script, and unfiltered that is
+ * the single repo-wide answer for the `prefix` its actions router mounts under — which
+ * turns three honestly partial addresses into three confidently wrong ones.
+ */
+function detectPathConstants(file: GenericFile, findings: BoundaryFinding[]): void {
+  for (const constant of file.constants) {
+    if (constant.value !== '' && !constant.value.startsWith('/')) continue;
+    findings.push({
+      type: 'path-constant',
+      name: constant.name,
+      value: constant.value,
+      path: file.path,
+      line: constant.line,
+    });
+  }
 }
 
 /**
