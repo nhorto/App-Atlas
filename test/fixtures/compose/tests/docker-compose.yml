@@ -1,0 +1,7 @@
+# Scaffolding: a stack stood up so a test run has something to talk to. Not a
+# description of how anybody deploys this, so nothing here is a door.
+services:
+  fixture-ldap:
+    image: rroemhild/test-openldap
+    ports:
+      - 10389:10389

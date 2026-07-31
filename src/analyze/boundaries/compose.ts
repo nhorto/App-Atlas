@@ -43,10 +43,13 @@
  *   - what is behind the port. The image is somebody else's build.
  *   - which of several Compose files somebody actually runs. They are read one at a
  *     time and never merged; see `readComposePorts`.
+ *   - anything a Compose file under a test path declares. It stands fixtures up for a
+ *     test run rather than describing a deploy; see `isTestScaffolding`.
  */
 import fs from 'node:fs';
 import path from 'node:path';
 import { toPosix } from '../../util/paths.js';
+import { classifyZone } from '../zones.js';
 import type { PublishedPort } from '../signals.js';
 
 /** How the doors built from these files are labelled on screen. */
@@ -120,7 +123,7 @@ export function readComposePorts(repoRoot: string, appRoot: string = repoRoot, m
       if (entry.isDirectory()) {
         if (depth >= maxDepth || SKIP_DIRS.has(entry.name) || entry.name.startsWith('.')) continue;
         walk(full, depth + 1);
-      } else if (COMPOSE_FILE.test(entry.name)) {
+      } else if (COMPOSE_FILE.test(entry.name) && !isTestScaffolding(repoRoot, full)) {
         out.push(...readOne(appRoot, full));
       }
     }
@@ -128,6 +131,30 @@ export function readComposePorts(repoRoot: string, appRoot: string = repoRoot, m
 
   walk(repoRoot, 0);
   return out.sort((a, b) => a.configPath.localeCompare(b.configPath) || a.line - b.line);
+}
+
+/**
+ * Whether this file stands a stack up for a test run rather than describing a deploy.
+ *
+ * mealie's `tests/e2e/docker/docker-compose.yml` publishes an LDAP server on 10389 so
+ * that a browser test has something to log in against. That is scaffolding, in the same
+ * sense `.devcontainer/` is scaffolding for an editor: neither is a description of how
+ * anybody ships this app, and both belong off a boundary view somebody briefs a customer
+ * from. So the same rule applies to both.
+ *
+ * Decided with `classifyZone`, the classifier the rest of the tool already uses, rather
+ * than a list of directory names invented here — which also means it is the *path* that
+ * decides, not the filename. A root-level `docker-compose.test.yml` stays: `test` there
+ * is the variant word in `compose.<env>.yml`, the same slot `prod` and `dev` sit in, and
+ * the file is at the top of the repo where somebody runs it with `-f`.
+ *
+ * `build.ts` deliberately exempts *doors* from its own test filter, and this does not
+ * contradict it: that rule protects a real route whose URL happens to contain the word
+ * "test" (dub ships one). A Compose file's path is a location on disk, not an address
+ * somebody types, so there is no equivalent case to protect.
+ */
+function isTestScaffolding(repoRoot: string, absPath: string): boolean {
+  return classifyZone(toPosix(path.relative(repoRoot, absPath))) === 'test';
 }
 
 function readOne(appRoot: string, absPath: string): PublishedPort[] {
