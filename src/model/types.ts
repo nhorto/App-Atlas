@@ -396,6 +396,76 @@ export interface ArchetypeVerdict {
   because: string[];
 }
 
+/**
+ * Whether the last run left anything this one can honestly be compared against.
+ *
+ * The three values are three different sentences, and collapsing any two of them is how
+ * a tool ends up telling somebody their whole app is new:
+ *
+ *   - `none` — nobody has analyzed this project before. Everything is "new" only in the
+ *     sense that everything is all there is.
+ *   - `incomparable` — an atlas is on disk, but a different version of App Atlas wrote
+ *     it, or it was written for a different directory. Two versions that disagree about
+ *     what a route is will disagree about every route.
+ *   - `compared` — a real comparison happened, including when it found nothing.
+ */
+export type BaselineState = 'none' | 'incomparable' | 'compared';
+
+/** How many of something appeared, vanished, or is still there but different. */
+export interface ChangeCounts {
+  added: number;
+  removed: number;
+  changed: number;
+}
+
+/** One door that arrived, vanished or lost its lock, named the way a reader names it. */
+export interface DoorChange {
+  id: string;
+  /** How the door is read aloud: `POST /api/users`, or its own name if it has no address. */
+  name: string;
+  endpointKind: EndpointKind;
+  /** The code behind this door writes data, so it standing open matters more. */
+  writes: boolean;
+  /** The first place the door was found, for somebody about to go and look. */
+  path: string | null;
+  line: number | null;
+}
+
+/**
+ * The doors that moved, which is the part of any diff worth interrupting somebody for.
+ *
+ * `newTotal` and `newOpen` are a count and a subset of it on purpose, because that is
+ * the shape of the sentence people want: *three new doors appeared, two of them with
+ * nothing checking them.*
+ */
+export interface DoorChanges {
+  /** Every door that answers a URL and was not here last run. */
+  newTotal: number;
+  /** The subset of those with nothing checking them and nothing explaining why. */
+  newOpen: DoorChange[];
+  /** Doors that had a check last run and have none now. */
+  lostCheck: DoorChange[];
+  /** Doors that were here last run and are gone. A door that vanished is a real fact. */
+  removed: DoorChange[];
+}
+
+/**
+ * What moved between the previous run and this one — see `model/changes.ts` for how it
+ * is worked out and, more importantly, for what "changed" was decided to mean.
+ */
+export interface AtlasChanges {
+  baseline: BaselineState;
+  /** Why there was nothing to compare against, in the reader's words. `null` once there was. */
+  because: string | null;
+  /** When the atlas this was compared against was generated. `null` when there was none. */
+  since: string | null;
+  /** Every node in the atlas, of every kind. */
+  total: ChangeCounts;
+  /** The same numbers split by kind, so a screen can badge files without walking the graph. */
+  byKind: Partial<Record<NodeKind, ChangeCounts>>;
+  doors: DoorChanges;
+}
+
 export interface AtlasMeta {
   /** Bumped when the on-disk shape changes incompatibly. */
   formatVersion: number;
@@ -420,6 +490,12 @@ export interface AtlasMeta {
    * read. Absent on atlases written before M5.
    */
   incremental?: { reused: number; analyzed: number };
+  /**
+   * What moved since the previous run. Optional because atlases written before this
+   * existed are still readable — and because a missing value means "nobody asked",
+   * which is a third thing again from "no baseline" and from "nothing changed".
+   */
+  changes?: AtlasChanges;
   /** Non-fatal problems worth surfacing in the UI. */
   warnings: string[];
 }
