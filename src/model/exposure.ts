@@ -189,16 +189,31 @@ export interface AuthHeadline {
  * checks who is calling" on one screen and "21 routes unprotected" on the next. One
  * function, four surfaces, no way for them to disagree.
  *
- * Returns `null` when there is nothing to say because nothing answers a URL.
+ * Returns `null` when there is nothing to say because nothing answers a URL — and
+ * nothing went unread, which is the difference between an app with no doors and an app
+ * whose doors were never looked at.
  */
 export function authHeadline(stats: AtlasStats): AuthHeadline | null {
   const { routes } = stats;
-  if (routes === 0) return null;
-
   const open = stats.unprotectedRoutes;
   const unknown = stats.unreadableRoutes ?? 0;
   const public_ = stats.publicRoutes ?? 0;
   const unread = stats.unreadFiles ?? 0;
+
+  // Zero doors reads as good news, and it is only good news when the analyzer could see.
+  // A Python project mapped on a machine whose interpreter never answered has zero doors
+  // for the same reason a blindfolded person sees no traffic (issue #58), and "nothing
+  // here answers a URL" is then the most confidently wrong sentence this tool can print.
+  if (routes === 0) {
+    if (unread === 0) return null;
+    return {
+      tone: 'warn',
+      headline:
+        `no routes were found — but App Atlas could not read ${unread} ${unread === 1 ? 'file' : 'files'}, ` +
+        'so this is not the same as saying there are none',
+      caveats: [],
+    };
+  }
 
   let headline: string;
   let mentionedPublic = false;

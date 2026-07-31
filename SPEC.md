@@ -492,7 +492,7 @@ Measured on the same three Go repos, before and after, by diffing door lists:
 | pocketbase (its own router) | 55 | 55 | 0 | 0 |
 | go-gitea/gitea (its own router) | 757 | 1,053 | 179 | 475 |
 
-Known and unfixed, filed rather than papered over: a five-second interpreter probe means a busy machine can be mistaken for one with no Python on it ([#58](https://github.com/nhorto/App-Atlas/issues/58)). The two gitea doors that printed an address nobody could reach ([#60](https://github.com/nhorto/App-Atlas/issues/60)) are fixed below.
+Both limits M7 left open have since been closed. What each turned out to be is worth more than the fact that it was fixed.
 
 **#60 — a prefix written as a name, and the router standing behind it: ✅ fixed (2026-07-31).** Two doors in gitea's map printed `PUT /{artifact_hash}/upload` and `GET /{artifact_id}/download`: the prefix missing and the address still looking complete, which is the one failure worse than a blank. Chain composition was never the gap — `mounts.ts` has walked multi-hop mounts since [#33](https://github.com/nhorto/App-Atlas/issues/33), and has resolved a prefix written as a name for as long as FastAPI's `prefix=settings.API_V1_STR` has been read. What was missing was on the Go side, and it was three things:
 
@@ -501,3 +501,8 @@ Known and unfixed, filed rather than papered over: a five-second interpreter pro
 - **Only path-shaped constants join the index, and that filter is load-bearing rather than tidy.** The index is keyed by bare name across the whole repo. gitea declares `prefix = "gitea-gitignore"` in a build script, and unfiltered that is the one repo-wide answer for the `prefix` its actions router mounts under — which would have turned ten honestly partial addresses into ten confidently wrong ones. The fix would have re-created the bug one layer down.
 
 Measured the same way, by diffing door lists on the same three clones: gotify and PocketBase byte-identical, gitea 1,051 doors before and after with ten addresses corrected and none added or lost. The three v1 artifact doors now read `…/_apis/pipelines/workflows/{run_id}/artifacts/{artifact_id}/download` — which is the address gitea's own comment says they answer at, with `…` standing in for the `/api/actions_pipeline` that a variable reassigned three times in one function cannot honestly be pinned to.
+
+**#58 — a busy machine is not a machine with no Python on it: ✅ fixed (2026-07-31).**
+
+- **A blank the reader is told about costs less than a silent one.** The probe waits thirty seconds now rather than five, but the number was never the bug. The bug was that "no interpreter is installed" and "an interpreter was found and the machine would not let it answer" arrived as the same silence, and only the first is something the reader can go and fix. They are now two different sentences, carried on every unread file rather than only in a warning — and a machine with no Python still fails in milliseconds, because the operating system refuses to start a program that is not there and says so immediately. Patience only costs the machines that were already misbehaving.
+- **Zero doors is only good news when somebody looked.** A Python project read without a Python reader has no routes at all, and the security screen, the CLI headline and the exported brief all reached for "nothing here answers a URL, so there is nothing to protect" — the most confidently wrong sentence in the product, produced by the analyzer having its eyes shut. All three now say what they could not read, before the numbers that depend on it.

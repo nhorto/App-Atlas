@@ -93,6 +93,15 @@ export function renderAtlasMarkdown(graph: AtlasGraph, options: MarkdownOptions 
       stats.staleDocs > 0 ? ` · ${stats.staleDocs} describe code that has since changed` : ''
     }`,
   );
+  // An agent reading this file needs the caveat before the numbers it qualifies, not in
+  // a footnote. Every count above is a lower bound when a file went unread, and the
+  // sections below can be missing whole routes rather than merely describing them badly.
+  if (stats.unreadFiles > 0) {
+    out.push(
+      `- **App Atlas could not read ${n(stats.unreadFiles)} ${plural(stats.unreadFiles, 'file')}**, so whatever ` +
+        'they declare — a route, a check, a table — is missing from everything below',
+    );
+  }
   out.push('');
 
   // --- ways in ---
