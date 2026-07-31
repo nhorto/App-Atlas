@@ -49,6 +49,18 @@ export interface ProjectInfo {
 export interface DiscoverOptions {
   maxFiles: number;
   extraIgnores?: string[];
+  /**
+   * The directory the user actually asked about, when this run has narrowed to one app
+   * inside it. Defaults to the root being discovered, which is the answer for every
+   * ordinary repo.
+   *
+   * Only the deployment files read it. A `docker-compose.yml` describes the whole stack
+   * and sits at the top of the repo, so a run that has focused on `backend/` must still
+   * be able to see it — while every file this project *parses* stays inside the app, as
+   * it must. Never derived by walking upwards: if somebody names `./backend` on the
+   * command line, `./backend` is the boundary.
+   */
+  repoRoot?: string;
 }
 
 export const SOURCE_GLOB = '**/*.{ts,tsx,mts,cts,js,jsx,mjs,cjs,py,pyi,ipynb,go}';
@@ -136,7 +148,7 @@ export async function discoverProject(rootInput: string, options: DiscoverOption
     (typeof packageJson?.name === 'string' && packageJson.name.trim()) || path.basename(root) || 'app';
 
   const tsConfigPath = findTsConfig(root);
-  const signals = readSignals(root, packageJson);
+  const signals = readSignals(root, packageJson, options.repoRoot ? path.resolve(options.repoRoot) : root);
   const workspaces = readWorkspaces(root, packageJson);
 
   const found = await fg(SOURCE_GLOB, {

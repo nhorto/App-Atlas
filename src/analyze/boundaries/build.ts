@@ -442,8 +442,103 @@ function collectEndpoints(input: BuildInput): Map<string, MergedEndpoint> {
 
   addPostgrestDoors(input, add);
   addWorkerDoors(input, add);
+  addPublishedPortDoors(input, add);
 
   return merged;
+}
+
+/**
+ * Doors that infrastructure declares, rather than code (#45).
+ *
+ * A published container port is a listening socket with no handler anywhere in this
+ * repo. There is no auth check to look for because there is nothing of ours in front of
+ * it — which is exactly why `ports: - "5432:5432"` on a database is worth a reader's
+ * eye and why no amount of reading the application would ever surface it.
+ *
+ * Three things this deliberately does not do.
+ *
+ * It does not join the auth coverage count. `port` is not in `AUTH_RELEVANT`, so these
+ * never reach the "N of M routes have no auth check" sentence, and that is a decision
+ * rather than an oversight: a web server publishing port 80 is the *point*, and every
+ * repo with a Compose file in it would otherwise gain a handful of rows saying "nothing
+ * checks this" about ports that nothing is supposed to check. `model/exposure.ts` exists
+ * because a number whose rows are mostly unalarming is a number people stop reading.
+ *
+ * It does not merge the files. Each declaration is reported against the file that made
+ * it, because which Compose files somebody runs together is not written down anywhere in
+ * the repo — see `readComposePorts`.
+ *
+ * And it does not say a port is open. The name it writes has the *file* as its subject,
+ * so what the reader is told is what was actually read: this file says it publishes
+ * this port. Whether anyone runs the file, and whether a firewall lets anybody reach the
+ * machine, are not facts this repo contains.
+ */
+function addPublishedPortDoors(input: BuildInput, add: (finding: EndpointFinding) => void): void {
+  for (const port of input.signals.publishedPorts) {
+    add({
+      type: 'endpoint',
+      endpointKind: 'port',
+      key: `port ${port.configPath} ${port.target} ${port.raw}`,
+      name: publishedPortDoorName(port),
+      method: port.protocol.toUpperCase(),
+      // Not a URL and not a path. `route` is the field every other surface prints as an
+      // address, and `0.0.0.0:5432` in that column reads as something a browser could
+      // open — so the whole address lives in the name, in words, instead.
+      route: null,
+      framework: port.declaredBy,
+      // Nothing is claimed about what the container does with the data it is handed.
+      // The image is somebody else's build and this repo does not contain it.
+      writes: false,
+      guards: [],
+      site: { path: port.configPath, line: port.line, nodeId: null, snippet: port.raw },
+      // No code in this repo answers this port, so there is nothing to hang it off.
+      handlerId: null,
+    });
+  }
+}
+
+/**
+ * The sentence a reader is shown for an infrastructure door, and the deliverable of #45
+ * as much as the parsing is.
+ *
+ * The subject is the file, always: *"compose.override.yml publishes 5432 on every
+ * interface → db"*. What we read was a file in a repo, not a socket on a server, and a
+ * name with no subject at all ("port 5432 open") is read as the second. Nobody is told
+ * a port is open on their machine; they are told what their own deployment file says.
+ *
+ * Where it is bound is spelled out in both directions on purpose. "on every interface"
+ * and "on 127.0.0.1 only" are different facts with very different consequences, and
+ * leaving the common case unsaid would make its absence carry the meaning — which is
+ * how a reader ends up assuming the safer one.
+ */
+function publishedPortDoorName(port: {
+  configPath: string;
+  target: string;
+  bindAddress: string | null;
+  hostPort: string | null;
+  hostPortVar: string | null;
+  containerPort: string;
+  protocol: 'tcp' | 'udp';
+}): string {
+  const udp = port.protocol === 'udp' ? '/udp' : '';
+  const where = bindPhrase(port.bindAddress);
+
+  let what: string;
+  if (port.hostPort) what = `${port.hostPort}${udp} ${where}`;
+  else if (port.hostPortVar) what = `the port ${port.hostPortVar} is set to, ${where}`;
+  // No host port at all: Docker picks a free one when the stack starts, so there is no
+  // number to print and printing the container's would be printing the wrong one.
+  else what = `port ${port.containerPort}${udp} inside the container, on a host port Docker picks${
+    port.bindAddress ? `, ${where}` : ''
+  }`;
+
+  return `${port.configPath} publishes ${what} → ${port.target}`;
+}
+
+function bindPhrase(bind: string | null): string {
+  if (bind === null) return 'on every interface';
+  if (bind.startsWith('$')) return `on the address ${bind.slice(1)} is set to`;
+  return `on ${bind} only`;
 }
 
 /**
@@ -1309,6 +1404,9 @@ const ENDPOINT_ZONES: Record<EndpointKind, Zone> = {
   export: 'logic',
   // A screen is the interface, so it colours as UI rather than as a network door.
   screen: 'ui',
+  // A published port is a network surface, so it sits with the other network doors —
+  // even though the fact came out of a config file rather than out of code.
+  port: 'api',
 };
 
 function endpointNode(endpoint: MergedEndpoint): AtlasNode {

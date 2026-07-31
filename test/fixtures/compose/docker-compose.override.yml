@@ -1,0 +1,11 @@
+# The second file, which `docker compose up` layers on top of the first. It publishes
+# the database on a different host port, and it says nothing that could cancel a port
+# the base file publishes — which is why both are reported, each against its own file.
+services:
+  db:
+    ports:
+      - "15432:5432"
+
+  admin:
+    expose:
+      - "8080"

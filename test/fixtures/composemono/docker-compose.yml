@@ -1,0 +1,7 @@
+# The stack, described once at the top of the repo — which is where deployment files
+# live and is nowhere near the package App Atlas will choose to focus on.
+services:
+  db:
+    image: postgres:16
+    ports:
+      - "5432:5432"

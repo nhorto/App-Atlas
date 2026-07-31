@@ -63,7 +63,14 @@ export type EndpointKind =
   // A screen in a file-routed native/web app (Expo Router, React Navigation file
   // routes). A way a *person* gets in, not a network door — deliberately kept out of
   // the auth-coverage count so it never dilutes the routes a stranger can reach.
-  | 'screen';
+  | 'screen'
+  // A port a deployment file says it publishes on the host — the first door on this map
+  // that no application code opens. Its own class rather than an `http-route` because
+  // it is not a route: it has no method, no path and no handler, and half of them are
+  // not even HTTP. Kept out of the auth-coverage count deliberately, and for the same
+  // reason `screen` is: a web server publishing port 80 is the point, not a finding,
+  // and a headline where most rows are unalarming is a headline people stop reading.
+  | 'port';
 
 /** What a third party does for you — drives the grouping in the boundary view. */
 export type ServiceCategory =

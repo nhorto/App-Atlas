@@ -1,0 +1,89 @@
+# One stack with every port spelling this reader claims to understand, plus the two
+# shapes it must refuse: `expose:` and a `ports:` nested somewhere that is not a
+# service attribute.
+version: "3.9"
+
+volumes:
+  db-data:
+
+services:
+  db:
+    image: postgres:16
+    volumes:
+      - db-data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432" # a database reachable from the network
+
+  cache:
+    image: redis:7
+    ports:
+      # Unquoted, which is how most people write it — and a legal YAML 1.1 sexagesimal
+      # into the bargain, so a reader that resolves scalars hands you 388740 instead of
+      # a port mapping.
+      - 6379:6379
+
+  admin:
+    image: adminer
+    ports:
+      # The loopback interface: this machine, and nothing else on the network.
+      - "127.0.0.1:8080:8080"
+
+  metrics:
+    image: prom/prometheus
+    ports:
+      - target: 9090
+        published: 9091
+        protocol: tcp
+        mode: host
+
+  dns:
+    image: coredns/coredns
+    ports:
+      - "5353:53/udp"
+
+  bulk:
+    image: example/bulk
+    ports:
+      - "8000-8010:8000-8010"
+
+  scratch:
+    image: example/scratch
+    ports:
+      - "3000"
+
+  web:
+    image: example/web
+    ports: ["${WEB_PORT:-8081}:80"]
+
+  console:
+    image: example/console
+    ports:
+      - "${CONSOLE_PORT}:9443"
+
+  secure:
+    image: example/secure
+    ports:
+      - "[::1]:9444:443"
+
+  internal:
+    image: example/internal
+    # `expose` opens the port to the other containers on this network and to nothing
+    # else. It is not a door and must never be drawn as one.
+    expose:
+      - "9000"
+      - 9001
+    command: |
+      # Free text, not structure. A reader matching `ports:` by name would find one here.
+      ports:
+        - "9999:9999"
+
+  sidecar:
+    image: example/sidecar
+    expose:
+      - "7000"
+    deploy:
+      resources:
+        # Three levels down from the service, so not a service attribute. A reader that
+        # searched the file for `ports:` would invent this door out of nothing.
+        ports:
+          - "6666:6666"

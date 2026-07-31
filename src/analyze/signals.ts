@@ -11,6 +11,7 @@
  */
 import fs from 'node:fs';
 import path from 'node:path';
+import { readComposePorts } from './boundaries/compose.js';
 import { parseSqlMigrations, type SqlPolicy, type SqlTable } from './sql.js';
 import { readWorkers, type WorkerSignal } from './wrangler.js';
 
@@ -20,6 +21,45 @@ export interface CronSignal {
   route: string;
   /** Which file declared it. */
   source: string;
+}
+
+/**
+ * One port a deployment file says is published on the host machine.
+ *
+ * Deliberately says nothing about Docker. This is the shape any infrastructure reader
+ * produces — a Compose file today, a Terraform security group or a Kubernetes service
+ * later — so that the merge layer that turns these into doors, and the sentence it
+ * writes for the reader, never has to learn a second vocabulary.
+ *
+ * It is a *declaration*, not an observation. It means "this file says this port would
+ * be published if you ran it", which is a weaker and more useful claim than "this port
+ * is open", and every word written about it downstream has to keep that difference.
+ */
+export interface PublishedPort {
+  /** What kind of file said so, shown to the reader as the convention that found it. */
+  declaredBy: string;
+  /** Repo-relative path of the file that declares it — the door's whole provenance. */
+  configPath: string;
+  /** 1-based line of the entry that declares it. */
+  line: number;
+  /** The entry exactly as written, which is the evidence a reader is shown. */
+  raw: string;
+  /** What is behind the port: a Compose service name, a Terraform resource later. */
+  target: string;
+  /**
+   * The host address the port is bound to, when the file names one. `null` means every
+   * interface on the machine, which is Docker's default and is *not* the same thing as
+   * `127.0.0.1` — the difference between a database your laptop can reach and one the
+   * network can. Getting it backwards in either direction is the whole risk here.
+   */
+  bindAddress: string | null;
+  /** The host port, when the file gives a number. `null` means the platform picks one. */
+  hostPort: string | null;
+  /** The variable the host port is read from, when it is not written as a number. */
+  hostPortVar: string | null;
+  /** The port inside the container, as written — a number, a range, or a variable. */
+  containerPort: string;
+  protocol: 'tcp' | 'udp';
 }
 
 /** One column of one table, as the schema declares it. */
@@ -108,6 +148,11 @@ export interface ProjectSignals {
   crons: CronSignal[];
   /** Cloudflare Workers and Pages deploys, read out of their wrangler configs. */
   workers: WorkerSignal[];
+  /**
+   * Ports the repo's deployment files say they publish on the host — the only doors on
+   * the map that no line of application code opens.
+   */
+  publishedPorts: PublishedPort[];
   prisma: PrismaSignal | null;
   sqlSchema: SqlSchemaSignal | null;
   /** Variable names documented in `.env.example` and friends. */
@@ -115,7 +160,21 @@ export interface ProjectSignals {
   envExamplePath: string | null;
 }
 
-export function readSignals(root: string, packageJson: Record<string, unknown> | null): ProjectSignals {
+/**
+ * Everything the config files say, for one app.
+ *
+ * `repoRoot` is the directory the user asked about and defaults to `root`, the app being
+ * mapped. The two differ only when this run has narrowed to one app inside a bigger repo,
+ * and exactly one signal cares: a deployment file describes the whole stack and lives at
+ * the top of the repo, while everything else here — the `.env.example`, the Prisma
+ * schema, the wrangler config — belongs to the app that owns it and is read from `root`
+ * as it always was.
+ */
+export function readSignals(
+  root: string,
+  packageJson: Record<string, unknown> | null,
+  repoRoot: string = root,
+): ProjectSignals {
   const packages = readPackages(packageJson);
   const prisma = readPrismaSchema(root);
   return {
@@ -132,6 +191,7 @@ export function readSignals(root: string, packageJson: Record<string, unknown> |
     remixRoutesDir: hasRemix(packages) ? firstExistingDir(root, ['app/routes']) : null,
     crons: readVercelCrons(root),
     workers: readWorkers(root),
+    publishedPorts: readComposePorts(repoRoot, root),
     prisma,
     // When Prisma is present its migrations are generated from schema.prisma, so
     // reading both would declare every table twice.

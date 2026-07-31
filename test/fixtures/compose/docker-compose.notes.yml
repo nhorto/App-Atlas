@@ -1,0 +1,5 @@
+# A file that wears the name and declares no services. Nothing is claimed about it.
+x-shared: &shared
+  restart: always
+  ports:
+    - "4444:4444"

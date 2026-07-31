@@ -234,6 +234,12 @@ async function produceAtlas(
     neverAsk?: boolean;
     /** What to call this app, when the workspace has a better name than package.json. */
     name?: string;
+    /**
+     * The directory the user named, when `root` is one app we picked out of it. This is
+     * the only place that knows the difference, because it is the only place the user's
+     * own argument survives: everything below has already been narrowed.
+     */
+    repoRoot?: string;
     onProgress?: (stage: string, done: number, total: number) => void;
   },
 ): Promise<{ atlas: Atlas; words: EnrichReport | null; dbPath: string; jsonPath: string }> {
@@ -242,6 +248,7 @@ async function produceAtlas(
     ignore: options.ignore,
     followReferences: options.refs !== false,
     cache: options.fresh ? 'refresh' : 'use',
+    repoRoot: run.repoRoot,
     onProgress: run.onProgress,
   });
 
@@ -311,13 +318,15 @@ async function runAnalysis(dir: string, options: SharedOptions): Promise<Analysi
   if (scopes.length > 1) return runWorkspaceAnalysis(root, scopes, options);
 
   // One app in a workspace is still one app: analyze it where it lives, so its cache
-  // and its atlas end up beside it exactly as they would in a repo of its own.
+  // and its atlas end up beside it exactly as they would in a repo of its own. The
+  // directory the user named goes with it, because the deployment file describing that
+  // app's stack is normally above it — narrowing the code must not narrow the repo.
   const target = scopes.length === 1 ? path.join(root, scopes[0].dir) : root;
-  const atlas = await runSingleAnalysis(target, options);
+  const atlas = await runSingleAnalysis(target, options, root);
   return { atlas, scopes: [] };
 }
 
-async function runSingleAnalysis(root: string, options: SharedOptions): Promise<Atlas> {
+async function runSingleAnalysis(root: string, options: SharedOptions, repoRoot: string = root): Promise<Atlas> {
   const quiet = Boolean(options.quiet);
   const started = Date.now();
   const interactive = Boolean(process.stdout.isTTY);
@@ -325,6 +334,7 @@ async function runSingleAnalysis(root: string, options: SharedOptions): Promise<
   let hintShown = false;
   const { atlas, words, dbPath, jsonPath } = await produceAtlas(root, options, {
     quiet,
+    repoRoot,
     onProgress: (stage, done, total) => {
       if (quiet) return;
       const finished = total > 0 && done >= total;
@@ -488,6 +498,7 @@ async function runWorkspaceAnalysis(
         quiet: true,
         neverAsk: true,
         name: scope.name,
+        repoRoot: root,
       });
       results.push({ scope, atlas });
       if (!quiet) console.log(`  ${pc.bold(scope.name.padEnd(width))}  ${scopeLine(atlas)}`);

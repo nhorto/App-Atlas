@@ -74,6 +74,17 @@ export interface AnalyzeOptions {
    *   `off`     — do not read it and do not write it, leaving the project untouched
    */
   cache?: 'use' | 'refresh' | 'off';
+  /**
+   * The directory the caller asked about, when `rootDir` is one app chosen from inside
+   * it. Defaults to `rootDir`.
+   *
+   * App Atlas lands a large repo on its main app (#34), which is a readability decision
+   * about the *code* — and a deployment file describes the whole stack from the top of
+   * the repo, so narrowing the code must not narrow that too. Nothing above this
+   * directory is ever read, so naming a sub-directory on the command line still means
+   * exactly what it says.
+   */
+  repoRoot?: string;
   onProgress?: (stage: string, done: number, total: number) => void;
 }
 
@@ -97,7 +108,11 @@ export async function analyzeProject(rootDir: string, options: AnalyzeOptions = 
   const pluginOptions = { followReferences, detectBoundaries };
 
   options.onProgress?.('Finding source files', 0, 1);
-  const project = await discoverProject(rootDir, { maxFiles, extraIgnores: options.ignore });
+  const project = await discoverProject(rootDir, {
+    maxFiles,
+    extraIgnores: options.ignore,
+    repoRoot: options.repoRoot,
+  });
   options.onProgress?.('Finding source files', 1, 1);
 
   // --- what can be skipped ---
