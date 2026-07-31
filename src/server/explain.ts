@@ -19,10 +19,10 @@ import { symbolRequest } from '../enrich/prompts.js';
 import type { SymbolFacts } from '../enrich/prompts.js';
 import type { EnrichBackend } from '../enrich/types.js';
 import { explanationKey } from '../enrich/types.js';
-import { cleanParagraph } from '../enrich/validate.js';
+import { cleanParagraph, dropWrongMethods, methodsByRoute } from '../enrich/validate.js';
 import { AtlasStore, atlasDbPath } from '../model/store.js';
 import type { AtlasGraph } from '../model/graph.js';
-import type { AtlasNode, FunctionMeta } from '../model/types.js';
+import type { AtlasNode, EndpointMeta, FunctionMeta } from '../model/types.js';
 import { hashParts } from '../util/hash.js';
 import { readSource } from './source.js';
 
@@ -72,12 +72,23 @@ export class Explainer {
     const key = explanationKey('symbol', hash);
     const dbPath = atlasDbPath(graph.meta.root);
 
+    // This tier is the one most likely to talk about a route — it is the only one that
+    // reads real source, so a request handler's body is right there in the prompt — which
+    // makes it the one place a wrong verb would look most authoritative.
+    const routes = methodsByRoute(
+      graph.nodesOfKind('endpoint').map((endpoint) => endpoint.meta as unknown as EndpointMeta),
+    );
+
     const store = openStore(dbPath);
     try {
       const hit = store?.readExplanations().get(key);
       if (hit) {
-        apply(node, hit.text);
-        return { text: hit.text, cached: true };
+        // Checked on the way out as well as on the way in, so an explanation cached
+        // before this check existed is fixed by the upgrade rather than kept forever.
+        const grounded = dropWrongMethods(hit.text, routes).text;
+        if (!grounded) return { error: 'The cached description said something your routes disagree with, so it was dropped.' };
+        apply(node, grounded);
+        return { text: grounded, cached: true };
       }
 
       if (!this.options.enabled) {
@@ -96,13 +107,22 @@ export class Explainer {
       const text = cleanParagraph(reply.text, 4);
       if (!text) return { error: `${backend.label} did not return a usable description.` };
 
-      apply(node, text);
+      // Cached as written, then checked. The answer was paid for either way, and the
+      // check runs again on every read, so a table that grows a route later can still
+      // let a sentence through that it stops today.
       store?.writeExplanations(
         new Map([
           [key, { nodeId, tier: 'symbol' as const, hash, text, backend: backend.id, createdAt: new Date().toISOString() }],
         ]),
       );
-      return { text, backend: backend.label, cached: false };
+
+      const grounded = dropWrongMethods(text, routes).text;
+      if (!grounded) {
+        return { error: `${backend.label} paired one of your routes with a verb it does not answer to, so its answer was dropped.` };
+      }
+
+      apply(node, grounded);
+      return { text: grounded, backend: backend.label, cached: false };
     } catch (err) {
       return { error: (err as Error).message };
     } finally {

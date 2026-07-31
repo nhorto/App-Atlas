@@ -380,7 +380,10 @@ interpreter your project already uses — a virtual environment in the project w
 `APP_ATLAS_PYTHON` overrides everything. A parser reimplemented in JavaScript would
 disagree with the interpreter eventually, and being subtly wrong is the one thing this
 tool must not be. If there is no Python on the machine, the files still appear on the
-map; they just have no insides.
+map; they just have no insides — and the run says so, in a warning that distinguishes
+"there is no Python here" from "the Python here was too busy to answer in thirty
+seconds". Only the first is something for you to go and install. Set
+`APP_ATLAS_PYTHON_TIMEOUT`, in seconds, if your machine needs longer than that.
 
 One difference is stated rather than hidden. TypeScript gets a type checker, so "this
 identifier is that declaration" is a fact. Python matches a name through the import

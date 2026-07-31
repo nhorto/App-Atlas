@@ -21,6 +21,7 @@ import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import test from 'node:test';
 import { analyzeProject } from '../dist/node/index.js';
+import { renderAtlasMarkdown } from '../dist/node/export/markdown.js';
 import { authHeadline } from '../dist/node/model/exposure.js';
 import { AtlasGraph } from '../dist/node/model/graph.js';
 import { buildInsights } from '../dist/node/model/insights.js';
@@ -150,4 +151,27 @@ test('"checked" and "open on purpose" are never collapsed into one claim', () =>
 
 test('nothing to protect means nothing to say', () => {
   assert.equal(authHeadline({ routes: 0, unprotectedRoutes: 0, publicRoutes: 0, unreadableRoutes: 0, unreadFiles: 0 }), null);
+});
+
+/**
+ * Issue #58. A Python project analyzed on a machine whose interpreter never answered has
+ * no doors for the same reason a blindfolded person has no traffic to report, and every
+ * screen then reaches the cheerful branch above. Zero is only good news when somebody
+ * looked.
+ */
+test('…but no doors and unread files is not nothing to say, it is nothing seen', () => {
+  const line = authHeadline({ routes: 0, unprotectedRoutes: 0, publicRoutes: 0, unreadableRoutes: 0, unreadFiles: 5 });
+  assert.equal(line.tone, 'warn');
+  assert.equal(
+    line.headline,
+    'no routes were found — but App Atlas could not read 5 files, so this is not the same as saying there are none',
+  );
+});
+
+test('the brief an agent reads is caveated before its numbers, not after them', () => {
+  const markdown = renderAtlasMarkdown(AtlasGraph.fromAtlas(blind));
+  const numbers = markdown.indexOf('## By the numbers');
+  const caveat = markdown.indexOf('**App Atlas could not read 1 file**');
+  assert.ok(caveat > numbers, 'the caveat sits inside the section it qualifies');
+  assert.ok(caveat < markdown.indexOf('## Ways in'), 'and before anything derived from those numbers');
 });

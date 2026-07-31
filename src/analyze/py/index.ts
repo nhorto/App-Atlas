@@ -24,7 +24,7 @@ import type { SourceFileRef } from '../project.js';
 import { detectPythonBoundaries } from './boundaries.js';
 import { buildModuleIndex, resolveModule } from './modules.js';
 import type { ModuleIndex } from './modules.js';
-import { BATCH_SIZE, extractorPath, findInterpreter, run } from './run.js';
+import { BATCH_SIZE, extractorPath, findInterpreter, missingInterpreterWarning, run, unreadReason } from './run.js';
 import type { Interpreter } from './run.js';
 import type { PyDef, PyFile, PyPayload } from './types.js';
 import { appendAll } from '../../util/append.js';
@@ -80,14 +80,17 @@ export async function analyzePython(ctx: PluginContext): Promise<PluginResult> {
 
   // ---- ask Python what the changed files say --------------------------------
   const t0 = Date.now();
-  const { interpreter, warning } = await findInterpreter(project.root);
+  const { interpreter, warning, missing } = await findInterpreter(project.root);
   if (warning) warnings.push(warning);
   if (!interpreter) {
-    warnings.push(
-      `Found ${files.length} Python ${files.length === 1 ? 'file' : 'files'} but no Python 3.9+ to read them with. ` +
-        'They appear on the map without their insides. Set APP_ATLAS_PYTHON to point at an interpreter.',
-    );
-    for (const ref of stale) nodes.push(shallowFileNode(ref, project.root, 'no Python 3.9+ interpreter was available to read it'));
+    // `stale`, not `files`: whatever came back from the cache still has its insides, and
+    // saying a file went unread when it did not is the same kind of error in the other
+    // direction. Nothing is written to the cache on this path, so a run that only failed
+    // because the machine was busy leaves no wrong answer behind for the next one.
+    const problem = missing ?? { reason: 'not-found' as const };
+    warnings.push(missingInterpreterWarning(problem, stale.length));
+    const because = unreadReason(problem);
+    for (const ref of stale) nodes.push(shallowFileNode(ref, project.root, because));
     return { nodes, edges: [...edges.values()], boundaries, warnings, timings, slices, reused };
   }
   timings.interpreter = Date.now() - t0;
