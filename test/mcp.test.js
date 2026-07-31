@@ -204,13 +204,17 @@ test('…and never claims a revision it has not been written against', () => {
   assert.equal(response.result.protocolVersion, '2025-06-18', 'the newest one we have actually read');
 });
 
-test('the six tools the issue asked for are the six tools on offer', () => {
+test('the tools on offer are the ones the graph can answer without hedging', () => {
   const names = MCP_TOOLS.map((tool) => tool.name).sort();
   assert.deepEqual(names, [
     'data_stores',
     'env_vars',
     'list_doors',
     'unguarded_doors',
+    // Issue #46's, and the seventh: which files nothing else imports. It earns its
+    // place on the same test as the other six — it refuses to answer far more often
+    // than it answers, and every refusal says why.
+    'unimported_files',
     'what_calls',
     'where_is',
   ]);
@@ -454,6 +458,24 @@ test('a variable that looks like a credential says so, with every place it is re
   const secret = vars.find((variable) => variable.secret);
   assert.ok(secret, 'the fixture reads something that looks like a key');
   assert.ok(secret.sites.length > 0 && secret.sites[0].path);
+});
+
+test('a refusal to name unimported files is an answer, not an error', () => {
+  // A library's callers are outside the repo, so there is nothing to say. An agent must
+  // get the reason rather than an empty list, and must not get `isError` — the tool did
+  // its job. This is the one result in the set most likely to be acted on destructively.
+  const result = call(library.dir, 'unimported_files');
+  assert.ok(!result.isError, 'the tool worked; it is the question that does not apply');
+  assert.equal(result.structuredContent.answered, false);
+  assert.deepEqual(result.structuredContent.files, []);
+  assert.match(textOf(result), /code other code imports/);
+});
+
+test('an answered list still says it is a list to check rather than one to delete', () => {
+  const result = call(exposure.dir, 'unimported_files');
+  assert.equal(result.structuredContent.answered, true);
+  assert.match(textOf(result), /list to check, not a list to delete/);
+  assert.ok(!/dead code/i.test(textOf(result)));
 });
 
 // ---------------------------------------------------------------------------
