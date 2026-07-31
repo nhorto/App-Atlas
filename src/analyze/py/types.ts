@@ -191,6 +191,13 @@ export interface PyNotebookCell {
   index: number;
   startLine: number;
   endLine: number;
+  /**
+   * Set only when this cell is not Python — a `%%bash` body, a shell command, an
+   * install line written without its `!`. It says why the cell would not parse, and it
+   * means nothing inside the cell reached the map. The cell still occupies its lines,
+   * so every other cell's numbers are unaffected.
+   */
+  unread?: string;
 }
 
 export interface PyPayload {
