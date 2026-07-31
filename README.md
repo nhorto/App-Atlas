@@ -70,6 +70,7 @@ If you would rather have the command permanently, `npm install -g app-atlas` put
 | `app-atlas analyze [dir]` | Analyze only, write the atlas to disk |
 | `app-atlas serve [dir]` | Serve an atlas that was already analyzed |
 | `app-atlas export [dir]` | Write `ATLAS.md` — the map, for your coding agent |
+| `app-atlas mcp [dir]` | Answer your coding agent over the Model Context Protocol |
 | `app-atlas init [dir]` | Teach your coding agent to write docstrings as it builds |
 
 ### Options
@@ -287,7 +288,48 @@ Read ATLAS.md before changing code. It is the map of this app.
 Sentences in it that a model wrote are marked `(ai)`; everything else is compiler fact.
 Re-run the export after a session and the map is current again. (The full atlas is
 plain SQLite and JSON in `.app-atlas/`, so an agent that wants more can query it
-directly. An MCP server is planned for v1.1.)
+directly.)
+
+### Or let it ask questions
+
+`ATLAS.md` is a snapshot you paste. When the agent needs to check one specific thing —
+*does the route I just wrote have an auth check?* — it can ask instead:
+
+```bash
+claude mcp add app-atlas -- npx -y app-atlas mcp .
+```
+
+`app-atlas mcp` is a Model Context Protocol server over stdin and stdout, so any MCP
+client can start it. In an `.mcp.json`, `mcp.json` or Cursor's config:
+
+```json
+{
+  "mcpServers": {
+    "app-atlas": { "command": "npx", "args": ["-y", "app-atlas", "mcp", "."] }
+  }
+}
+```
+
+Six tools, over the same graph the screen draws:
+
+| Tool | Answers |
+|---|---|
+| `unguarded_doors` | Which of my doors is nothing checking — and, counted apart, which are unchecked for a reason |
+| `list_doors` | Every way in: routes, server actions, webhooks, crons, queues, exports, screens |
+| `what_calls` | Who reaches this function, type or file — the question you ask before changing it |
+| `where_is` | Where the thing with this name lives, and what it is for |
+| `data_stores` | Every database, bucket and cache, the tables, and what the migrations say guards their rows |
+| `env_vars` | Every environment variable the code reads, and whether anyone wrote it down |
+
+Every answer names the file and line it came from, keeps the confidence the analyzer
+had, marks any sentence a model wrote, and says when the analysis was run.
+
+The server reads the atlas `analyze` already wrote and never runs one itself — an MCP
+client starts its servers at the beginning of a session and a first answer that took
+forty seconds would look like a hang. So run `app-atlas analyze` first, and again after
+the code changes; `--watch` does it for you and the next tool call picks it up. A
+directory nobody has analyzed gets a sentence saying exactly that, not an empty list:
+an agent handed an empty list will tell you your app has no unprotected routes.
 
 ## It keeps up with your agent
 
@@ -495,11 +537,11 @@ CLI ──▶ Analyzer ──▶ Atlas model ──▶ Enricher ──▶ Local 
 | **M4** | Type explorer, guided walkthroughs, `ATLAS.md` export for coding agents | ✅ done |
 | **M5** | Incremental re-analysis, `--watch`, Python, monorepo scopes | ✅ done |
 
-After v1.0, in rough order of how useful they'd be: an MCP server so an agent can
-query the atlas directly instead of reading a file; a "what changed" overlay that
-shows what your agent just did to the map, with the new routes glowing; cross-package
-tracing so a monorepo can follow a call from the web app through a shared package into
-the API; and more language plugins.
+After v1.0, in rough order of how useful they'd be: a "what changed" overlay that shows
+what your agent just did to the map, with the new routes glowing; cross-package tracing
+so a monorepo can follow a call from the web app through a shared package into the API;
+and more language plugins. (The MCP server that used to head this list shipped — see
+[Or let it ask questions](#or-let-it-ask-questions).)
 
 ## Development
 

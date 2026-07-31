@@ -138,6 +138,8 @@ id; badge added/removed/changed on the boundary view. The highest-value narrow v
 
 ## Gap 4. No MCP server, no IDE presence
 
+> **Half closed, 31 July 2026** — [#42](https://github.com/nhorto/App-Atlas/issues/42). `app-atlas mcp` is a Model Context Protocol server over stdio, with the six tools named below, hand-rolled rather than taken from the SDK — the reasoning, and the 93 packages it saved, are in [SPEC.md](../SPEC.md) section 13. The IDE half of this gap is untouched: there is still no VS Code extension and nothing auto-wires an agent for you, so the install is one `claude mcp add` or one block of `.mcp.json`. Everything below is left as it was written, because a gap report edited after the gap is closed is a report nobody can check.
+
 **Where we are.** `src/server/` serves the local web app. There is no MCP server. The
 agent-facing surface is `ATLAS.md`, a static file you paste.
 
