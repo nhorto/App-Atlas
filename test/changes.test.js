@@ -23,6 +23,8 @@ import {
   AtlasGraph,
   describeChanges,
   diffAtlas,
+  loadAtlas,
+  persistAtlas,
   renderAtlasMarkdown,
 } from '../dist/node/index.js';
 
@@ -30,19 +32,47 @@ const run = promisify(execFile);
 const here = path.dirname(fileURLToPath(import.meta.url));
 const CLI = path.join(here, '..', 'dist', 'node', 'cli.js');
 
-/** Copies a fixture somewhere disposable, so tests may edit and delete files freely. */
+/**
+ * Copies a fixture somewhere disposable, so tests may edit and delete files freely.
+ *
+ * Resolved, because one test below hands this same path to a child process and then
+ * compares the two atlases: an atlas records the root it was written for, and two
+ * spellings of one directory are not a baseline for each other.
+ */
 function scratch(fixture, name) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), `atlas-${name}-`));
+  const dir = path.resolve(fs.mkdtempSync(path.join(os.tmpdir(), `atlas-${name}-`)));
   fs.cpSync(path.join(here, 'fixtures', fixture), dir, { recursive: true });
   return dir;
 }
 
 const analyze = async (dir) => (await analyzeProject(dir, { followReferences: true, cache: 'off' })).atlas;
 
-/** Rewrites one file in place, so a test can describe an edit rather than perform one. */
+/**
+ * Rewrites one file in place, so a test can describe an edit rather than perform one.
+ *
+ * The callback is handed the file's own line ending along with its text. This repository
+ * has no `.gitattributes`, so a Windows checkout is CRLF throughout, and a fixture
+ * spliced with a bare `\n` is no longer the file the analyzer was handed.
+ *
+ * An edit that matches nothing is failed here rather than left to surface as a puzzling
+ * empty list three assertions later — which is exactly how a CRLF bug hid in this file.
+ */
 function edit(dir, relPath, change) {
   const file = path.join(dir, ...relPath.split('/'));
-  fs.writeFileSync(file, change(fs.readFileSync(file, 'utf8')));
+  const before = fs.readFileSync(file, 'utf8');
+  const after = change(before, before.includes('\r\n') ? '\r\n' : '\n');
+  assert.notEqual(after, before, `the edit to ${relPath} matched nothing`);
+  fs.writeFileSync(file, after);
+}
+
+/** Adds an unguarded `POST /wipe` above the routes already there. Three tests want it. */
+function addOpenRoute(dir) {
+  edit(dir, 'src/api/routes.ts', (text, eol) =>
+    text.replace(
+      "  app.get('/me'",
+      `  app.post('/wipe', (_req, res) => res.json({ ok: true }));${eol}  app.get('/me'`,
+    ),
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -85,12 +115,7 @@ test('a second run with nothing edited says nothing changed', async () => {
 test('a new route with no auth check is named, and leads the summary', async () => {
   const dir = scratch('sample', 'newdoor');
   const before = await analyze(dir);
-  edit(dir, 'src/api/routes.ts', (text) =>
-    text.replace(
-      '  app.get(\'/me\'',
-      "  app.post('/wipe', (_req, res) => res.json({ ok: true }));\n  app.get('/me'",
-    ),
-  );
+  addOpenRoute(dir);
   const changes = diffAtlas(before, await analyze(dir));
 
   assert.equal(changes.doors.newTotal, 1);
@@ -139,8 +164,11 @@ test('a door that lost its auth check is caught, even though its hash never move
 test('a door that vanished is reported, because a door that vanished is a fact', async () => {
   const dir = scratch('sample', 'gone');
   const before = await analyze(dir);
+  // `\r?\n`, because on a CRLF checkout `\}\);\n` matches nothing at all: the route
+  // would survive, the diff would be empty, and the failure would read as a bug in the
+  // diff rather than in the edit that was supposed to set it up.
   edit(dir, 'src/api/routes.ts', (text) =>
-    text.replace(/ {2}app\.get\('\/users\/:id'[\s\S]*?\}\);\n/, ''),
+    text.replace(/ {2}app\.get\('\/users\/:id'[\s\S]*?\}\);\r?\n/, ''),
   );
   const changes = diffAtlas(before, await analyze(dir));
 
@@ -235,12 +263,7 @@ test('ATLAS.md says there was nothing to compare against on a first run', async 
 test('ATLAS.md leads with the new open doors once there is a baseline', async () => {
   const dir = scratch('sample', 'md-diff');
   const before = await analyze(dir);
-  edit(dir, 'src/api/routes.ts', (text) =>
-    text.replace(
-      '  app.get(\'/me\'',
-      "  app.post('/wipe', (_req, res) => res.json({ ok: true }));\n  app.get('/me'",
-    ),
-  );
+  addOpenRoute(dir);
   const atlas = await analyze(dir);
   atlas.meta.changes = diffAtlas(before, atlas);
 
@@ -272,48 +295,64 @@ test('the overview view carries the same sentences the command line prints', asy
 // ---------------------------------------------------------------------------
 // The baseline on disk, which is the part no unit test can see.
 
-/** The atlas the CLI just wrote, read back the way `serve` and `export` read it. */
-function writtenAtlas(dir) {
-  return JSON.parse(fs.readFileSync(path.join(dir, '.app-atlas', 'atlas.json'), 'utf8'));
-}
-
-test('the CLI keeps the last run as the baseline for the next one', async () => {
-  const dir = scratch('sample', 'cli');
-  await run(process.execPath, [CLI, 'analyze', dir, '--no-ai', '-q']);
-  assert.equal(writtenAtlas(dir).meta.changes.baseline, 'none', 'the first run has nothing behind it');
-
-  edit(dir, 'src/api/routes.ts', (text) =>
-    text.replace(
-      '  app.get(\'/me\'',
-      "  app.post('/wipe', (_req, res) => res.json({ ok: true }));\n  app.get('/me'",
-    ),
-  );
-  const second = await run(process.execPath, [CLI, 'analyze', dir, '--no-ai']);
-  const changes = writtenAtlas(dir).meta.changes;
-
-  assert.equal(changes.baseline, 'compared');
-  assert.deepEqual(
-    changes.doors.newOpen.map((door) => door.name),
-    ['POST /wipe'],
-  );
-  assert.match(second.stdout, /1 new door since the last run, with no auth check/);
-  assert.match(second.stdout, /POST \/wipe/);
-  fs.rmSync(dir, { recursive: true, force: true });
-});
-
 /**
  * `--fresh` throws away the per-file cache, which is a different thing from the atlas.
  * Confusing the two would make "re-read everything" silently mean "forget everything",
  * and somebody who reached for it because a run looked wrong would lose the very
  * comparison they were trying to check.
+ *
+ * `--fresh` is `cache: 'refresh'` and nothing else, so this drives the option rather
+ * than the flag — which keeps a whole subprocess out of a test suite that runs its files
+ * in parallel, and tests the same two facts: everything was re-read, and the atlas
+ * already on disk survived it.
  */
-test('--fresh re-reads every file without destroying the baseline', async () => {
+test('refreshing the cache re-reads every file without destroying the baseline', async () => {
   const dir = scratch('sample', 'fresh');
-  await run(process.execPath, [CLI, 'analyze', dir, '--no-ai', '-q']);
-  await run(process.execPath, [CLI, 'analyze', dir, '--no-ai', '-q', '--fresh']);
+  const seeded = (await analyzeProject(dir, { followReferences: true })).atlas;
+  persistAtlas(dir, seeded);
 
-  const changes = writtenAtlas(dir).meta.changes;
+  const refreshed = (await analyzeProject(dir, { followReferences: true, cache: 'refresh' })).atlas;
+  assert.equal(refreshed.meta.incremental.reused, 0, 'every file was read again');
+
+  const baseline = loadAtlas(dir);
+  assert.ok(baseline, 'the atlas the previous run wrote is still there');
+  const changes = diffAtlas(baseline, refreshed);
   assert.equal(changes.baseline, 'compared');
   assert.deepEqual(changes.total, { added: 0, removed: 0, changed: 0 });
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+/**
+ * The only subprocess in this file, and the reason it is worth one.
+ *
+ * `produceAtlas` in `src/cli.ts` is where the baseline is read, diffed and stamped, and
+ * it cannot be imported — the module parses `process.argv` the moment it loads. What it
+ * has to get right is an ordering: the previous atlas must be read *before*
+ * `persistAtlas` overwrites it. Reorder those two lines and every diff silently compares
+ * this run against itself, which no in-process test of the model layer can notice — so
+ * the assertion below is that a door the seeded baseline never had comes back as new.
+ *
+ * It costs one process where this file used to spend four. That matters more than it
+ * looks: `node --test test/*.test.js` runs the test *files* in parallel, so every
+ * process started here competes with whichever other file is running, and the
+ * Python-dependent suites conclude the machine has no interpreter if a probe goes
+ * unanswered for five seconds. The baseline is seeded in-process and left in the cache,
+ * so the one run that remains is a warm one that re-reads a single file.
+ */
+test('the CLI reads the last run as its baseline before overwriting it', async () => {
+  const dir = scratch('sample', 'cli');
+  persistAtlas(dir, (await analyzeProject(dir, { followReferences: true })).atlas);
+
+  addOpenRoute(dir);
+  const result = await run(process.execPath, [CLI, 'analyze', dir, '--no-ai']);
+  const written = JSON.parse(fs.readFileSync(path.join(dir, '.app-atlas', 'atlas.json'), 'utf8'));
+
+  assert.equal(written.meta.changes.baseline, 'compared', 'the atlas on disk was found and used');
+  assert.deepEqual(
+    written.meta.changes.doors.newOpen.map((door) => door.name),
+    ['POST /wipe'],
+  );
+  assert.match(result.stdout, /1 new door since the last run, with no auth check/);
+  assert.match(result.stdout, /POST \/wipe/);
   fs.rmSync(dir, { recursive: true, force: true });
 });
