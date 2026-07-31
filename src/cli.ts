@@ -30,6 +30,7 @@ import { authHeadline } from './model/exposure.js';
 import { AtlasGraph } from './model/graph.js';
 import type { Atlas, AtlasStats } from './model/types.js';
 import { markStaleDocs } from './model/staleness.js';
+import { grammarTier } from './model/tiers.js';
 import { atlasDbPath, atlasJsonPath, loadAtlas, persistAtlas, readScopes, scopesPath, writeScopes } from './model/store.js';
 import { startServer } from './server/index.js';
 import type { ScopeAtlas, ServerHandle } from './server/index.js';
@@ -332,6 +333,10 @@ async function runSingleAnalysis(root: string, options: SharedOptions): Promise<
     if (atlas.meta.frameworks.length > 0) {
       console.log(pc.dim(`  ${atlas.meta.frameworks.join(' · ')}`));
     }
+    // Said before the numbers, not after, because it is a statement about what all of
+    // them are worth.
+    const tier = grammarTier(atlas.nodes);
+    if (tier) console.log(pc.dim(`  ${tier.display} read by grammar, not by a compiler — links between files are likely, not certain.`));
     console.log('');
     console.log(`  ${pad(s.files)} files       ${pad(s.functions)} functions`);
     console.log(`  ${pad(s.modules)} folders     ${pad(s.types)} types`);

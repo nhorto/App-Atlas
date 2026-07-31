@@ -37,7 +37,8 @@
     "dev:web": "vite",
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p web/tsconfig.json --noEmit",
     "test": "npm run build:node && node --test test/*.test.js",
-    "atlas": "node dist/node/cli.js"
+    "atlas": "node dist/node/cli.js",
+    "grammars": "node scripts/fetch-grammars.mjs"
   },
   "dependencies": {
     "commander": "^15.0.0",
@@ -45,7 +46,8 @@
     "ignore": "^7.0.6",
     "open": "^11.0.0",
     "picocolors": "^1.1.1",
-    "ts-morph": "^28.0.0"
+    "ts-morph": "^28.0.0",
+    "web-tree-sitter": "^0.26.11"
   },
   "devDependencies": {
     "@types/node": "^26.1.1",

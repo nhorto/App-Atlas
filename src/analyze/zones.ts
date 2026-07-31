@@ -68,6 +68,34 @@ function classifyPythonZone(lower: string, base: string): Zone {
 }
 
 /**
+ * Go's own words for the same roles.
+ *
+ * It gets its own table for the reason Python does. `cmd/` is where a Go repo keeps the
+ * programs it builds, `internal/` is the half of a repo other modules cannot import, and
+ * neither means anything at all in the JavaScript table — while `app/` and `pages/`,
+ * which that table treats as a router, are just ordinary directory names here.
+ */
+const GO_TEST = [/_test\.go$/, /(^|\/)testdata\//];
+const GO_CONFIG = new Set(['config.go', 'settings.go', 'options.go', 'env.go', 'doc.go']);
+const GO_DATA_DIRS = [/(^|\/)migrations?\//, /(^|\/)models?\//, /(^|\/)store\//, /(^|\/)storage\//, /(^|\/)repositor(y|ies)\//, /(^|\/)db\//, /(^|\/)database\//, /(^|\/)ent\//];
+const GO_DATA = new Set(['models.go', 'model.go', 'schema.go', 'store.go', 'db.go', 'database.go', 'repository.go', 'queries.go']);
+const GO_API_DIRS = [/(^|\/)api\//, /(^|\/)handlers?\//, /(^|\/)routes?\//, /(^|\/)controllers?\//, /(^|\/)server\//, /(^|\/)transport\//, /(^|\/)rpc\//];
+const GO_API = new Set(['handler.go', 'handlers.go', 'router.go', 'routes.go', 'server.go', 'api.go', 'middleware.go']);
+const GO_UI_DIRS = [/(^|\/)templates?\//, /(^|\/)static\//, /(^|\/)web\//, /(^|\/)views?\//];
+
+function classifyGoZone(lower: string, base: string): Zone {
+  if (GO_TEST.some((r) => r.test(lower))) return 'test';
+  if (GO_DATA.has(base) || GO_DATA_DIRS.some((r) => r.test(lower))) return 'data';
+  if (GO_API.has(base) || GO_API_DIRS.some((r) => r.test(lower))) return 'api';
+  if (GO_UI_DIRS.some((r) => r.test(lower))) return 'ui';
+  if (GO_CONFIG.has(base)) return 'config';
+  // `cmd/` is where the programs live: a `main.go` that wires everything together and
+  // then gets out of the way. Logic, not API — the routes it mounts are declared
+  // elsewhere, and colouring the entry point as API would put the wiring in with them.
+  return 'logic';
+}
+
+/**
  * Classifies a repo-relative file path into a zone. Order matters: the most specific
  * signals (tests, config, data) win over the broadest ones (a file under `app/`).
  */
@@ -77,6 +105,7 @@ export function classifyZone(relPath: string): Zone {
   const ext = extOf(lower);
 
   if (ext === '.py' || ext === '.pyi') return classifyPythonZone(lower, base);
+  if (ext === '.go') return classifyGoZone(lower, base);
 
   // A notebook is where the analysis itself lives, whatever it is named. The Python
   // filename conventions do not apply — nobody calls a notebook `models.py`.

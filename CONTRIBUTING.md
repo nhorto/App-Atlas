@@ -55,10 +55,30 @@ change, however useful the feature sounds.
   [`src/analyze/boundaries/`](src/analyze/boundaries/) for TypeScript and
   [`src/analyze/py/boundaries.ts`](src/analyze/py/boundaries.ts) for Python. If your
   framework, ORM or auth library is missing, that is where it goes.
-- **Language plugins.** A plugin takes source files and emits atlas nodes and edges —
-  the contract is [`src/analyze/plugin.ts`](src/analyze/plugin.ts). The Python plugin
-  is the shorter of the two shipped ones and the better model to copy. Go, Ruby and
-  Rust are wide open.
+- **A new language.** The cheapest useful contribution in the repo, and the one with
+  the widest effect. Four steps, none of them long:
+
+  1. A row in [`scripts/grammars.mjs`](scripts/grammars.mjs) naming the grammar's npm
+     package and version, then `npm run grammars -- --update` to fetch the `.wasm`,
+     record its hash and pull its licence in beside it.
+  2. A query file next to [`queries/go.scm`](src/analyze/generic/queries/go.scm),
+     saying which of that language's syntax answers to each capture name. The
+     vocabulary is listed at the top of
+     [`extract.ts`](src/analyze/generic/extract.ts); most of it can be cribbed from the
+     grammar's own upstream highlight queries.
+  3. A dialect the size of [`go/dialect.ts`](src/analyze/generic/go/dialect.ts) — what
+     "exported" means, which node types are strings, how a comment is written.
+  4. A row in [`languages.ts`](src/analyze/generic/languages.ts).
+
+  That is enough for files, functions, types, imports, doc comments and reference
+  edges. Boundary detectors — routes, guards, stores — are optional, separate, and go
+  in a `boundaries.ts` beside the dialect; the merge layer they feed has never known
+  what language a finding came from, so whatever you emit composes with everything
+  already there.
+
+  A language that deserves a real type checker instead gets a deep plugin: the
+  contract is [`src/analyze/plugin.ts`](src/analyze/plugin.ts), and
+  [`src/analyze/py/`](src/analyze/py/) is the shorter of the two shipped ones.
 - **AI backends.** One `run(request)` plus a `probe()`, in
   [`src/enrich/backends/`](src/enrich/backends/). Everything above it — the
   explanation ladder, the cache, the trust tiers, the consent rules — is

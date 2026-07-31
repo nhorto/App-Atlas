@@ -76,6 +76,15 @@ export interface ProjectSignals {
   /** Which file the Python dependencies came from, if any. */
   pythonManifest: string | null;
   /**
+   * Module paths this repo's `go.mod` requires directly, indirect ones left out. Kept
+   * apart from the npm and PyPI sets for the same reason those two are kept apart: a
+   * name that means one thing in one ecosystem must never switch on a detector for
+   * another.
+   */
+  goModules: Set<string>;
+  /** What this repo calls itself in `go.mod` — the prefix its own imports carry. */
+  goModule: string | null;
+  /**
    * Whether the project declares itself something other code installs and imports —
    * a `setup.py`, a `[project]` table, a `package.json` with an entry point.
    *
@@ -116,6 +125,7 @@ export function readSignals(root: string, packageJson: Record<string, unknown> |
     // reading both would declare every table twice.
     sqlSchema: readSqlSchema(root, prisma !== null),
     ...readPythonPackages(root),
+    ...readGoModule(root),
     ...readEnvExample(root),
     declaresAPackage: readsAsAPackage(root, packageJson),
   };
@@ -252,6 +262,58 @@ function readPythonPackages(root: string): { pythonPackages: Set<string>; python
   }
 
   return { pythonPackages: packages, pythonManifest: manifest };
+}
+
+/**
+ * The module this repo declares itself to be, and what it depends on, from `go.mod`.
+ *
+ * The module path matters as much as the dependency list: every import a Go file writes
+ * of its own code is absolute and starts with it, so `github.com/me/app/internal/store`
+ * cannot be turned back into the `internal/store` directory without reading this line.
+ *
+ * Indirect requirements are left out. They are the dependencies of dependencies, listed
+ * by the toolchain rather than by anybody, and treating them as declarations would put a
+ * framework label on a repo that has never imported it.
+ */
+function readGoModule(root: string): { goModules: Set<string>; goModule: string | null } {
+  const file = path.join(root, 'go.mod');
+  if (!fs.existsSync(file)) return { goModules: new Set(), goModule: null };
+
+  const modules = new Set<string>();
+  let module: string | null = null;
+  let inBlock = false;
+
+  for (const raw of splitLines(readText(file))) {
+    const line = raw.replace(/\/\/.*$/, '').trim();
+    if (!line) continue;
+
+    const declared = /^module\s+(\S+)/.exec(line);
+    if (declared) {
+      module = declared[1];
+      continue;
+    }
+    // `// indirect` lives in the comment this loop just stripped, so the test is made
+    // against the raw line.
+    const indirect = /\/\/\s*indirect\b/.test(raw);
+
+    if (inBlock) {
+      if (line === ')') {
+        inBlock = false;
+        continue;
+      }
+      const entry = /^(\S+)\s+v\S+/.exec(line);
+      if (entry && !indirect) modules.add(entry[1]);
+      continue;
+    }
+    if (/^require\s*\($/.test(line)) {
+      inBlock = true;
+      continue;
+    }
+    const single = /^require\s+(\S+)\s+v\S+/.exec(line);
+    if (single && !indirect) modules.add(single[1]);
+  }
+
+  return { goModules: modules, goModule: module };
 }
 
 /** PyPI treats `-`, `_` and `.` as the same character, and so does everyone else. */

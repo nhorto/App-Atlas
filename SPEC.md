@@ -2,7 +2,7 @@
 
 > **One-liner:** Understand any app — including the one your AI built. Run one command in any project and get an interactive, always-accurate atlas of your application — where data enters, what happens to it inside, and where it goes.
 
-**Status:** ✅ Approved by Nick (2026-07-25). M1–M5 shipped — the v1.0 feature set is complete. See section 13 for the build log. Incorporates feedback rounds 1–2: name locked, open source, provider-agnostic AI with agent-CLI passthrough, dual audience, security badges in v1.0, agent/MCP integration, explanation-source ladder (docstrings first).
+**Status:** ✅ Approved by Nick (2026-07-25). M1–M6 shipped — the v1.0 feature set is complete, and the language seam is open. See section 13 for the build log. Incorporates feedback rounds 1–2: name locked, open source, provider-agnostic AI with agent-CLI passthrough, dual audience, security badges in v1.0, agent/MCP integration, explanation-source ladder (docstrings first).
 
 ---
 
@@ -60,7 +60,7 @@ Every existing code-visualization tool assumes a developer reader (UML, dependen
 | Form factor | CLI + local web app (`npx app-atlas` → analyzer runs → browser opens). Code stays local; only snippets go to the AI backend. |
 | Analysis | Static analysis skeleton + tiered AI explanations |
 | AI backend | **Provider-agnostic from day one** — pluggable enricher interface (see 5.5): API keys (Anthropic, OpenAI, …) *or* the user's already-installed agent CLI (Claude Code, Codex CLI, OpenCode) |
-| Languages (v1) | TypeScript/JavaScript (deep) + Python (good); data model is language-agnostic for future plugins |
+| Languages (v1) | TypeScript/JavaScript (deep) + Python (good) + Go (grammar tier, over tree-sitter); data model is language-agnostic and the grammar tier makes a new language a query file and a dialect |
 | Views (v1) | Boundary/data-flow, Architecture map w/ drill-down, Type explorer, Guided overview/tour, security insight badges |
 | AI timing | Tiered: app/area/file summaries up front; function-level on first click; all cached by content hash |
 | Freshness | Snapshot + incremental re-run by default; `--watch` mode included in v1 |
@@ -100,6 +100,8 @@ Every existing code-visualization tool assumes a developer reader (UML, dependen
 - Reference edges: pragmatic "who references this symbol" via checker (findReferences semantics). Sound JS call graphs are a research problem — we don't promise them; we label confidence. Agent-written code is unusually plain and statically typed, which works in our favor.
 
 **Python — good tier.** Structure via Python's own `ast` (or tree-sitter) + import graph; boundary detectors for FastAPI/Flask/Django routes, Celery tasks, SQLAlchemy/Django ORM, `requests`/`httpx` calls, `os.environ`. Type depth is shallower than TS in v1; the model tolerates per-language depth differences.
+
+**Everything else — grammar tier (added post-M5, see 13).** One extractor over tree-sitter grammars shipped as WebAssembly: symbols, imports, calls, bindings and doc comments, flattened into the same record shape `extract.py` produces. Per language it costs a `.scm` query file and a dialect; the boundary detectors on top are optional and separate. Real syntax, no resolution — names are matched rather than resolved, cross-file edges are `likely`, and every node carries `tier: 'tree-sitter'` so no screen can present the difference as anything else. Go is the first and, deliberately, the only one until the seam has been proved on it.
 
 **Framework plugins (the moat).** knip proved convention-detection works at scale (150+ plugins). Our target market concentrates on a small stack, so ~10 detectors cover most real users:
 Next.js (App Router routes, server actions, middleware), Express/Fastify/Hono, tRPC, React Router/Remix, Vite/CRA SPA entries; FastAPI/Flask/Django; Prisma (+ free bonus: parse `schema.prisma` → data-model diagram), Drizzle, Supabase client, Mongoose; NextAuth/Clerk/Supabase Auth.
@@ -161,6 +163,10 @@ Language-agnostic graph in SQLite (JSON-exportable):
 
 ### 5.7 Language extensibility
 The analyzer is a plugin interface from day one: a language plugin consumes source files and emits atlas nodes/edges (the model is already language-agnostic). TS/JS and Python are the first two plugins, at different depth tiers — which proves the interface tolerates depth differences before any third language (Go, Ruby, Rust…) is attempted. Community language plugins are an explicit open-source goal.
+
+**Settled by the grammar tier.** Nobody writes forty analyzers; the neighbours that cover forty languages wrote *one* extractor over tree-sitter grammars and layered framework detectors on it. `src/analyze/generic/` is that extractor. A language costs a grammar, a query file naming which of its syntax answers to a fixed capture vocabulary, and a dialect of about fifty lines — and it inherits the whole boundary layer, because `boundaries/build.ts` has never known what language a finding came from. Go was added without one line of change to it: route prefixes compose through the machinery written for FastAPI's `include_router`, and a Go middleware is decided to be a check by the rule that decides it for a NestJS guard.
+
+The deep tiers claim their files first and the grammar tier takes what is left, so adding a grammar can never downgrade a language a compiler was already reading.
 
 ### 5.8 Web app (the lens layer)
 React + **React Flow (@xyflow/react)** for canvas (nodes are real React components — type cards, folder boxes, hover cards are just JSX) + **elkjs** for deterministic hierarchical layout (only mainstream JS engine with proper boxes-inside-boxes support; runs in a web worker) + **d3-sankey** for boundary-view flow bands. Canvas only ever receives the current level's slice of the graph.
@@ -439,3 +445,26 @@ Decisions made during the build, worth carrying forward:
 - **The fixture caught up with reality.** It now contains the two-guard edge function and an undeclared `page_views` table, so the crash and both features are pinned by tests rather than by memory.
 
 Measured: cork-and-note (107 files, Expo + Supabase) analyzes in ~2s and now shows 3 ways in, 14 observed tables with per-file usage counts, and 4 stores. The README's seven screenshots were retaken so the first thing a stranger sees is the product that actually ships.
+
+**M6 — Go, and the seam that makes the next language cheap: ✅ complete (2026-07-30).** `src/analyze/generic/`: one extractor over tree-sitter grammars, driven by a per-language query file and a small dialect, with Go as the first and deliberately the only language on it. 24 new tests, 285 in total. Closes the one axis on which every neighbour was ahead (see [GAPS.md](docs/GAPS.md) gap 1).
+
+Decisions made during the build, worth carrying forward:
+
+- **The seam is a capture vocabulary, not a class hierarchy.** A `.scm` file says which of a language's syntax answers to `@def.func`, `@import`, `@call`, `@bind`; `extract.ts` turns those captures into the same flat record `extract.py` produces, and never mentions a language. Everything that needs to know *what a thing is inside* — a call's scope, a struct's fields, the names a function mentions — is answered by character ranges, because containment is the one structural fact every grammar spells the same way.
+- **The merge layer needed no changes at all, and that was the bet.** Go route prefixes compose through the machinery written for FastAPI's `include_router`; a Go middleware is decided to be a check by the rule that decides it for a NestJS guard. `boundaries/build.ts` has never known what language a finding came from, and this is the proof. What is language-specific is *extraction*, not reasoning.
+- **WebAssembly, and the grammar is committed.** The native tree-sitter bindings mean a compiler toolchain on the machine of anybody who types `npx app-atlas`, and the grammar's own npm package carries an install script that can fall back to compiling C. 212 KB of `.wasm` is taken out of a pinned tarball, checked against a recorded hash by `npm run grammars`, and shipped with its licence. Nothing compiles at install time and nothing needs a network at analysis time.
+- **A middleware is a check because of what it writes.** `r.Use(Logger)` and `r.Use(RequireAuth)` are the same line of code; only one of them puts a 401 or a 403 on the wire. Followed up to three calls deep in the same file, because real auth code hands off — gotify's `RequireClient` calls `evaluateOr401`, which calls `abort401`, and only the last of the three has a number in it. Reading one function reported all forty-four of that server's routes as unchecked.
+- **A function that registers routes is wiring, and wiring is never a check.** It names every middleware it attaches, so letting the chain run through it made PocketBase's `bindBackupApi` a "check" — and then every handler in that file looked protected by the whole file's worth of locks, whichever route it actually sat on.
+- **`[].every(…)` is true, and that had turned "no handler" into "every handler".** A door whose handler we cannot identify used to inherit every check in its file. `mux.Handle("/debug/vars", expvar.Handler())` was reported as protected by a middleware standing in front of the route on the line above it. "We could not find the handler" and "the handler is the whole file" are different statements and now give different answers.
+- **The router's *type* is the evidence, not the library.** Every Go repo past a certain size stops building its router in one file and starts passing it in — `func registerRoutes(m *web.Router)` — and half of them wrap it in a type of their own first. A rule that knows the package names of four libraries reports gitea's and PocketBase's entire HTTP API as not existing.
+- **A `_test.go` route is not a door, and this is not a heuristic.** The Go toolchain does not compile `_test.go` into the binary, so the address genuinely does not exist in anything anybody deploys. Elsewhere the pipeline deliberately keeps doors found under folders named `test`, because a folder name is a guess; a build rule is not.
+- **`github.com/go-chi/chi/v5` is typed `chi`.** Semantic import versioning puts the major version in the path and leaves it out of the name. Taking the last segment gives a package called `v5`, after which `chi.NewRouter()` matches nothing and a chi service reports no routes at all — a one-line bug that would have looked like the whole tier not working.
+- **The header had to stop claiming a type checker.** `ATLAS.md` opened with "facts are derived by each language's own parser and type checker", which stopped being true the day a grammar could answer for a language. Every node from this tier carries `tier: 'tree-sitter'`, and the export and the CLI both say what that costs.
+
+Measured, on three Go repos the tool had never seen and with no repo-specific code in it:
+
+| Repo | Files | Routes found | With their check | Time |
+|---|---|---|---|---|
+| gotify/server (Gin) | 208 | 48 | 31 — the 17 left open are health, docs, swagger, version, the static assets and the three OIDC sign-in doors | 0.8s |
+| pocketbase (its own router) | 644 | 53 | 39 | 2.7s |
+| go-gitea/gitea (its own router) | 3,265 | 773 | 182 | 7.8s |
