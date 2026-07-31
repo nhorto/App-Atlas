@@ -25,6 +25,7 @@ import {
   cleanLabel,
   cleanParagraph,
   cleanSentence,
+  describeRun,
   dropWrongMethods,
   enrichAtlas,
   initConventions,
@@ -570,6 +571,68 @@ test('a verb counts only when it is shouted, and only when it is next to the pat
   // And a path inside somebody else's URL is not one of your routes at all.
   const stripe = 'It charges cards with POST https://api.stripe.com/api/posts every night.';
   assert.equal(dropWrongMethods(stripe, table).text, stripe);
+});
+
+test('a wrong verb never reaches the atlas', async () => {
+  // End to end, against the routes the analyzer actually found in the fixture:
+  // `/api/orders` is a DELETE and nothing else.
+  const atlas = await freshAtlas();
+  const backend = stubBackend({
+    reply: (request) =>
+      /one paragraph/.test(request.user)
+        ? 'Your app removes an order through PATCH /api/orders. It keeps everything else in Postgres.'
+        : '{}',
+  });
+
+  const report = await enrichAtlas({ atlas, backend, cache: new Map() });
+  const app = atlas.nodes.find((n) => n.kind === 'app');
+
+  assert.ok(!/PATCH/.test(app.summary), app.summary);
+  assert.ok(!/api\/orders/.test(app.summary), app.summary);
+  assert.match(app.summary, /keeps everything else in Postgres/, 'the true sentence should survive');
+  assert.deepEqual(report.misattributedRoutes, ['PATCH /api/orders']);
+});
+
+test('a description cached before this check existed is dropped on its way back out', async () => {
+  // The upgrade has to fix the map somebody already has. What was paid for is still
+  // cached — the endpoint table is what changed, not the answer — so the check runs
+  // again every time the text is applied rather than only when it is generated.
+  const first = await freshAtlas();
+  const backend = stubBackend({
+    reply: (request) =>
+      /one paragraph/.test(request.user)
+        ? 'Your app removes an order through PATCH /api/orders. It keeps everything else in Postgres.'
+        : '{}',
+  });
+  const report = await enrichAtlas({ atlas: first, backend, cache: new Map() });
+  assert.ok(
+    [...report.additions.values()].some((entry) => entry.text.includes('PATCH /api/orders')),
+    'what the model wrote is what gets cached, so a better map can re-judge it later',
+  );
+
+  const second = await freshAtlas();
+  const offline = await enrichAtlas({ atlas: second, backend: null, cache: report.additions });
+
+  const app = second.nodes.find((n) => n.kind === 'app');
+  assert.ok(!/PATCH/.test(app.summary ?? ''), String(app.summary));
+  assert.deepEqual(offline.misattributedRoutes, ['PATCH /api/orders']);
+});
+
+test('the run says which claim it threw away', async () => {
+  // A description that quietly shrinks is worse than one that says why — not least
+  // because the claim might have been right and the map wrong.
+  const atlas = await freshAtlas();
+  const backend = stubBackend({
+    reply: (request) =>
+      /one paragraph/.test(request.user)
+        ? 'Your app removes an order through PATCH /api/orders. It keeps everything else in Postgres.'
+        : '{}',
+  });
+
+  const report = await enrichAtlas({ atlas, backend, cache: new Map() });
+  const said = describeRun(report).join('\n');
+  assert.match(said, /PATCH \/api\/orders/);
+  assert.match(said, /removed rather than corrected/);
 });
 
 // ---------------------------------------------------------------------------
