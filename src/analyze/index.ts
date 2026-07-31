@@ -54,8 +54,14 @@ import { dominantZone } from './zones.js';
  * three hundred routes announced as new to somebody who changed nothing.
  *
  * Raise it whenever the analyzer's answers change, not only when its interface does.
+ *
+ * It is also the provenance line in every generated `ATLAS.md`, which is a file people
+ * commit — so it is kept level with `package.json` even when a release changes nothing
+ * the analyzer sees, as 0.10.0 did. A build that stamps somebody else's version number
+ * into a checked-in file is making a false claim about where that file came from, and
+ * that costs more than the one stated absence in "what changed" that the bump buys.
  */
-export const TOOL_VERSION = '0.9.0';
+export const TOOL_VERSION = '0.10.0';
 
 export interface AnalyzeOptions {
   maxFiles?: number;

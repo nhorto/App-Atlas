@@ -17,6 +17,7 @@
  */
 import type { AtlasNode, FieldInfo, SummarySource, TypeMeta, Zone } from './types.js';
 import type { AtlasGraph } from './graph.js';
+import { classifyColumn, looksLikeRelation, type PersonalColumn } from './personal.js';
 
 export type TypeKind = TypeMeta['typeKind'];
 
@@ -28,6 +29,16 @@ export interface TypeField {
   isUnique?: boolean;
   /** The card this row points at, when that card is on screen. */
   linkTo: string | null;
+  /**
+   * Set when this column's *name* suggests it holds personal data (issue #48). Tables
+   * only, and a name match only — no value was ever read.
+   *
+   * Marked on the row rather than as a badge on the card on purpose: the evidence is one
+   * column, and a table-level "holds personal data" label is a verdict this cannot
+   * support. A reader who sees the mark on `email` and not on `id` can tell instantly
+   * what was and was not matched, which a card-level badge hides.
+   */
+  personal?: PersonalColumn;
 }
 
 export interface TypeCard {
@@ -91,6 +102,9 @@ export function buildTypeView(graph: AtlasGraph, limit = MAX_CARDS): TypeView {
   const chosen = chooseCards(all, usage, limit);
   const onScreen = new Set(chosen.map((node) => node.id));
   const links = buildLinks(graph, chosen, onScreen);
+  // Built from every type in the atlas, not just the ones that earned a card: a relation
+  // pointing at a shape too minor to draw is still a relation and still not a column.
+  const typeNames = new Set(all.map((node) => node.name.toLowerCase()));
 
   const outgoingByCard = new Map<string, TypeLink[]>();
   for (const link of links) {
@@ -99,7 +113,7 @@ export function buildTypeView(graph: AtlasGraph, limit = MAX_CARDS): TypeView {
     else outgoingByCard.set(link.fromId, [link]);
   }
 
-  const cards = chosen.map((node) => toCard(node, usage.get(node.id), outgoingByCard.get(node.id) ?? []));
+  const cards = chosen.map((node) => toCard(node, usage.get(node.id), outgoingByCard.get(node.id) ?? [], typeNames));
 
   return {
     cards,
@@ -187,6 +201,7 @@ function toCard(
   node: AtlasNode,
   usage: { total: number; byZone: Map<Zone, number> } | undefined,
   outgoing: TypeLink[],
+  typeNames: Set<string>,
 ): TypeCard {
   const meta = node.meta as unknown as TypeMeta;
   const all = meta.fields ?? [];
@@ -199,7 +214,10 @@ function toCard(
     path: node.path,
     startLine: node.startLine,
     zone: node.zone,
-    fields: shown.map((field) => toField(field, outgoing)),
+    // Restricted to tables. A code type with an `email` field is telling the same story,
+    // but marking every shape in the project turns the mark into wallpaper — and the
+    // question this answers is about where data is *kept*.
+    fields: shown.map((field) => toField(field, outgoing, meta.typeKind === 'table', typeNames)),
     hiddenFields: all.length - shown.length,
     summary: node.summary,
     summarySource: node.summarySource,
@@ -212,8 +230,9 @@ function toCard(
   };
 }
 
-function toField(field: FieldInfo, outgoing: TypeLink[]): TypeField {
+function toField(field: FieldInfo, outgoing: TypeLink[], isTable: boolean, typeNames: Set<string>): TypeField {
   const link = outgoing.find((candidate) => candidate.fields.includes(field.name));
+  const personal = isTable && !looksLikeRelation(field.type, typeNames) ? classifyColumn(field.name) : null;
   return {
     name: field.name,
     type: field.type,
@@ -221,5 +240,6 @@ function toField(field: FieldInfo, outgoing: TypeLink[]): TypeField {
     isId: field.isId,
     isUnique: field.isUnique,
     linkTo: link?.toId ?? null,
+    ...(personal ? { personal } : {}),
   };
 }

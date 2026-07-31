@@ -24,6 +24,7 @@ import { authHeadline } from '../model/exposure.js';
 import { buildInsights } from '../model/insights.js';
 import type { RouteInsight } from '../model/insights.js';
 import { grammarTier } from '../model/tiers.js';
+import { findPersonalData } from '../model/personal.js';
 import type { AtlasEdge, AtlasNode, CodeSite, EndpointMeta, GuardInfo } from '../model/types.js';
 import type { AtlasApp, AtlasSource } from './atlas.js';
 
@@ -169,7 +170,9 @@ export const MCP_TOOLS: ToolDefinition[] = [
       'Where this app keeps data: every database, cache, bucket and browser store, the client library it goes ' +
       'through, the tables named in queries, and how much is read versus written. Also reports row-level security ' +
       'per table as the SQL migrations state it — and reports "not stated" as unknown rather than as off, because a ' +
-      'table created in a dashboard may be fully protected by policies no migration ever recorded.',
+      'table created in a dashboard may be fully protected by policies no migration ever recorded. Flags tables ' +
+      'whose column names suggest personal data, matched on the name alone with no value ever read: treat it as a ' +
+      'list of places to look, never as a compliance verdict, and never report a table missing from it as clear.',
     inputSchema: { type: 'object', properties: { ...SCOPE_PROPERTY } },
   },
   {
@@ -593,10 +596,40 @@ function dataStores(graph: AtlasGraph, app: AtlasApp, apps: AtlasApp[]): ToolRes
     }
   }
 
+  // Column names that look like personal data (#48). An agent will relay whatever it
+  // reads here as though it were checked, so the method and both of its failure
+  // directions are stated in the same breath as the finding, not in a footnote.
+  const personal = findPersonalData(graph.allNodes(), graph.allEdges());
+  if (personal.tables.length > 0) {
+    lines.push('');
+    lines.push(
+      `${personal.tables.length} of those ${plural(personal.tables.length, 'tables has', 'tables have')} column ` +
+        'names suggesting personal data. This is a match on names — no value was read, and it is not a ' +
+        'compliance answer. A table missing from this list has not been cleared, only failed to match a name.',
+    );
+    for (const table of personal.tables) {
+      const direct = table.columns.filter((column) => column.strength === 'direct').map((column) => column.column);
+      const ambiguous = table.columns.filter((column) => column.strength === 'ambiguous').map((column) => column.column);
+      const parts = [
+        direct.length > 0 ? direct.join(', ') : '',
+        ambiguous.length > 0 ? `ambiguous: ${ambiguous.join(', ')}` : '',
+      ].filter(Boolean);
+      const doors = table.doors.length > 0 ? `  ·  reached by ${table.doors.map((door) => door.name).join(', ')}` : '';
+      lines.push(`  ${table.name}  ·  ${parts.join('  ·  ')}${doors}`);
+    }
+  }
+
   return answer(lines, provenance(app, apps, graph), {
     ...envelope(app, graph),
     stores: insights.stores.map((store) => ({ ...store, provenance: 'static' })),
     tables: insights.tables.list.map((table) => ({ ...table, provenance: 'static' })),
+    personalData: personal.tables.map((table) => ({
+      table: table.name,
+      columns: table.columns,
+      reachedBy: table.doors.map((door) => door.name),
+      basis: 'column-name match, no values read',
+      provenance: 'static',
+    })),
     tableCounts: {
       total: insights.tables.total,
       rowSecurityOff: insights.tables.unprotected,

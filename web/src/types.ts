@@ -402,9 +402,32 @@ export interface ExplainResult {
 
 export type TypeKind = 'interface' | 'type-alias' | 'enum' | 'class' | 'table';
 
+/** What a column's *name* suggests it holds. Mirrors src/model/personal.ts. */
+export type PersonalCategory =
+  | 'contact'
+  | 'person-name'
+  | 'government-id'
+  | 'financial'
+  | 'location'
+  | 'date-of-birth'
+  | 'credential'
+  | 'device'
+  | 'health';
+
+export interface PersonalColumn {
+  column: string;
+  category: PersonalCategory;
+  /** `direct` — the word means one thing. `ambiguous` — it often means something else. */
+  strength: 'direct' | 'ambiguous';
+  /** The word that matched, which is the entire reason the mark is there. */
+  matched: string;
+}
+
 export interface TypeField extends FieldInfo {
   /** The card this row points at, when that card is on screen. */
   linkTo: string | null;
+  /** Tables only: the column's name suggests personal data. A name match, never a value. */
+  personal?: PersonalColumn;
 }
 
 export interface TypeCard {

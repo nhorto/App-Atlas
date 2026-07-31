@@ -185,6 +185,33 @@
   color: #8f6210;
 }
 
+/*
+ * The personal-data mark (#48). Deliberately quiet: this is a match on a column name,
+ * not a compliance finding, and styling it like a warning would make it read as one.
+ * The ambiguous form is fainter still and keeps its question mark, so the two are told
+ * apart at a glance without anybody hovering.
+ */
+.tfield-personal {
+  margin-left: 6px;
+  padding: 0 4px;
+  border-radius: 3px;
+  font-size: 9px;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  vertical-align: 1px;
+  cursor: help;
+}
+
+.tfield-personal.is-direct {
+  background: #f3e3c8;
+  color: #7a5410;
+}
+
+.tfield-personal.is-ambiguous {
+  background: var(--wash, #eee);
+  color: var(--ink-faint);
+}
+
 .tfield-type {
   font-family: var(--mono);
   font-size: 11px;
