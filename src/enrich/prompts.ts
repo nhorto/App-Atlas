@@ -155,6 +155,33 @@ The name is what a non-developer would call this part of the app ("User accounts
   };
 }
 
+/**
+ * The folders that are not groups.
+ *
+ * The cut stops where a folder is small enough to describe in one sentence, which leaves
+ * the folders *inside* a group — `src/app/api/orders` under `src/app` — with no
+ * description of their own. They are still boxes on the map, and a box with no name is a
+ * worse map than a box with a plain one.
+ *
+ * They get the old ask, deliberately, because it is the honest one for what they are: a
+ * folder with three route files in it has no shape to describe and no handoffs to trace.
+ * Describe a group where a group exists, and a folder where only a folder does.
+ */
+export function moduleBatchRequest(items: LabelItem[]): EnrichRequest {
+  return {
+    system: VOICE,
+    user: `Here are folders from one codebase. For each, give a short plain-English name and one sentence saying what lives there.
+
+${items.map(describe).join('\n\n')}
+
+Reply with JSON only — no markdown fence, no commentary. Key each answer by the number in square brackets, as a string:
+{"1": {"name": "Two or three words, title case", "text": "${ONE_LINE}"}, "2": {…}}
+
+The name is what a non-developer would call this part of the app ("User accounts", "Checkout", "Shared helpers"). Do not just re-spell the folder name.`,
+    maxOutputTokens: 90 * items.length + 200,
+  };
+}
+
 /** Files only need the sentence — the file name is already meaningful on screen. */
 export function fileBatchRequest(items: LabelItem[]): EnrichRequest {
   return {

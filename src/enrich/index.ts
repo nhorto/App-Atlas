@@ -28,7 +28,7 @@ import type { AppFacts, GroupOutline, LabelItem } from './prompts.js';
 import type { Group } from '../model/groups.js';
 import { buildGroups } from '../model/groups.js';
 import { knownServiceNames } from '../analyze/boundaries/catalog.js';
-import { fileBatchRequest, groupBatchRequest, overviewRequest } from './prompts.js';
+import { fileBatchRequest, groupBatchRequest, moduleBatchRequest, overviewRequest } from './prompts.js';
 import type { CachedExplanation, EnrichBackend, EnrichTier, EnrichUsage } from './types.js';
 import { estimateTokens, explanationKey } from './types.js';
 import type { MethodsByRoute } from './validate.js';
@@ -49,6 +49,8 @@ const FILES_PER_REQUEST = 12;
  * its doors, its arrows — and a batch that overflows loses every description in it.
  */
 const GROUPS_PER_REQUEST = 6;
+/** Folders that are not groups carry the old, thin facts, so they batch as they always did. */
+const FOLDERS_PER_REQUEST = 8;
 
 /** Ceilings, so pointing this at a huge repo cannot run away with someone's money. */
 const DEFAULT_MAX_FILES = 400;
@@ -62,6 +64,7 @@ const DEFAULT_MAX_FILES = 400;
  */
 const MAX_GROUPS_DESCRIBED = 24;
 const MAX_GROUPS_IN_OVERVIEW = 12;
+const MAX_FOLDERS_DESCRIBED = 40;
 
 export interface CostEstimate {
   backend: EnrichBackend;
@@ -172,11 +175,20 @@ export async function enrichAtlas(options: EnrichOptions): Promise<EnrichReport>
   const appHash = appFacts ? hashParts('overview', factSignature(appFacts)) : '';
 
   const groupItems = collectGroupItems(groups, byId);
+  // The folders the cut did not stop at are still boxes on the map, and they get the older,
+  // cheaper ask — see `moduleBatchRequest`. Without this the fixture went from fourteen
+  // named folders to four, which is a better answer about the app and a worse map of it.
+  const folderItems = collectFolderItems(atlas, byId, responsibilities, new Set(groups.map((g) => g.id)));
   const { items: fileItems, skipped } = collectFileItems(atlas, responsibilities, maxFiles);
   report.filesSkipped = skipped;
 
   // --- spend nothing on anything we already have -------------------------------
-  const pending = { overview: false, groups: [] as Group[], files: [] as LabelItem[] };
+  const pending = {
+    overview: false,
+    groups: [] as Group[],
+    folders: [] as LabelItem[],
+    files: [] as LabelItem[],
+  };
 
   if (appNode && appFacts) {
     const hit = cache.get(explanationKey('overview', appHash));
@@ -199,6 +211,17 @@ export async function enrichAtlas(options: EnrichOptions): Promise<EnrichReport>
     report.reusedFromCache++;
   }
 
+  for (const item of folderItems) {
+    const hit = cache.get(explanationKey('module', item.hash));
+    if (!hit) {
+      pending.folders.push(item.item);
+      continue;
+    }
+    const node = byId.get(item.item.key);
+    if (node) applyModule(node, hit.text, routes, report);
+    report.reusedFromCache++;
+  }
+
   for (const item of fileItems) {
     const hit = cache.get(explanationKey('file', item.hash));
     if (!hit) {
@@ -212,7 +235,7 @@ export async function enrichAtlas(options: EnrichOptions): Promise<EnrichReport>
 
   const hashOf = new Map<string, string>();
   for (const entry of groupItems) hashOf.set(entry.group.id, entry.hash);
-  for (const entry of fileItems) hashOf.set(entry.item.key, entry.hash);
+  for (const entry of [...folderItems, ...fileItems]) hashOf.set(entry.item.key, entry.hash);
 
   // --- build every request before spending anything -----------------------------
   // Everything is assembled first so the estimate shown to the user is the real one,
@@ -237,6 +260,15 @@ export async function enrichAtlas(options: EnrichOptions): Promise<EnrichReport>
       request: groupBatchRequest(batch.map((group, index) => ({ key: String(index + 1), group }))),
     });
   }
+  for (const batch of chunk(pending.folders, FOLDERS_PER_REQUEST)) {
+    jobs.push({
+      tier: 'module',
+      nodeIds: batch.map((i) => i.key),
+      hashes: batch.map((i) => hashOf.get(i.key) ?? ''),
+      paths: batch.map((i) => i.path),
+      request: moduleBatchRequest(reKey(batch)),
+    });
+  }
   for (const batch of chunk(pending.files, FILES_PER_REQUEST)) {
     jobs.push({
       tier: 'file',
@@ -247,12 +279,12 @@ export async function enrichAtlas(options: EnrichOptions): Promise<EnrichReport>
     });
   }
 
-  report.pendingItems = pending.groups.length + pending.files.length + (pending.overview ? 1 : 0);
+  report.pendingItems = pending.groups.length + pending.folders.length + pending.files.length + (pending.overview ? 1 : 0);
   if (jobs.length === 0 || !backend) return report;
 
   // --- ask, but only when it costs -----------------------------------------------
   if (backend.billing === 'metered' && options.confirm) {
-    const estimate = estimateFor(backend, jobs, pending.overview, pending.groups.length + pending.files.length);
+    const estimate = estimateFor(backend, jobs, pending.overview, pending.groups.length + pending.folders.length + pending.files.length);
     const approved = await options.confirm(estimate);
     if (!approved) {
       report.declined = true;
@@ -537,6 +569,52 @@ function collectGroupItems(groups: Group[], byId: Map<string, AtlasNode>): Keyed
     .filter((group) => byId.has(group.id))
     .slice(0, MAX_GROUPS_DESCRIBED)
     .map((group) => ({ group, hash: hashParts('module', factSignature(group)) }));
+}
+
+/**
+ * The folders inside a group, which are boxes on the map with nothing else to name them.
+ *
+ * This is the pass the group tier replaced for the folders it covers, kept for the ones it
+ * does not. The facts are the old thin ones on purpose: `src/app/api/orders` holds one
+ * route file, hands off to nothing in particular, and inventing a shape for it would be
+ * writing about a group that is not there.
+ */
+function collectFolderItems(
+  atlas: Atlas,
+  byId: Map<string, AtlasNode>,
+  responsibilities: Map<string, string[]>,
+  isGroup: Set<string>,
+): Keyed[] {
+  const children = new Map<string, AtlasNode[]>();
+  for (const node of atlas.nodes) {
+    if (!node.parentId) continue;
+    const list = children.get(node.parentId);
+    if (list) list.push(node);
+    else children.set(node.parentId, [node]);
+  }
+
+  return atlas.nodes
+    .filter((node) => node.kind === 'module' && !isGroup.has(node.id))
+    .sort((a, b) => Number(b.meta.descendantFileCount ?? 0) - Number(a.meta.descendantFileCount ?? 0))
+    .slice(0, MAX_FOLDERS_DESCRIBED)
+    .map((node) => {
+      const kids = (children.get(node.id) ?? []).filter((k) => k.kind === 'file' || k.kind === 'module');
+      const handles = new Set<string>();
+      for (const kid of kids) {
+        for (const what of responsibilities.get(kid.path ?? '') ?? []) {
+          if (handles.size < 8) handles.add(what);
+        }
+      }
+      const item: LabelItem = {
+        key: node.id,
+        path: String(node.meta.dirPath ?? node.path ?? node.name),
+        zone: node.zone,
+        contains: kids.slice(0, 14).map((k) => k.name),
+        responsibilities: [...handles],
+      };
+      return { item, hash: hashParts('folder', factSignature(item)) };
+    })
+    .filter((entry) => entry.item.contains.length > 0 && byId.has(entry.item.key));
 }
 
 /**

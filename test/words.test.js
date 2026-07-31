@@ -727,6 +727,21 @@ test('the overview is given the handoffs and told to follow them', async () => {
   assert.match(request.user, /must follow the handoffs above end to end/);
 });
 
+test('describing groups does not leave the folders inside them unnamed', async () => {
+  // Cutting the fixture into 5 groups took the folder count that gets a plain-English
+  // name from 14 to 4. Better prose about the app, worse map of it — every box under
+  // src/app/api lost its label. Folders that are not groups keep the older, thinner ask.
+  const atlas = await freshAtlas();
+  await enrichAtlas({ atlas, backend: stubBackend(), cache: new Map() });
+
+  const folders = atlas.nodes.filter((n) => n.kind === 'module');
+  const named = folders.filter((n) => n.label);
+  assert.equal(named.length, folders.length, 'every folder on the map should carry a name');
+
+  const deep = atlas.nodes.find((n) => n.meta.dirPath === 'src/app/api/orders');
+  assert.ok(deep?.label, 'a folder inside a group still needs a name of its own');
+});
+
 test('a group of one file is not "1 files"', async () => {
   const prompt = await groupPrompt();
 
