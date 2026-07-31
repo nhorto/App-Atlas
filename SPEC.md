@@ -524,3 +524,155 @@ Decisions made during the build, worth carrying forward:
 - **The tool list is not the one section 7 guessed at.** `get_overview`/`trace_flow`/`impact_of` were written before the model was; the six that shipped are [#42](https://github.com/nhorto/App-Atlas/issues/42)'s, chosen against what the graph can actually answer without hedging. `unguarded_doors` is first because it is the one no competitor in LANDSCAPE.md answers at all.
 
 Measured: the server answers `initialize`, `tools/list` and a tool call in one round trip each, cold, with three lines on stdout and nothing else; the whole end-to-end test — spawn, handshake, query, exit — is 0.3s.
+
+**M8 — more doors: ✅ complete (2026-07-31).** Three gaps from [GAPS.md](docs/GAPS.md), all the same thing from different sides: a door the map could not see, or a door it saw and described wrongly. 26 new tests, 428 in total.
+
+Two of the three are honesty fixes wearing a coverage label, which is the shape most coverage work in this project turns out to have — the number a reader acts on gets more accurate, and the count goes *down*.
+
+**#39 — a cell that is not Python costs that cell, not the notebook: ✅ fixed (2026-07-31).**
+`ETL.ipynb` in a real notebook repo opens with `pip install pandas`, no `!` in front of
+it — a form IPython accepts and `ast.parse` does not. `strip_magic` blanks lines starting
+with `!`, `%` or `?`, so that line survived into the flattened source, the parse failed on
+line 1, and all twenty-one cells went dark. Three of that repo's ten notebooks hit it, in
+a repo where the notebooks *are* the work.
+
+The flattening still parses nothing. When the whole fails, and only then, each code cell
+is re-parsed on its own and the ones that fail are blanked. There is no `pip` case and
+there deliberately is not one: a cell is the unit the kernel itself compiles, so "would
+not parse" is the entire mechanism, and the next repo's unreadable line is one nobody has
+thought of yet. Blanked cells keep their exact line count, so every range in `cells` and
+every line number below a bad cell still lands on the code the author wrote.
+
+Two refusals matter as much as the fix. If every cell parses alone but the whole does not,
+the fault is in how they join rather than in any one of them, and the original error is
+raised rather than guessed at. If the rebuilt source still fails, that raises too and the
+file is reported unread exactly as before — blanking everything would hand the reader a
+notebook that claims to declare nothing, which is worse than saying plainly it could not
+be read.
+
+`meta.unread` is deliberately *not* set on a partially-read notebook. That flag means the
+file was not read, and `exposure.ts` turns it into "whatever they declare is missing from
+every number here" plus an `unreadable` verdict on every route importing it. For a
+notebook where thirty-eight of forty cells are on the map, that sentence is false. Instead
+each dark cell carries its own reason and the run says out loud how many went dark. The
+residual risk runs the safe way: a guard hidden in a dark cell produces a false alarm,
+never a false assurance.
+
+Measured by diffing definition lists on ten real notebooks: 34 definitions before, 79
+after, and the only entries that disappeared were the three `unread` markers themselves.
+107 of the 111 cells the issue counted are read; four stay dark and say so. On a second
+notebook repo, all twenty-three notebooks that read before still read with identical
+function lists and line numbers, and six that were entirely dark came back.
+
+**#40 — the door people sign in through, when it is an action: ✅ fixed (2026-07-31).**
+`classifyOpenDoors` knew a sign-in *page* — the `auth-mount` rule, gated on a catch-all
+route plus an auth package in the file — and knew nothing about a sign-in *action*. On
+`vercel/nextjs-subscription-payments` that was five findings of eleven. A server action
+that signs you in cannot require you to already be signed in.
+
+The rule is evidence from the call, never from the name. `signInWithEmail` happens to be
+well named; the next repo's will be `doLogin`. So the fact is the call into the auth
+library: `authEntryForCall` in the catalog matches a library's published API against the
+shape of the call, anchored on the namespace (`*.auth`, `*.api`) rather than the receiver,
+because apps build their client in their own `utils/supabase/server.ts` wrapper and
+`supabase` traces back to the repo rather than the package. That is the same reasoning
+that already lets `*.auth.getUser` count as a guard, and the project's declared
+dependencies are what gate it. Any dotted name containing an `admin.` segment is rejected
+outright: `auth.admin.signOut` signs somebody *else* out with a service key, and that is
+the last door in a repo that should stop being reported.
+
+Only a function counts. A call at file scope would excuse every door the file declares,
+and one sign-out button in a module of twenty actions is not a reason to stop reporting
+the other nineteen.
+
+Two decisions worth carrying forward:
+
+- **No new `OpenKind`.** `auth-mount` already means "the door people sign in through" in
+  all seven surfaces that word it — the tally, `publicRoutes`, the headline caveat,
+  insights, the markdown export, the MCP reason phrase and both web badges. A new kind
+  would have needed each of them taught a sentence they already say.
+- **The `writes` qualification belongs, but `meta.writes` cannot carry it.** `http.ts`
+  stamps `writes: true` on every server action the moment it is found, on the grounds that
+  it might — so `!meta.writes` would have switched the rule off for exactly the doors it
+  exists for. The graph is asked instead: a `writes-to` edge from the handler into a
+  *store* disqualifies the door. Not a service, because a sign-out handler that posts to
+  the auth provider it is signing you out of has not done anything beyond signing you out.
+
+Measured: 37 routes, unprotected 11 → 4, public 1 → 8. Seven doors moved, none lost, none
+gained. Still open and correctly so are `redirectToPath`, which calls nothing, and
+`updateEmail` / `updateName` / `updatePassword`, all three of which call `auth.updateUser`
+and need a caller already signed in. Door lists byte-identical on taxonomy, mealie, dub,
+cal.com and midday — midday being the one that earns its place, a Supabase repo whose
+`exchangeCodeForSession` route already carries a guard and whose `verifyOtp` action is
+wrapped so it is not a door at all.
+
+Deliberately left out: everything acting on a session that already exists, and
+`supabase.auth.resend`, which is genuinely public. Omitting it keeps that door in the
+alarm list, which is the cheap direction to be wrong in.
+
+**#45 — the ports a deployment file publishes: ✅ built (2026-07-31).** The first door on
+this map that no application code opens, and the seam the rest of infrastructure comes
+through. A container port published by a Compose file is a listening socket with no handler
+anywhere in the repo, so no amount of reading TypeScript or Python will ever find it. A
+`postgres` service with `ports: - "5432:5432"` is a database reachable on the host, and
+there is no auth check to look for because there is no code in front of it.
+
+The distinction the whole feature turns on is one line wide:
+
+```
+ports:   - "5432:5432"   published on the host — a door
+expose:  - "5432"        reachable only by the other containers — not a door
+```
+
+Reading the second as the first invents a door; reading the first as the second hides one.
+Both are the same over-claim from opposite sides, so `expose:` is matched by name and
+dropped on purpose rather than left to fall through a looser test that might one day widen.
+
+Decisions worth carrying to the next infrastructure reader:
+
+- **The subject of the sentence is the file.** There is no guard here, so there is no
+  `certain`/`likely` to assign, and the honesty has to live in the wording instead. A name
+  with no subject — "port 5432 open" — is read as a statement about a server. So the door
+  reads `compose.override.yml publishes 5432 on every interface → db`: a statement about a
+  file in this repo, which is all that was read. A Compose file is a description of a
+  deployment, never evidence that anything is running.
+- **Where it is bound is said in both directions.** `on every interface` and
+  `on 127.0.0.1 only` are both spelled out, because leaving the common case unsaid makes
+  its absence carry the meaning, and a reader fills that silence with the safer of the two.
+- **They do not join the unguarded-doors count.** `AUTH_RELEVANT` is an allow list, so a
+  new kind is excluded by construction — and that is the right answer rather than a
+  convenience. A web server publishing 80 is the point, not a finding; counting these would
+  hand every repo with a Compose file a row saying "nothing checks this" about a port
+  nothing is supposed to check, which is the trained-to-skim failure `exposure.ts` exists
+  to prevent.
+- **The files are never merged.** `up` layers base with override, `-f prod.yml` replaces,
+  and which files somebody runs together is not written down anywhere in the repo. Each
+  declaration is a door against the file that made it. The fastapi template is the argument:
+  `compose.yml` publishes nothing, `compose.override.yml` nine, `compose.traefik.yml` two,
+  and one reconciled answer would be an answer no single file supports.
+- **A port entry is kept as text and never resolved as a scalar.** Unquoted `22:22` is a
+  legal YAML 1.1 sexagesimal integer, and a reader that resolves it returns 1342 instead of
+  a port mapping. Not a hypothetical: the fastapi template writes `9323:9323` unquoted.
+- **The reader is the repo's, not the app's.** App Atlas lands a large repo on its main app
+  ([#34](https://github.com/nhorto/App-Atlas/issues/34)), and the first cut searched from
+  there — so on three of six sample repos it started inside `backend/` or
+  `packages/app-store/zoomvideo` and found nothing, while the reader exercised on its own
+  found everything. The directory the user named is now carried down beside the one we
+  narrowed to, sourced from the CLI because that is the only place the user's own argument
+  survives. It is never derived by walking upwards: run `app-atlas ./backend` and `./backend`
+  is the boundary. Search from the repo root, report paths against the app root, so a stack
+  described above a scoped app reads `../compose.override.yml` — uglier, and it resolves.
+- **A stack stood up for a test run is not a deployment description.** Decided with
+  `classifyZone`, the classifier the rest of the tool already agrees on, rather than a list
+  of directory names invented for this. The path decides, not the filename — so a root-level
+  `docker-compose.test.yml` stays, because `test` there is the variant word in the
+  `compose.<env>.yml` slot that `prod` and `dev` occupy.
+
+Measured through the CLI rather than through the reader, which is the correction this issue
+had to make twice: dispatch 2, full-stack-fastapi-template 11, mealie 4, cal.com 8, midday 1,
+handson-ml3 2 — every one hand-checked against its source file, with `routes` and
+`unprotectedRoutes` unchanged on all six, and taxonomy and requests byte-identical.
+
+The `PublishedPort` shape says nothing about Docker on purpose. A Terraform security group
+or a Kubernetes service produces the same row, so the merge layer and the sentence it writes
+never have to learn a second vocabulary. Terraform is the next one through this hole.

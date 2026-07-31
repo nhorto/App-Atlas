@@ -161,6 +161,8 @@ protocol wrapper.
 
 ## Gap 5. Nothing reads infrastructure
 
+> **Half closed, 31 July 2026** — [#45](https://github.com/nhorto/App-Atlas/issues/45), M8. App Atlas reads Compose files now: a `ports:` entry is a door, an `expose:` entry is not, and the sentence a reader sees names the file that declared it rather than asserting a port is open on anybody's server. Terraform is untouched, which is the larger half of this gap — but the seam it needs now exists, and `PublishedPort` deliberately says nothing about Docker so the next reader produces the same rows. What shipped, and what it measured on six repos, is in [SPEC.md](../SPEC.md) section 13 under M8. Everything below is left as it was written, because a gap report edited after the gap is closed is a report nobody can check.
+
 **Where we are.** Exposure is read from application code only.
 
 **Who has it, and how.** codemap.app parses **Terraform** — modules and resources as one
@@ -235,6 +237,8 @@ value-to-effort item in the document.
 
 ## Gap 9. One bad cell blanks an entire notebook
 
+> **Closed, 31 July 2026** — [#39](https://github.com/nhorto/App-Atlas/issues/39), M8. When the flattened notebook will not parse, each cell is re-parsed on its own and only the failures are blanked, keeping their exact line count so every range below them still lands on the right code. There is no `pip` case: a cell is the unit the kernel compiles, so "would not parse" is the whole mechanism. On the ten notebooks below, definitions went 34 → 79 and the only entries that disappeared were the three `unread` markers themselves. Everything below is left as it was written, because a gap report edited after the gap is closed is a report nobody can check.
+
 **Found 30 July**, checking the NBA repo. `ETL.ipynb` opens with `pip install pandas` —
 no `!`, which IPython accepts and `ast.parse` does not. `strip_magic` in
 [extract.py:660](../src/analyze/py/extract.py) blanks lines starting with `!`, `%` or `?`,
@@ -246,6 +250,8 @@ cells that don't parse. Generalizes to any non-Python cell, and does not special
 `pip`. A cell that isn't Python should cost you that cell, not the notebook.
 
 ## Gap 10. "Public by design" only recognises a page
+
+> **Closed, 31 July 2026** — [#40](https://github.com/nhorto/App-Atlas/issues/40), M8. A door whose handler calls the auth library's own sign-in routine is now classed with the sign-in page, on evidence from the call rather than from the name — `signInWithEmail` happens to be well named and the next repo's will be `doLogin`. On the subject below, unprotected went 11 → 4 and public 1 → 8, with seven doors moving and none lost; five control repos came back byte-identical. Everything below is left as it was written, because a gap report edited after the gap is closed is a report nobody can check.
 
 **From the [bake-off re-run](BAKEOFF.md#re-run-30-july-2026--v060-on-the-same-two-subjects).**
 The headline is honest now — `11 of 37 routes have no auth check App Atlas can see`,
