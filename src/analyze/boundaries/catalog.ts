@@ -9,7 +9,7 @@
  * Anything not in the catalog still appears — under its own hostname or package name.
  * The catalog only ever improves the label, never decides whether a call is real.
  */
-import type { ServiceCategory, StoreKind } from '../../model/types.js';
+import type { ServiceCategory, SignInKind, StoreKind } from '../../model/types.js';
 
 export interface ServiceDef {
   name: string;
@@ -235,6 +235,135 @@ const AUTH_PROVIDERS: { prefix: string; name: string }[] = [
   { prefix: 'jsonwebtoken', name: 'JWT' },
   { prefix: 'jose', name: 'JWT' },
 ];
+
+/** An auth library's own way in or out, and which library's it is. */
+export interface AuthEntryPoint {
+  /** Spelled the way `authProviderForPackage` spells it, so the two can be compared. */
+  provider: string;
+  what: SignInKind;
+}
+
+/**
+ * Calls that hand out a session, end one, or start the flow that leads to one.
+ *
+ * Curated exactly like the service catalog above, and for a sharper reason: this table
+ * decides whether a door stops being reported as unguarded, so a guess belongs nowhere
+ * near it. Every entry is a *library's* published API — `supabase.auth.signUp` is
+ * GoTrue's shape, not one repository's — matched against the shape of the call and
+ * never against the name of the function the call sits in.
+ *
+ * The pattern is anchored on the namespace rather than on the receiver because the
+ * receiver is almost never resolvable: apps build their Supabase client in their own
+ * `utils/supabase/server.ts` wrapper, so `supabase` traces back to the repo, not to the
+ * package. That is the same reasoning that already lets `*.auth.getUser` count as a
+ * guard in `auth.ts`, and the project's declared dependencies are what gate it.
+ *
+ * Deliberately absent: everything that acts on a session which already exists.
+ * `auth.updateUser`, `auth.getUser`, `auth.refreshSession` and every `admin.*` call
+ * need a signed-in caller, and excusing a door because it changes somebody's password
+ * or signs another user out is precisely the mistake this table exists to avoid.
+ */
+const AUTH_ENTRY_CALLS: { methods: string[]; namespace: RegExp; entry: AuthEntryPoint }[] = [
+  // Supabase / GoTrue: everything hangs off the client's own `.auth`. Requiring that
+  // last segment to be `auth` is also what keeps `auth.admin.signOut` — signing
+  // *somebody else* out with a service key — from ever reaching this table.
+  {
+    methods: [
+      'signInWithPassword',
+      'signInWithOtp',
+      'signInWithOAuth',
+      'signInWithIdToken',
+      'signInWithSSO',
+      'signInAnonymously',
+      'verifyOtp',
+      'exchangeCodeForSession',
+    ],
+    namespace: /(^|\.)auth$/,
+    entry: { provider: 'Supabase', what: 'sign-in' },
+  },
+  { methods: ['signUp'], namespace: /(^|\.)auth$/, entry: { provider: 'Supabase', what: 'sign-up' } },
+  { methods: ['signOut'], namespace: /(^|\.)auth$/, entry: { provider: 'Supabase', what: 'sign-out' } },
+  {
+    methods: ['resetPasswordForEmail'],
+    namespace: /(^|\.)auth$/,
+    entry: { provider: 'Supabase', what: 'password reset' },
+  },
+  // Better Auth reaches the same routines from the server through `auth.api.<name>`.
+  {
+    methods: ['signInEmail', 'signInSocial', 'signInUsername'],
+    namespace: /(^|\.)api$/,
+    entry: { provider: 'Better Auth', what: 'sign-in' },
+  },
+  { methods: ['signUpEmail'], namespace: /(^|\.)api$/, entry: { provider: 'Better Auth', what: 'sign-up' } },
+  { methods: ['signOut'], namespace: /(^|\.)api$/, entry: { provider: 'Better Auth', what: 'sign-out' } },
+  {
+    methods: ['forgetPassword'],
+    namespace: /(^|\.)api$/,
+    entry: { provider: 'Better Auth', what: 'password reset' },
+  },
+];
+
+/**
+ * The same table keyed by the method name, because this is asked of every call in every
+ * file of any repository that installed an auth library. A miss has to cost one map
+ * lookup, not one regular expression per row.
+ */
+const ENTRY_BY_METHOD = new Map<string, { namespace: RegExp; entry: AuthEntryPoint }[]>();
+for (const { methods, namespace, entry } of AUTH_ENTRY_CALLS) {
+  for (const method of methods) {
+    const rows = ENTRY_BY_METHOD.get(method);
+    if (rows) rows.push({ namespace, entry });
+    else ENTRY_BY_METHOD.set(method, [{ namespace, entry }]);
+  }
+}
+
+/**
+ * Names that are an entry point only when the name itself came out of an auth package.
+ *
+ * NextAuth's and Clerk's are ordinary imported functions — `signIn('github')` — and a
+ * bare `signIn` is somebody's own helper far more often than it is a library's. So the
+ * import is the evidence here and the name is only the label, which is why this table
+ * is never consulted without a resolved package behind it.
+ */
+const AUTH_ENTRY_NAMES: Record<string, SignInKind> = {
+  signIn: 'sign-in',
+  signUp: 'sign-up',
+  signOut: 'sign-out',
+};
+
+/**
+ * A privileged namespace, in every library that has one: `supabase.auth.admin.signOut`
+ * signs *somebody else* out and needs a service key to do it. A door that reaches for
+ * one of these is the last door in a repository that should stop being reported, so the
+ * shape of the call disqualifies it whatever the method is called.
+ */
+const PRIVILEGED_SEGMENT = /(^|\.)admin\./;
+
+/**
+ * The auth entry point a call names, or `null` when the call is not one.
+ *
+ * `rootProvider` is whichever auth package the start of the call was traced back to,
+ * and `null` when it could not be traced — most of the time, because apps wrap their
+ * client. The caller still has to check the returned provider against what the project
+ * actually depends on; naming a library is not the same as using one.
+ */
+export function authEntryForCall(dotted: string, rootProvider: string | null): AuthEntryPoint | null {
+  const dot = dotted.lastIndexOf('.');
+  const method = dot === -1 ? dotted : dotted.slice(dot + 1);
+
+  const imported = rootProvider ? AUTH_ENTRY_NAMES[method] : undefined;
+  const rows = ENTRY_BY_METHOD.get(method);
+  if (!imported && !rows) return null;
+
+  if (PRIVILEGED_SEGMENT.test(dotted)) return null;
+  if (imported && rootProvider) return { provider: rootProvider, what: imported };
+
+  const receiver = dot === -1 ? '' : dotted.slice(0, dot);
+  for (const row of rows ?? []) {
+    if (row.namespace.test(receiver)) return row.entry;
+  }
+  return null;
+}
 
 export function serviceForPackage(pkg: string): ServiceDef | null {
   if (IN_PROCESS_AUTH.has(pkg)) return null;

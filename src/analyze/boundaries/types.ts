@@ -13,6 +13,7 @@ import type {
   EndpointKind,
   GuardInfo,
   ServiceCategory,
+  SignInKind,
   StoreKind,
 } from '../../model/types.js';
 import type { ProjectInfo, SourceFileRef } from '../project.js';
@@ -128,6 +129,30 @@ export interface GuardFinding {
   routerVar?: string | null;
   /** The atlas node that implements the check, for the `protected-by` edge. */
   sourceId: string;
+}
+
+/**
+ * A call into an auth library's own sign-in, sign-up, sign-out or password-reset
+ * routine.
+ *
+ * The opposite of a guard, and reported for the opposite reason. A handler that hands
+ * out sessions cannot demand one first, so this is the fact that *explains* an
+ * unchecked door — see `model/exposure.ts`, which decides what to do with it.
+ *
+ * Recorded against the node the call sits in rather than against any door, because the
+ * detector reading one file has no idea which doors that function answers. Whether the
+ * function turns out to be a handler is settled later, once every endpoint is known.
+ */
+export interface SignInCallFinding {
+  type: 'sign-in-call';
+  /** The auth provider whose API it is: Supabase, NextAuth, Clerk… */
+  provider: string;
+  what: SignInKind;
+  /** The call as written, so a reader can go to the line and check. */
+  call: string;
+  /** The atlas node the call sits in — a function, when it is inside one. */
+  nodeId: string;
+  site: CodeSite;
 }
 
 /**
@@ -387,6 +412,7 @@ export type BoundaryFinding =
   | StoreFinding
   | EnvFinding
   | GuardFinding
+  | SignInCallFinding
   | WebhookFinding
   | ClientExportFinding
   | WrapperCallFinding
