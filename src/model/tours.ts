@@ -203,13 +203,16 @@ function welcomeTour(graph: AtlasGraph): Tour {
     });
   }
 
-  const busiest = overview.busiestFiles.slice(0, 5);
+  const busiest = overview.whereToLookFirst.slice(0, 5);
   if (busiest.length > 0) {
     const names = labelsFor(busiest.map((entry) => entry.node));
+    const by = busiest[0].imports;
     steps.push({
       id: 'welcome:start',
       title: 'Where to start reading',
-      body: `${names[0]} is connected to more of this codebase than anything else (${busiest[0].connections} connections), which usually means it is either the heart of the app or the place everything borrows from. After that: ${list(
+      body: `${names[0]} pulls more of this codebase together than anything else — it imports ${by} ${
+        by === 1 ? 'file' : 'files'
+      } directly, and reaches most of the rest through them. That is usually either the way in or the place the app is assembled. After that: ${list(
         names.slice(1),
       )}.`,
       quote: busiest[0].node.summary,

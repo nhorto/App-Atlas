@@ -255,15 +255,22 @@ export function renderAtlasMarkdown(graph: AtlasGraph, options: MarkdownOptions 
   }
 
   // --- where to look first ---
-  const busiest = overview.busiestFiles.slice(0, MAX_START_FILES);
-  if (busiest.length > 0) {
+  const start = overview.whereToLookFirst.slice(0, MAX_START_FILES);
+  if (start.length > 0) {
     out.push('## Where to look first');
     out.push('');
-    out.push('The most connected files, which is usually where the app actually lives.');
+    // The order accounts for *what* imports a file, not just how many things do, and the
+    // sentence has to say so — otherwise the count printed beside each line reads as the
+    // thing being sorted by, and the first entry looks like a mistake whenever a file
+    // that few things import outranks one that many do.
+    out.push(
+      'The files that pull the most of this app together — entry points, and the modules that wire them up. Ranked by what they depend on, not by how many things touch them.',
+    );
     out.push('');
-    for (const entry of busiest) {
+    for (const entry of start) {
       const summary = entry.node.summary ? ` — ${oneLine(entry.node.summary)}${mark(entry.node.summarySource)}` : '';
-      out.push(`- \`${entry.node.path}\` (${entry.connections} connections)${summary}`);
+      const by = `imports ${entry.imports} ${entry.imports === 1 ? 'file' : 'files'}`;
+      out.push(`- \`${entry.node.path}\` (${by})${summary}`);
     }
     out.push('');
   }
