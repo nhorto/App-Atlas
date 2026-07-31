@@ -168,8 +168,11 @@ export function analyzeTypeScript(ctx: PluginContext): PluginResult {
   const t3 = Date.now();
   for (const bucket of buckets) {
     try {
-      const external = extractImports(bucket.ref, bucket.sf, pathToRel, bucket.edges);
-      if (bucket.fileNode) bucket.fileNode.meta.externalImports = external;
+      const { external, unresolved } = extractImports(bucket.ref, bucket.sf, pathToRel, bucket.edges);
+      if (bucket.fileNode) {
+        bucket.fileNode.meta.externalImports = external;
+        if (unresolved.length > 0) bucket.fileNode.meta.unresolvedImports = unresolved;
+      }
     } catch (err) {
       warnings.push(`Failed to read imports in ${bucket.ref.relPath}: ${(err as Error).message}`);
     }
@@ -752,15 +755,26 @@ function typeNode(input: TypeNodeInput): AtlasNode {
 // Imports
 // ---------------------------------------------------------------------------
 
-/** Returns the packages this file imports; the file-to-file edges go into `edges`. */
+/**
+ * Returns the packages this file imports, and the project-internal specifiers that
+ * could not be resolved; the file-to-file edges go into `edges`.
+ *
+ * The second list is the more interesting one. `@/auth/login` is a path alias, defined
+ * in a tsconfig or a bundler config that may sit somewhere this run never looked, and
+ * when it does not resolve the link between two of the project's own files silently
+ * disappears — leaving the file on the far end looking as though nothing points at it.
+ * Recording the specifier turns an invisible gap into a fact anything downstream can
+ * see and refuse to answer over.
+ */
 function extractImports(
   ref: SourceFileRef,
   sf: SourceFile,
   pathToRel: Map<string, string>,
   edges: Map<string, AtlasEdge>,
-): string[] {
+): { external: string[]; unresolved: string[] } {
   const fromId = makeFileId(ref.relPath);
   const external = new Set<string>();
+  const unresolved = new Set<string>();
 
   const record = (specifier: string, targetFile: SourceFile | undefined, symbols: string[]) => {
     if (targetFile) {
@@ -777,6 +791,7 @@ function extractImports(
         return;
       }
     }
+    if (isPathAlias(specifier)) unresolved.add(specifier);
     if (isBareSpecifier(specifier)) external.add(packageNameOf(specifier));
   };
 
@@ -797,7 +812,84 @@ function extractImports(
     record(specifier, exp.getModuleSpecifierSourceFile(), symbols);
   }
 
-  return [...external].sort();
+  for (const literal of sf.getImportStringLiterals()) {
+    const call = literal.getParent();
+    if (!call || !Node.isCallExpression(call)) continue;
+    if (call.getExpression().getKind() !== SyntaxKind.ImportKeyword) continue;
+    const specifier = literal.getLiteralValue();
+    const targetRel = resolveRelative(ref.absPath, specifier, pathToRel);
+    if (targetRel && targetRel !== ref.relPath) {
+      addEdge(edges, {
+        kind: 'imports',
+        fromId,
+        toId: makeFileId(targetRel),
+        weight: 1,
+        // The specifier is a literal and the file it names is in this project. Nothing
+        // is being guessed at; it is the same fact a static import states, written in
+        // the syntax that defers the load.
+        confidence: 'certain',
+        meta: { symbols: [] },
+      });
+    } else {
+      if (isPathAlias(specifier)) unresolved.add(specifier);
+      if (isBareSpecifier(specifier)) external.add(packageNameOf(specifier));
+    }
+  }
+
+  return { external: [...external].sort(), unresolved: [...unresolved].sort() };
+}
+
+/** Extensions that are a module somebody could have imported code from. */
+const MODULE_SPECIFIER_EXT = /\.([cm]?[jt]sx?|vue|svelte|astro)$/;
+
+/**
+ * Whether an unresolved specifier names something inside this project rather than a
+ * package.
+ *
+ * `@/`, `~`, and `#` cannot begin a real package name — npm forbids the first two
+ * outright and `#` is Node's own subpath-imports prefix — so a specifier starting with
+ * one of them is always an alias for a path in the repo. If it did not resolve, a link
+ * between two of this project's files is missing from the graph.
+ *
+ * A stylesheet or an image behind the same alias is not that. It never was a module,
+ * nothing was ever going to link to it, and counting it would condemn every well-built
+ * Next.js app that imports its own CSS through `@/styles`.
+ */
+function isPathAlias(specifier: string): boolean {
+  if (!/^(@\/|~|#)/.test(specifier)) return false;
+  const ext = /\.[a-z0-9]+$/i.exec(specifier);
+  return ext === null || MODULE_SPECIFIER_EXT.test(specifier);
+}
+
+/**
+ * The file a relative specifier names, or null when it names nothing in this project.
+ *
+ * Only for `import('./x')`, which the import *declarations* above never mention and
+ * which is how half of modern JavaScript loads a route, a CLI subcommand or a lazy
+ * component. Missing them leaves those files looking as though nothing points at them,
+ * and something that is only ever loaded lazily is exactly the thing somebody would
+ * then be told they could delete.
+ *
+ * Resolution is done by hand rather than through the compiler because the answer only
+ * has to be right for a literal relative path — a specifier built from a variable is
+ * unresolvable by anybody and is left alone rather than approximated.
+ */
+function resolveRelative(fromAbs: string, specifier: string, pathToRel: Map<string, string>): string | null {
+  if (!specifier.startsWith('.')) return null;
+  const base = path.resolve(path.dirname(fromAbs), specifier);
+  const candidates = [base];
+  // `./x.js` in an ESM project is `./x.ts` on disk — the extension is what the output
+  // will be called, not what was written.
+  const rewritten = base.replace(/\.([cm]?)js(x?)$/, '.$1ts$2');
+  if (rewritten !== base) candidates.push(rewritten);
+  for (const ext of ['.ts', '.tsx', '.mts', '.cts', '.js', '.jsx', '.mjs', '.cjs']) {
+    candidates.push(`${base}${ext}`, path.join(base, `index${ext}`));
+  }
+  for (const candidate of candidates) {
+    const found = pathToRel.get(normPath(candidate));
+    if (found) return found;
+  }
+  return null;
 }
 
 // ---------------------------------------------------------------------------
