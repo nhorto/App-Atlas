@@ -618,9 +618,13 @@ def notebook_source(raw):
     cell it came from, which is the only address that means anything in a notebook —
     "line 412" is useless to someone looking at a stack of cells.
 
-    Cells that will not parse are replaced with blank lines rather than dropped: a
-    line-magic like `%matplotlib inline` or a shell escape is not Python, and one of
-    them at the top of a notebook must not cost the reader the other sixty cells.
+    Line magics are blanked on the way through — `%matplotlib inline` and `!pip install`
+    are not Python and never were — and blanking rather than deleting keeps every line
+    after them exactly where its author left it.
+
+    Nothing here is parsed. A cell that is not Python in some way no prefix gives away
+    is dealt with afterwards, by `blank_unparsed_cells`, and only if the whole actually
+    fails to parse.
     """
     try:
         nb = json.loads(raw)
@@ -655,6 +659,44 @@ def notebook_source(raw):
         cells.append({"type": "code", "index": index, "startLine": start, "endLine": len(lines) - 1})
 
     return "\n".join(lines), cells, doc
+
+
+def blank_unparsed_cells(source, cells):
+    """The cells of a notebook that will not parse, blanked so the rest still can.
+
+    This is the second try, for a notebook that already failed to parse in one piece.
+    A cell is the unit the kernel itself compiles, so a cell that Python cannot read is
+    a cell the author never ran as Python — a `%%bash` body, a stray SQL query, a
+    `pip install` written without its `!`. The test is only ever "would this parse",
+    never the name of any particular command, because the next repo's unreadable line
+    will be one nobody has thought of.
+
+    Blanked cells keep their exact line count, so every range in `cells` and every line
+    number the analyzer goes on to report still points at the code the author wrote.
+    Each one is marked `unread` with the reason, so the map can say a cell went dark
+    instead of quietly showing a shorter notebook.
+
+    Returns the rebuilt source, unchanged if every cell parsed on its own.
+    """
+    lines = source.split("\n")
+
+    for cell in cells:
+        if cell.get("type") != "code":
+            continue
+        body = lines[cell["startLine"] - 1 : cell["endLine"]]
+        try:
+            ast.parse("\n".join(body))
+        except SyntaxError as err:
+            # Counted from the top of the cell, which is the only address a reader
+            # looking at a stack of cells can use.
+            cell["unread"] = "line %s of the cell: %s" % (err.lineno, err.msg)
+        except ValueError as err:  # a null byte, which ast reports as a ValueError
+            cell["unread"] = str(err)
+        else:
+            continue
+        lines[cell["startLine"] - 1 : cell["endLine"]] = [""] * len(body)
+
+    return "\n".join(lines)
 
 
 def strip_magic(line):
@@ -704,7 +746,25 @@ def main():
             cells = None
             if rel.endswith(".ipynb"):
                 text, cells, doc = notebook_source(text)
-            record.update(analyze_source(text))
+            try:
+                record.update(analyze_source(text))
+            except (SyntaxError, ValueError):
+                # The overwhelming majority of notebooks parse the first time and never
+                # reach this. Only one that has already failed pays for a second pass.
+                if cells is None:
+                    raise
+                retry = blank_unparsed_cells(text, cells)
+                # Every cell parsed alone but the whole did not, so the fault is in how
+                # they join rather than in any one of them. There is nothing to blank
+                # that would not be a guess, and blanking everything would hand the
+                # reader an empty notebook that claims to declare nothing — worse than
+                # saying plainly that this file could not be read.
+                if retry == text:
+                    raise
+                text = retry
+                # Still broken after the retry: let it raise, and the file is reported
+                # unread. That is the honest answer, and it is the one this tool prefers.
+                record.update(analyze_source(text))
             if cells is not None:
                 record["cells"] = cells
                 # The code, not the JSON envelope it arrived in. Everything downstream
