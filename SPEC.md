@@ -704,3 +704,31 @@ Three rules keep the list honest, and all three are facts about a file rather th
 The number printed beside each file is *how many files it imports*, not the score. A score is a number about a graph and means nothing on its own; the count is a fact somebody can go and check. It is deliberately not what the list is sorted by, and the section's own sentence says so — otherwise the first entry looks like a mistake whenever a file that imports six things outranks one that imports twenty.
 
 `OverviewView.busiestFiles` became `whereToLookFirst`, because a field still called "busiest" would have been the one thing in the atlas quietly describing the old answer.
+
+**M8.3 — the files nothing imports, and the nine times it refused to say (2026-07-31).** The second half of [#46](https://github.com/nhorto/App-Atlas/issues/46), and the answer this tool's own reader most often needs: somebody who let an agent build for a weekend has abandoned attempts sitting in the tree and cannot tell them from the working code. 23 new tests, 465 in total.
+
+**The unit is the file, not the export.** A file is imported or it is not, and the edge saying so is the compiler's. An export is used through a barrel, an alias and a re-export chain, and that question could not be answered honestly — so it is not asked.
+
+**The measurement is the whole story here.** The first version returned 42 rows across the sample and **17 of them were wrong — 40%** — and every one was caught by opening the file, not by the code:
+
+- Two on a TypeScript CLI, both loaded by `await import('./capture.ts')`. The graph did not follow a dynamic import at all; now it does, for a literal specifier, `certain`.
+- Fourteen on PocketBase — every admin page, reached from one router through `@/`, unresolvable because the `jsconfig.json` that defines the alias sits a directory below the analysis root. Now a refusal that names the fix.
+- One on gitea, a store imported by two `.vue` files. Now a refusal.
+
+The shipped rule produced **no wrong row on any repository it was run against**, and it earned that by **refusing on nine of twenty runs**. That ratio is the feature, not a limitation of it. A list of abandoned files that is right seven times in ten is unshippable, because the reader cannot tell which seven — and the one thing worse than not answering is answering confidently enough that somebody deletes working code.
+
+What it refuses, and why each refusal is a different kind of blindness:
+
+- **`--no-refs`** — the symbol pass was skipped, so every file in the repo would look unused. The same shape as a Python project mapped with no interpreter ([#58](https://github.com/nhorto/App-Atlas/issues/58)): the analyzer's eyes were shut, and zero findings is not the same as nothing to find.
+- **A library** — its callers are outside the repo by definition. That is what a library is.
+- **A run narrowed to one app inside a repo** — a sibling package can deep-import a file, and from inside the scope that is invisible. The same monorepo blind spot that made a six-repo table wrong on three rows earlier in this milestone.
+- **A project containing `.vue`, `.svelte` or `.astro`** — those files import the code they render and nothing here parses them, so an unknown number of links are missing. Not *which* links; that is why the whole answer goes rather than part of it.
+- **One unresolved path alias** — if `@/thing` did not resolve anywhere, the graph has a hole of unknown size.
+
+Deliberately **not** refused: `.mdx`. A page written in MDX can import a component, but it is prose that occasionally imports rather than a module that always does, and treating it as unparsed would silence four of the sample repos outright. That is the one accepted residual risk, and the permanent caveat under every answer carries it: *a file reached by a computed path, by a name built from a string, or from a document App Atlas does not parse is invisible here, so this is a list to check, not a list to delete.*
+
+The heading is **"Files nothing else imports"** — a statement about what the import graph contains — and a test asserts the section never contains the words "dead code" or "unused". The difference is not cosmetic: one is a fact that survives being wrong about a dynamic import, and the other is a verdict that does not.
+
+It is not on the security screen. That page answers "who can get in", and a file nobody imports is not an exposure finding.
+
+`TOOL_VERSION` moves to 0.9.0. Following a dynamic import adds edges the previous reader never drew, and a cache written by 0.8.0 would answer this feature's question from a graph that is missing them — which is precisely the false positive the whole design is built to avoid.

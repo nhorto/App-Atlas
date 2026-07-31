@@ -62,6 +62,21 @@ export interface PublishedPort {
   protocol: 'tcp' | 'udp';
 }
 
+/**
+ * One file a manifest names as a way in, and the field that named it.
+ *
+ * The path is kept exactly as the manifest wrote it, which for a published package
+ * usually means built output (`dist/index.js`) rather than the source behind it.
+ * Resolving that would mean running somebody's build; the one thing this is used for
+ * tolerates not resolving it.
+ */
+export interface EntryPoint {
+  /** As written, with any leading `./` removed. */
+  path: string;
+  /** `main`, `bin`, `exports`, `scripts.build`, `project.scripts` — where it was found. */
+  field: string;
+}
+
 /** One column of one table, as the schema declares it. */
 export interface SchemaField {
   name: string;
@@ -132,6 +147,12 @@ export interface ProjectSignals {
    * `if __name__ == "__main__":` blocks from a folder of scripts that has nothing else.
    */
   declaresAPackage: boolean;
+  /**
+   * Every file a manifest names as a way in — `main`, `bin`, the `exports` map, the
+   * scripts, a Python console script. The declaration that a file is somebody's
+   * starting point even though nothing in the repo imports it.
+   */
+  entryPoints: EntryPoint[];
   /** Repo-relative directory of the Next.js App Router, if there is one. */
   nextAppDir: string | null;
   /** Repo-relative directory of the Next.js Pages Router, if there is one. */
@@ -200,7 +221,86 @@ export function readSignals(
     ...readGoModule(root),
     ...readEnvExample(root),
     declaresAPackage: readsAsAPackage(root, packageJson),
+    entryPoints: readEntryPoints(root, packageJson),
   };
+}
+
+/** The manifest fields that name one file each, in the order a reader would look. */
+const ENTRY_FIELDS = ['main', 'module', 'browser', 'types', 'typings', 'source'];
+
+/**
+ * Every file a manifest says is a way in.
+ *
+ * Four kinds of declaration, all of them saying the same thing in different words: this
+ * file is started by something that is not in the source tree. `main` and the `exports`
+ * map are for whoever installs the package; `bin` is for whoever runs it; a script is
+ * for whoever develops it; and Python's console scripts are all three at once.
+ *
+ * Paths inside script commands are picked out by their extension rather than by parsing
+ * a shell line, because a shell line has no grammar worth the name and the cost of
+ * missing one is a file mentioned that should not have been.
+ */
+function readEntryPoints(root: string, pkg: Record<string, unknown> | null): EntryPoint[] {
+  const out: EntryPoint[] = [];
+  const add = (value: unknown, field: string) => {
+    if (typeof value !== 'string' || value === '') return;
+    const normalized = value.replace(/^\.\//, '');
+    if (!out.some((entry) => entry.path === normalized && entry.field === field)) {
+      out.push({ path: normalized, field });
+    }
+  };
+
+  if (pkg) {
+    for (const field of ENTRY_FIELDS) add(pkg[field], field);
+
+    const bin = pkg.bin;
+    if (typeof bin === 'string') add(bin, 'bin');
+    else if (bin && typeof bin === 'object') {
+      for (const value of Object.values(bin as Record<string, unknown>)) add(value, 'bin');
+    }
+
+    // An `exports` map nests conditions arbitrarily deep — `{".": {"import": {"types":
+    // "./x.d.ts"}}}` — and every string at the bottom of it is a real entry point.
+    const walk = (value: unknown, depth: number) => {
+      if (depth > 6) return;
+      if (typeof value === 'string') return add(value, 'exports');
+      if (Array.isArray(value)) return value.forEach((item) => walk(item, depth + 1));
+      if (value && typeof value === 'object') {
+        for (const item of Object.values(value as Record<string, unknown>)) walk(item, depth + 1);
+      }
+    };
+    walk(pkg.exports, 0);
+
+    const scripts = pkg.scripts;
+    if (scripts && typeof scripts === 'object') {
+      for (const [name, command] of Object.entries(scripts as Record<string, unknown>)) {
+        if (typeof command !== 'string') continue;
+        for (const match of command.matchAll(/(?:^|[\s'"=([])([\w./@-]+\.(?:[cm]?[jt]sx?|py))(?=$|[\s'")\];])/g)) {
+          add(match[1], `scripts.${name}`);
+        }
+      }
+    }
+  }
+
+  // `mytool = "mypkg.cli:main"` — the module before the colon is a real file, and it is
+  // the one thing in a Python project that is started from outside the source tree and
+  // says so in writing.
+  const pyproject = path.join(root, 'pyproject.toml');
+  if (fs.existsSync(pyproject)) {
+    let inScripts = false;
+    for (const line of splitLines(readText(pyproject))) {
+      const section = /^\s*\[([^\]]+)\]/.exec(line);
+      if (section) {
+        inScripts = /(^|\.)scripts$/.test(section[1]) || /gui-scripts$/.test(section[1]);
+        continue;
+      }
+      if (!inScripts) continue;
+      const target = /=\s*["']([A-Za-z0-9_.]+)\s*:/.exec(line);
+      if (target) add(`${target[1].split('.').join('/')}.py`, 'project.scripts');
+    }
+  }
+
+  return out;
 }
 
 /**

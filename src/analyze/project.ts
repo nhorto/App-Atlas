@@ -11,7 +11,7 @@ import fg from 'fast-glob';
 import ignoreFactory from 'ignore';
 import type { Zone } from '../model/types.js';
 import { goFrameworkFor } from './generic/go/frameworks.js';
-import { relPosix, toPosix } from '../util/paths.js';
+import { extOf, relPosix, toPosix } from '../util/paths.js';
 import { readSignals } from './signals.js';
 import type { ProjectSignals } from './signals.js';
 import { isWorker } from './wrangler.js';
@@ -43,6 +43,17 @@ export interface ProjectInfo {
   workspaces: string[];
   /** Extra patterns the caller asked to leave out. Part of the cache fingerprint. */
   ignored: string[];
+  /**
+   * Files in a format that imports modules and that no analyzer here reads — a Vue,
+   * Svelte or Astro component. Counted, never parsed.
+   *
+   * They are counted at all because of what their absence does to a question phrased as
+   * an absence. A `.vue` file's whole job is to import the code it renders; when twenty
+   * of them are invisible, twenty files' worth of links are missing from the import
+   * graph and whatever they imported looks as though nothing points at it. Gitea's
+   * `ViewFileTreeStore.ts` is imported by two `.vue` files and by nothing else.
+   */
+  unreadFormats: { ext: string; count: number }[];
   warnings: string[];
 }
 
@@ -64,6 +75,14 @@ export interface DiscoverOptions {
 }
 
 export const SOURCE_GLOB = '**/*.{ts,tsx,mts,cts,js,jsx,mjs,cjs,py,pyi,ipynb,go}';
+
+/**
+ * Single-file component formats: a module in every sense except that nothing here can
+ * parse one. Counted so that anything reading the import graph knows how much of it is
+ * missing. Deliberately not `.mdx`, which is prose that occasionally imports a component
+ * rather than code that always does.
+ */
+const UNREAD_FORMAT_GLOB = '**/*.{vue,svelte,astro}';
 
 export const DEFAULT_IGNORES = [
   '**/node_modules/**',
@@ -163,6 +182,17 @@ export async function discoverProject(rootInput: string, options: DiscoverOption
 
   const filtered = applyGitignore(root, found.map(toPosix)).sort((a, b) => a.localeCompare(b));
 
+  const components = await fg(UNREAD_FORMAT_GLOB, {
+    cwd: root,
+    absolute: false,
+    dot: false,
+    onlyFiles: true,
+    followSymbolicLinks: false,
+    suppressErrors: true,
+    ignore: [...DEFAULT_IGNORES, ...(options.extraIgnores ?? [])],
+  });
+  const unreadFormats = countByExtension(applyGitignore(root, components.map(toPosix)));
+
   let relPaths = filtered;
   if (relPaths.length > options.maxFiles) {
     warnings.push(
@@ -187,8 +217,21 @@ export async function discoverProject(rootInput: string, options: DiscoverOption
     signals,
     workspaces,
     ignored: options.extraIgnores ?? [],
+    unreadFormats,
     warnings,
   };
+}
+
+/** `['a.vue', 'b.vue', 'c.svelte']` → `[{ ext: '.vue', count: 2 }, …]`, commonest first. */
+function countByExtension(relPaths: string[]): { ext: string; count: number }[] {
+  const counts = new Map<string, number>();
+  for (const relPath of relPaths) {
+    const ext = extOf(relPath);
+    counts.set(ext, (counts.get(ext) ?? 0) + 1);
+  }
+  return [...counts.entries()]
+    .map(([ext, count]) => ({ ext, count }))
+    .sort((a, b) => b.count - a.count || a.ext.localeCompare(b.ext));
 }
 
 function readJson(file: string): Record<string, unknown> | null {

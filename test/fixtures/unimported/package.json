@@ -1,0 +1,12 @@
+{
+  "name": "unimported-fixture",
+  "private": true,
+  "version": "0.0.0",
+  "scripts": {
+    "seed": "tsx scripts/seed.ts"
+  },
+  "dependencies": {
+    "next": "^15.0.0",
+    "react": "^19.0.0"
+  }
+}

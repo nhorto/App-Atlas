@@ -63,7 +63,11 @@ function classifyPythonZone(lower: string, base: string): Zone {
   // `__init__.py` is usually empty plumbing, and `settings.py` is configuration —
   // both are checked after the roles above so a real `models/__init__.py` still reads
   // as data rather than as config.
-  if (PY_CONFIG.has(base)) return 'config';
+  //
+  // `jupyter_notebook_config.py`, `gunicorn_config.py`: the tool is told to look for a
+  // file with that suffix and reads it by name. Exactly what `*.config.ts` means on the
+  // JavaScript side, and it was the one spelling this table did not know.
+  if (PY_CONFIG.has(base) || /(^|_)config\.py$/.test(base)) return 'config';
   return 'logic';
 }
 
@@ -75,7 +79,10 @@ function classifyPythonZone(lower: string, base: string): Zone {
  * neither means anything at all in the JavaScript table — while `app/` and `pages/`,
  * which that table treats as a router, are just ordinary directory names here.
  */
-const GO_TEST = [/_test\.go$/, /(^|\/)testdata\//];
+// `test/` and `tests/` are what the other two tables already call a suite, and Go was
+// the one language here that did not say so — leaving a fixture tree under `test/` filed
+// as ordinary application code.
+const GO_TEST = [/_test\.go$/, /(^|\/)testdata\//, /(^|\/)tests?\//];
 const GO_CONFIG = new Set(['config.go', 'settings.go', 'options.go', 'env.go', 'doc.go']);
 const GO_DATA_DIRS = [/(^|\/)migrations?\//, /(^|\/)models?\//, /(^|\/)store\//, /(^|\/)storage\//, /(^|\/)repositor(y|ies)\//, /(^|\/)db\//, /(^|\/)database\//, /(^|\/)ent\//];
 const GO_DATA = new Set(['models.go', 'model.go', 'schema.go', 'store.go', 'db.go', 'database.go', 'repository.go', 'queries.go']);

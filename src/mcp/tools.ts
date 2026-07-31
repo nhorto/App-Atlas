@@ -1,9 +1,9 @@
 /**
- * @fileoverview The six tools an agent can call, over the graph that already exists.
+ * @fileoverview The seven tools an agent can call, over the graph that already exists.
  *
- * Everything here is a query, not an analysis — `model/insights.ts` and `model/graph.ts`
- * answer all six questions already, and this file is the shape those answers take when
- * the reader is a model rather than a screen.
+ * Everything here is a query, not an analysis — `model/insights.ts`, `model/graph.ts` and
+ * `model/unimported.ts` answer all seven questions already, and this file is the shape
+ * those answers take when the reader is a model rather than a screen.
  *
  * The rule that shapes every result: **an agent is even less able than a person to tell a
  * fact from a guess**, and it will repeat whatever it is told to somebody who then acts
@@ -152,6 +152,18 @@ export const MCP_TOOLS: ToolDefinition[] = [
     },
   },
   {
+    name: 'unimported_files',
+    description:
+      'Which files nothing else in this app imports — the abandoned drafts an agent left behind, if there are any. ' +
+      'Reports a fact ("nothing here imports it"), never a verdict ("dead code"), and never a deletion instruction: ' +
+      'a file loaded from a computed path or looked up by name at run time is invisible to the import graph and ' +
+      'always will be. Files a framework runs itself, files a manifest declares as a way in, tests, config and ' +
+      'anything behind a door are never listed. Refuses to answer at all — with the reason — when the reference ' +
+      'pass was skipped, when the run covered one app inside a bigger repo, or when the project is a library whose ' +
+      'callers are outside it.',
+    inputSchema: { type: 'object', properties: { ...SCOPE_PROPERTY } },
+  },
+  {
     name: 'data_stores',
     description:
       'Where this app keeps data: every database, cache, bucket and browser store, the client library it goes ' +
@@ -208,6 +220,8 @@ export function callMcpTool(source: AtlasSource, name: string, args: Record<stri
       return whatCalls(graph, app, apps, readString(args, 'target') ?? '', readLimit(args, DEFAULT_LIMIT));
     case 'where_is':
       return whereIs(graph, app, apps, readString(args, 'query') ?? '', readLimit(args, 20));
+    case 'unimported_files':
+      return unimportedFiles(graph, app, apps);
     case 'data_stores':
       return dataStores(graph, app, apps);
     case 'env_vars':
@@ -483,6 +497,60 @@ function whereIs(
   return answer(lines, provenance(app, apps, graph), {
     ...envelope(app, graph),
     matches: matches.map(nodeFact),
+  });
+}
+
+/**
+ * The files nothing else imports — and, more often than not, the refusal to say.
+ *
+ * An agent is the reader most likely to act on this list destructively and the reader
+ * best placed to check it first, so the answer is written to make checking the obvious
+ * next move: every row is a path, and the sentence around it says what the import graph
+ * does not contain rather than what the code is. `isError` stays false when the question
+ * is refused — the tool worked, and the reason it gives is the useful part.
+ */
+function unimportedFiles(graph: AtlasGraph, app: AtlasApp, apps: AtlasApp[]): ToolResult {
+  const view = graph.getOverview().unimported;
+  const lines: string[] = [];
+
+  if (!view.answered) {
+    lines.push(`Not reported for ${app.name}: ${view.because}.`);
+    return answer(lines, provenance(app, apps, graph), {
+      ...envelope(app, graph),
+      answered: false,
+      because: view.because,
+      headline: null,
+      files: [],
+    });
+  }
+
+  if (view.total === 0) {
+    lines.push(`In ${app.name}, ${view.headline}. Nothing is unaccounted for.`);
+  } else {
+    lines.push(
+      `${sentenceCase(view.headline ?? '')}, out of ${view.considered} weighed up. No import, no door, ` +
+        'no manifest entry and no framework convention accounts for them.',
+    );
+    lines.push('');
+    for (const file of view.files) {
+      const names = file.exportedNames.length > 0 ? `  ·  exports ${file.exportedNames.join(', ')}` : '';
+      lines.push(`  ${file.path}  ·  ${file.loc} lines  ·  ${file.zone}${names}`);
+    }
+    if (view.total > view.files.length) lines.push(`  ...and ${view.total - view.files.length} more`);
+  }
+
+  lines.push('');
+  for (const caveat of view.caveats) lines.push(`- ${sentenceCase(caveat)}.`);
+
+  return answer(lines, provenance(app, apps, graph), {
+    ...envelope(app, graph),
+    answered: true,
+    because: null,
+    headline: view.headline,
+    considered: view.considered,
+    total: view.total,
+    files: view.files,
+    caveats: view.caveats,
   });
 }
 

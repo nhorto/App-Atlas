@@ -6,6 +6,7 @@
  * functions/types), and produces a complete Atlas. This is the only place that knows
  * the whole pipeline.
  */
+import path from 'node:path';
 import type {
   Atlas,
   AtlasEdge,
@@ -27,6 +28,7 @@ import { buildExportDoors } from './boundaries/exports.js';
 import type { BoundaryFinding } from './boundaries/types.js';
 import { AnalysisCache, fingerprintProject } from './cache.js';
 import { buildModuleTree } from './modules.js';
+import { declaredEntryFor, frameworkOwnerOf } from './owned.js';
 import { buildSchemaNodes, buildSqlSchemaNodes } from './schema.js';
 import type { FileSlice, LanguagePlugin } from './plugin.js';
 import { discoverProject } from './project.js';
@@ -53,7 +55,7 @@ import { dominantZone } from './zones.js';
  *
  * Raise it whenever the analyzer's answers change, not only when its interface does.
  */
-export const TOOL_VERSION = '0.8.0';
+export const TOOL_VERSION = '0.9.0';
 
 export interface AnalyzeOptions {
   maxFiles?: number;
@@ -287,6 +289,17 @@ export async function analyzeProject(rootDir: string, options: AnalyzeOptions = 
     }
   }
 
+  // Why a file nobody imports is nevertheless in use: a framework runs it, or a manifest
+  // names it. Stamped here for the same two reasons the auth package above is — the model
+  // layer must not import a detector, and the fact has to survive into `atlas.json`.
+  for (const node of nodes) {
+    if (node.kind !== 'file' || !node.path) continue;
+    const owner = frameworkOwnerOf(node.path, project.signals);
+    if (owner) node.meta.frameworkOwned = owner;
+    const entry = declaredEntryFor(node.path, project.signals.entryPoints);
+    if (entry) node.meta.declaredEntry = entry;
+  }
+
   const byId = new Map(nodes.map((node) => [node.id, node]));
   stampSignInCalls(findings, liveEdges, byId);
 
@@ -313,6 +326,14 @@ export async function analyzeProject(rootDir: string, options: AnalyzeOptions = 
       archetype,
       stats: computeStats(nodes, liveEdges),
       incremental: { reused, analyzed },
+      // Written down rather than inferred later, because every one of these facts is
+      // gone by the time a second process reads the atlas — and a question answered by
+      // *not finding* something needs to know whether anybody looked.
+      coverage: {
+        references: followReferences,
+        wholeRepo: (options.repoRoot ? path.resolve(options.repoRoot) : project.root) === project.root,
+        unreadFormats: project.unreadFormats,
+      },
       warnings,
     },
     nodes: nodes.sort((a, b) => a.id.localeCompare(b.id)),

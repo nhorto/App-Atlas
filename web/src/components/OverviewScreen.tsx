@@ -13,7 +13,17 @@
  */
 import { Fragment } from 'react';
 import type { ReactNode } from 'react';
-import type { AtlasChanges, ChangeNote, ChangeReport, AtlasNode, DoorChange, LevelNode, OverviewView, Tour } from '../types';
+import type {
+  AtlasChanges,
+  ChangeNote,
+  ChangeReport,
+  AtlasNode,
+  DoorChange,
+  LevelNode,
+  OverviewView,
+  Tour,
+  UnimportedView,
+} from '../types';
 import { zoneLabel } from './AtlasNodeCard';
 import { TrustLabel } from './Trust';
 
@@ -162,6 +172,10 @@ export function OverviewScreen({ view, tours, onDrill, onReveal, onStartTour, on
         </Section>
       ) : null}
 
+      {/* Directly under the reading order, because it is the same question turned round:
+          those are the files everything leans on, these are the ones nothing does. */}
+      <Unimported view={view.unimported} onReveal={onReveal} />
+
       <Section title="Where these words came from" hint="How much of this page is a fact and how much is a guess">
         {/* Both bars count files, so they are comparable. Descriptions of folders and
             of the app itself are counted separately below rather than mixed in. */}
@@ -200,6 +214,71 @@ export function OverviewScreen({ view, tours, onDrill, onReveal, onStartTour, on
         </Section>
       ) : null}
     </div>
+  );
+}
+
+/**
+ * The files nothing else in the app imports.
+ *
+ * For somebody who steered an agent for a weekend this is often the most useful thing on
+ * the page: abandoned attempts sit in the tree looking exactly like the code that runs,
+ * and nothing else here tells them apart. Which is also why every word of it is a
+ * statement about the import graph and not a suggestion about what to do — a file
+ * reached by a computed path is invisible to this and always will be, so the section
+ * says "nothing imports it", never "this is dead".
+ *
+ * The three states are rendered as three different things on purpose. A refusal is not
+ * an empty list: it means nobody looked, and drawing it as good news would be the one
+ * mistake this whole feature exists to avoid.
+ */
+function Unimported({ view, onReveal }: { view: UnimportedView; onReveal: (id: string) => void }) {
+  if (!view.answered) {
+    return (
+      <Section title="Files nothing else imports" hint="Not reported for this project">
+        <p className="section-note">{sentenceCase(view.because ?? 'no answer')}.</p>
+      </Section>
+    );
+  }
+
+  if (view.total === 0) {
+    return (
+      <Section title="Files nothing else imports" hint="There are none">
+        {/* The sentence comes from the model, so this page and the brief the same run
+            wrote cannot describe the same repo differently. */}
+        <p className="section-note">{sentenceCase(view.headline ?? '')}.</p>
+      </Section>
+    );
+  }
+
+  return (
+    <Section
+      title="Files nothing else imports"
+      hint="No import, no door, no manifest entry, no framework convention — worth opening"
+    >
+      <p className="section-note">{sentenceCase(view.headline ?? '')}, out of {view.considered} weighed up.</p>
+      <ol className="start-list">
+        {view.files.map((file) => (
+          <li key={file.id}>
+            <button onClick={() => onReveal(file.id)} title={file.path}>
+              <span className={`dot zone-${file.zone}`} />
+              <span className="start-name">{file.path}</span>
+              <span className={`start-summary source-${file.summarySource ?? 'none'}`}>
+                {file.summary ?? (file.exportedNames.length > 0 ? `exports ${file.exportedNames.join(', ')}` : '')}
+              </span>
+              <span className="start-count">{file.loc}</span>
+            </button>
+          </li>
+        ))}
+      </ol>
+      {view.total > view.files.length ? (
+        <p className="section-note">…and {view.total - view.files.length} more.</p>
+      ) : null}
+      <ul className="warn-list">
+        {view.caveats.map((caveat) => (
+          <li key={caveat}>{sentenceCase(caveat)}.</li>
+        ))}
+      </ul>
+    </Section>
   );
 }
 

@@ -337,6 +337,34 @@ export interface AtlasMeta {
   warnings: string[];
 }
 
+/** One file nothing else in the app imports. See src/model/unimported.ts. */
+export interface UnimportedFile {
+  id: string;
+  path: string;
+  zone: Zone;
+  loc: number;
+  exportedNames: string[];
+  summary: string | null;
+  summarySource: SummarySource;
+}
+
+/**
+ * The files nothing imports, or the reason there is no answer.
+ *
+ * `answered: false` with an empty list and `answered: true` with an empty list are
+ * opposite facts about a repo, and the screen must never render them the same way.
+ */
+export interface UnimportedView {
+  answered: boolean;
+  because: string | null;
+  /** The sentence, written by the model layer. Lower case; add the capital and stop. */
+  headline: string | null;
+  files: UnimportedFile[];
+  total: number;
+  considered: number;
+  caveats: string[];
+}
+
 export interface OverviewView {
   meta: AtlasMeta;
   rootId: string;
@@ -345,6 +373,7 @@ export interface OverviewView {
   whereToLookFirst: { node: AtlasNode; imports: number }[];
   zoneCounts: Record<string, number>;
   changes: ChangeReport | null;
+  unimported: UnimportedView;
 }
 
 // --- the words layer (SPEC.md 5.5) ---

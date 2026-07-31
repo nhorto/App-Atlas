@@ -22,6 +22,7 @@ import { authHeadline } from '../model/exposure.js';
 import { buildInsights } from '../model/insights.js';
 import type { RouteInsight } from '../model/insights.js';
 import { grammarTier } from '../model/tiers.js';
+import type { UnimportedView } from '../model/unimported.js';
 import { buildTypeView } from '../model/typeview.js';
 import type { SummarySource } from '../model/types.js';
 
@@ -191,6 +192,12 @@ export function renderAtlasMarkdown(graph: AtlasGraph, options: MarkdownOptions 
     }
     out.push('');
   }
+
+  // --- what nothing points at ---
+  // Beside "the parts" rather than beside the reading order at the bottom, because it
+  // answers the same question those do — what is this made of — and because an agent
+  // about to change this code needs it before it starts, not after.
+  appendUnimported(out, overview.unimported);
 
   // --- shapes ---
   const types = buildTypeView(graph, MAX_TYPES);
@@ -369,6 +376,53 @@ function appendPorts(out: string[], graph: AtlasGraph): void {
     out.push(`- ${where}${claim}`);
   }
   if (ports.length > MAX_PORTS) out.push(`- …and ${ports.length - MAX_PORTS} more.`);
+  out.push('');
+}
+
+/**
+ * The files nothing else in this app imports.
+ *
+ * The section is written even when the list is empty, and even when the question could
+ * not be answered — which is most of the point. This file is read by agents, and an
+ * absent section is one an agent fills in with an assumption; "no unused files were
+ * found" and "nobody looked for them" are different sentences and would otherwise look
+ * identical, which is the same mistake `authHeadline` exists to stop.
+ *
+ * Nothing here is phrased as an instruction. Every line is a fact about what the import
+ * graph does and does not contain, and the caveats that follow are the reason: a file
+ * reached by a computed path is invisible to this, permanently, and the wording has to
+ * survive being wrong about one.
+ */
+function appendUnimported(out: string[], view: UnimportedView): void {
+  out.push('## Files nothing else imports');
+  out.push('');
+
+  if (!view.answered) {
+    out.push(`Not reported: ${view.because}.`);
+    out.push('');
+    return;
+  }
+
+  if (view.total === 0) {
+    out.push(`${sentenceCase(view.headline ?? '')}.`);
+    out.push('');
+    return;
+  }
+
+  out.push(
+    `**${sentenceCase(view.headline ?? '')}** — out of ${n(view.considered)} weighed up. ` +
+      'Nothing accounts for them: no import, no door, no manifest entry, no framework convention. ' +
+      'Worth opening; not, on this evidence alone, worth deleting.',
+  );
+  out.push('');
+  for (const file of view.files) {
+    const names = file.exportedNames.length > 0 ? ` — exports ${file.exportedNames.map((x) => `\`${x}\``).join(', ')}` : '';
+    const summary = file.summary ? ` — ${oneLine(file.summary)}${mark(file.summarySource)}` : '';
+    out.push(`- \`${file.path}\` (${n(file.loc)} ${plural(file.loc, 'line')}, ${file.zone})${names}${summary}`);
+  }
+  if (view.total > view.files.length) out.push(`- …and ${view.total - view.files.length} more.`);
+  out.push('');
+  for (const caveat of view.caveats) out.push(`- ${sentenceCase(caveat)}.`);
   out.push('');
 }
 

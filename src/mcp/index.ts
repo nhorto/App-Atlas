@@ -6,7 +6,7 @@
  * middle of editing the code the answers are about.
  *
  * Three methods carry the whole feature: `initialize` agrees a protocol version,
- * `tools/list` describes the six tools, and `tools/call` runs one. Everything else is
+ * `tools/list` describes the tools, and `tools/call` runs one. Everything else is
  * either a notification to be ignored or a capability this server does not claim — and
  * it says so with a method-not-found rather than inventing an empty answer.
  */
