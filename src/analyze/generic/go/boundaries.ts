@@ -320,13 +320,14 @@ function detectRoutes(
     if (method === 'Mount') {
       const child = call.args.map(nameOf).find((name) => name !== null) ?? null;
       const dot = child?.indexOf('.') ?? -1;
+      const module = dot > 0 ? (imports.get(child!.slice(0, dot)) ?? null) : null;
       findings.push({
         type: 'router-mount',
         path: file.path,
         hostVar: host.varName,
-        // `api.Router()` names a package, and the package is a directory of files. The
-        // merge layer matches on the tail, which is why the local name is enough.
-        childModule: dot > 0 ? (imports.get(child!.slice(0, dot)) ?? null) : null,
+        childModule: module === null ? null : packageDir(module, input.signals.goModule),
+        // `api.Routes()` names the call that hands the router over, not the variable it
+        // was built under — which is why the package it came from has to answer instead.
         childVar: dot > 0 ? child!.slice(dot + 1).replace(/\(\)$/, '') : child,
         hasPrefix: firstString(call.args) !== null,
         prefix: firstString(call.args),
@@ -392,6 +393,23 @@ function detectRoutes(
   }
 
   return wiring;
+}
+
+/**
+ * The folder a Go import names, written the way the repo lays its own files out.
+ *
+ * A Go import names a package, and a package is a directory: `github.com/me/app/internal/api`
+ * is the folder `internal/api`, and every `.go` file in it is that package. `go.mod` says
+ * what prefix this repo's own folders carry, which is the only thing that can tell one of
+ * ours from somebody else's.
+ *
+ * An import that is not ours is handed back exactly as written. Trimming it down to
+ * something that looks like a folder of ours is how `github.com/other/api` would come to
+ * stand for our own `api/`, and a prefix invented that way is worse than no prefix at all.
+ */
+function packageDir(module: string, ownModule: string | null): string {
+  if (!ownModule || !module.startsWith(`${ownModule}/`)) return module;
+  return module.slice(ownModule.length + 1);
 }
 
 /**

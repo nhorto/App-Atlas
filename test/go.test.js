@@ -1,10 +1,11 @@
 /**
  * @fileoverview End-to-end tests for the generic tier, proved on Go.
  *
- * Two fixtures, because Go services come in two shapes and only one of them has a
- * framework in it. `gohttp` uses chi, which is where sub-routers, closures and middleware
- * live; `gostd` uses nothing at all but `net/http`, which is a large fraction of real Go
- * and would be a blank page for anything that only knows frameworks.
+ * Three fixtures, because Go services come in shapes that break different rules.
+ * `gohttp` uses chi, which is where sub-routers, closures and middleware live; `gostd`
+ * uses nothing at all but `net/http`, which is a large fraction of real Go and would be a
+ * blank page for anything that only knows frameworks; `gomount` splits its routes across
+ * packages, which is what every Go service does once it outgrows one file.
  *
  * Nothing here needs Go installed. The grammar is a WebAssembly file this repo ships, so
  * these run identically on a machine that has never had a Go toolchain on it — which is
@@ -19,9 +20,11 @@ import { analyzeProject, AtlasGraph, grammarTier, renderAtlasMarkdown } from '..
 const here = path.dirname(fileURLToPath(import.meta.url));
 const CHI = path.join(here, 'fixtures', 'gohttp');
 const STDLIB = path.join(here, 'fixtures', 'gostd');
+const PACKAGES = path.join(here, 'fixtures', 'gomount');
 
 const { atlas } = await analyzeProject(CHI, { followReferences: true, cache: 'off' });
 const std = (await analyzeProject(STDLIB, { followReferences: true, cache: 'off' })).atlas;
+const split = (await analyzeProject(PACKAGES, { followReferences: true, cache: 'off' })).atlas;
 
 const find = (kind, name) => atlas.nodes.find((n) => n.kind === kind && n.name === name);
 const file = (relPath) => atlas.nodes.find((n) => n.kind === 'file' && n.path === relPath);
@@ -125,6 +128,38 @@ test('a client call going out is not a door coming in', () => {
   const slack = find('service', 'Slack');
   assert.ok(slack, 'and it is still recorded — as somewhere data goes');
   assert.deepEqual(slack.meta.hosts, ['hooks.slack.com']);
+});
+
+// ---------------------------------------------------------------------------
+// Addresses written in one package and finished in another
+// ---------------------------------------------------------------------------
+
+test('a router mounted from another package wears the prefix the mount put in front of it', () => {
+  // `r.Mount("/api/v1", api.Routes())` is in `cmd/gateway/main.go`; `r.Get("/orders", …)`
+  // is in `internal/api/routes.go`. Neither file holds the address, and `/orders` on its
+  // own is a short address that looks complete — the exact failure the mount graph was
+  // written to prevent.
+  assert.deepEqual(split.meta.warnings, [], 'a silent parse failure must not pass as a pass');
+  assert.deepEqual(doors(split), ['GET /admin/status', 'GET /api/v1/orders', 'POST /api/v1/orders']);
+});
+
+test('a Go import names a folder, so no single file in the package answers to it', () => {
+  // The mount asks for `internal/api`. The router is built in `internal/api/routes.go`
+  // and the handlers sit beside it in `internal/api/handlers.go` — same package, and the
+  // import can name neither file, because what it names is the folder holding both.
+  assert.ok(
+    split.nodes.some((n) => n.kind === 'file' && n.path === 'internal/api/handlers.go'),
+    'the package really is more than one file',
+  );
+  assert.ok(!doors(split).includes('GET /orders'), 'so the routes are not left at the address their own file holds');
+});
+
+test('a router handed in as a parameter is already at its full address', () => {
+  // `admin.RegisterRoutes(r)` is not a mount: the parent is passed in, and
+  // `r.Get("/admin/status", …)` inside it is written against that parent. There is no
+  // prefix to add, and adding one would be inventing an address nobody serves.
+  assert.ok(doors(split).includes('GET /admin/status'));
+  assert.ok(!doors(split).some((name) => name.includes('/api/v1/admin')));
 });
 
 // ---------------------------------------------------------------------------
