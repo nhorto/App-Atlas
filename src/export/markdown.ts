@@ -17,7 +17,7 @@
  */
 import type { AtlasGraph } from '../model/graph.js';
 import { describeChanges } from '../model/changes.js';
-import type { AtlasChanges, DoorChange } from '../model/types.js';
+import type { AtlasChanges, AtlasNode, DoorChange } from '../model/types.js';
 import { authHeadline } from '../model/exposure.js';
 import { buildInsights } from '../model/insights.js';
 import type { RouteInsight } from '../model/insights.js';
@@ -42,6 +42,10 @@ const MAX_PERSONAL_TABLES = 12;
 const OTHER_DOORS = new Set(['webhook', 'cron', 'queue', 'cli', 'file-read']);
 
 const MAX_PORTS = 20;
+/** Above this many sibling doors of one kind in one folder, name a few and count the rest. */
+const FOLD_DOORS_ABOVE = 5;
+/** How many of a folded folder's doors are still named individually. */
+const DOORS_SHOWN_PER_FOLDER = 4;
 
 export interface MarkdownOptions {
   /** Stamped into the header so a stale copy is obvious. Defaults to the atlas's own. */
@@ -159,11 +163,7 @@ export function renderAtlasMarkdown(graph: AtlasGraph, options: MarkdownOptions 
   if (others.length > 0) {
     out.push('## Also runs on its own');
     out.push('');
-    for (const node of others) {
-      const meta = node.meta as { endpointKind?: string; route?: string; schedule?: string; sites?: { path: string }[] };
-      const when = meta.schedule ? ` (${meta.schedule})` : '';
-      out.push(`- **${meta.endpointKind}** ${meta.route ?? node.name}${when} — \`${meta.sites?.[0]?.path ?? '—'}\``);
-    }
+    for (const line of doorLines(others)) out.push(line);
     out.push('');
   }
 
@@ -359,6 +359,61 @@ function appendChanges(out: string[], changes: AtlasChanges | undefined, shared:
  * that was read. An agent reading this brief must not come away able to tell a customer
  * their database is exposed on the strength of a file nobody may ever run.
  */
+/**
+ * The lines under "Also runs on its own", with a folder of sibling scripts folded down.
+ *
+ * Two things go wrong when a repo runs on scripts rather than on routes. A command-line
+ * door has no route, so it falls back to naming itself after its own file, and the line
+ * prints that path on both sides of the em-dash — the same string twice, saying nothing
+ * the second time. And a folder of thirty verification scripts arrives as thirty
+ * near-identical lines, which is a shape a reader wants told, not a list they want read.
+ *
+ * Folding names the first few and counts the remainder out loud. A cap nobody mentions
+ * reads as "that was all of them", so the count and the folder are part of the line.
+ */
+function doorLines(nodes: AtlasNode[]): string[] {
+  type Door = { kind: string; label: string; when: string; path: string | null };
+  const doors: Door[] = nodes.map((node) => {
+    const meta = node.meta as { endpointKind?: string; route?: string; schedule?: string; sites?: { path: string }[] };
+    return {
+      kind: String(meta.endpointKind),
+      label: meta.route ?? node.name,
+      when: meta.schedule ? ` (${meta.schedule})` : '',
+      path: meta.sites?.[0]?.path ?? null,
+    };
+  });
+
+  // A door is folded with its siblings only when it is the same kind of thing living in
+  // the same folder. A cron beside a CLI script is not a repetition of it.
+  const groups = new Map<string, Door[]>();
+  for (const door of doors) {
+    const folder = door.path ? door.path.split('/').slice(0, -1).join('/') : '';
+    const key = `${door.kind} ${folder}`;
+    const bucket = groups.get(key);
+    if (bucket) bucket.push(door);
+    else groups.set(key, [door]);
+  }
+
+  const out: string[] = [];
+  for (const [key, bucket] of groups) {
+    const folder = key.split(' ')[1];
+    const fold = bucket.length > FOLD_DOORS_ABOVE && folder !== '';
+    for (const door of fold ? bucket.slice(0, DOORS_SHOWN_PER_FOLDER) : bucket) out.push(doorLine(door));
+    if (fold) {
+      const rest = bucket.length - DOORS_SHOWN_PER_FOLDER;
+      out.push(`- …and ${rest} more **${bucket[0].kind}** ${plural(rest, 'door')} under \`${folder}/\``);
+    }
+  }
+  return out;
+
+  function doorLine(door: Door): string {
+    // Where the label is the path — which is what a script with no declared command name
+    // ends up with — one of the two is noise, and the path is the half worth keeping.
+    if (door.path && door.label.includes(door.path)) return `- **${door.kind}** \`${door.label}\`${door.when}`;
+    return `- **${door.kind}** ${door.label}${door.when} — \`${door.path ?? '—'}\``;
+  }
+}
+
 function appendPorts(out: string[], graph: AtlasGraph): void {
   const ports = graph
     .nodesOfKind('endpoint')

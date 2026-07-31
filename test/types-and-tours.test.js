@@ -303,6 +303,45 @@ test('code that runs on its own is listed even though auth cannot apply', () => 
   assert.match(markdown, /\*\*webhook\*\*/);
 });
 
+test('a folder of sibling scripts is folded, and says how many it folded', () => {
+  // A repo that runs on scripts rather than routes produces one door per file. Thirty
+  // of them under one folder is a shape, not a list — but a cap nobody mentions reads
+  // as "that was all of them", so the count has to survive the folding.
+  const atlas = structuredClone(boundaryAtlas);
+  for (let i = 1; i <= 9; i += 1) {
+    atlas.nodes.push({
+      id: `endpoint:cli:tools/run_${i}.py`,
+      kind: 'endpoint',
+      name: `tools/run_${i}.py`,
+      parentId: 'zone:inbound',
+      path: `tools/run_${i}.py`,
+      zone: 'logic',
+      provenance: 'static',
+      meta: { endpointKind: 'cli', guards: [], writes: false, sites: [{ path: `tools/run_${i}.py`, line: 1 }] },
+    });
+  }
+  const section = renderAtlasMarkdown(new AtlasGraph(atlas))
+    .split('## Also runs on its own')[1]
+    .split('\n## ')[0];
+  const named = section.split('\n').filter((l) => l.includes('tools/run_'));
+  assert.equal(named.length, 4, `named individually: ${named.length}`);
+  assert.match(section, /…and 5 more \*\*cli\*\* doors under `tools\/`/);
+});
+
+test('a door named after its own file prints that file once', () => {
+  // A command-line script has no route, so it falls back to naming itself after its
+  // path — and the line then printed that path on both sides of the em-dash, saying
+  // nothing the second time. On a script-heavy repo that is a hundred lines of it.
+  const section = markdown.split('## Also runs on its own')[1].split('\n## ')[0];
+  for (const line of section.split('\n').filter((l) => l.startsWith('- '))) {
+    const twice = /`([^`]+)`/.exec(line);
+    if (!twice) continue;
+    const path = twice[1];
+    const rest = line.replace(`\`${path}\``, '');
+    assert.ok(!rest.includes(path), `printed twice: ${line}`);
+  }
+});
+
 test('the stars in the env list add up to the number underneath them', () => {
   // The footnote says "N of M are read by the code but written down nowhere". A reader
   // who counts the stars must arrive at N. They used to arrive at N plus however many
