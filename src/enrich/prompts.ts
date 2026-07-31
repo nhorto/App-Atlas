@@ -27,6 +27,7 @@ Rules:
 - Use the facts given. They came from a compiler and are correct. Do not contradict them.
 - Never add detail the facts do not have. If they say "Database", write "the database" — not Postgres, not MySQL. If they name no company, name none. Being more specific than the facts is the one way to be confidently wrong.
 - A blank in the facts means nobody could see it, not that it is absent. "No data store found" does not license "it stores nothing".
+- A URL path and its method are one fact, not two. Write a path with the method the facts give it ("POST /api/orders"), or write the path on its own. Never pair a path with a method the facts did not put beside it.
 - Never guess. If the facts do not say what something does, describe what it plainly is and stop. A vague true sentence beats a confident wrong one.
 - No openers ("This file is responsible for…"), no praise, no restating the name. Start with the verb or the noun that matters.
 - Present tense, second person for the app as a whole ("your app"), no first person.`;

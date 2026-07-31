@@ -29,7 +29,15 @@ import { knownServiceNames } from '../analyze/boundaries/catalog.js';
 import { fileBatchRequest, moduleBatchRequest, overviewRequest } from './prompts.js';
 import type { CachedExplanation, EnrichBackend, EnrichTier, EnrichUsage } from './types.js';
 import { estimateTokens, explanationKey } from './types.js';
-import { cleanLabel, cleanParagraph, cleanSentence, parseJsonReply } from './validate.js';
+import type { MethodsByRoute } from './validate.js';
+import {
+  cleanLabel,
+  cleanParagraph,
+  cleanSentence,
+  dropWrongMethods,
+  methodsByRoute,
+  parseJsonReply,
+} from './validate.js';
 
 /** Batch sizes. Big enough that an agent CLI's startup cost is amortised, small
  *  enough that one malformed reply loses a dozen descriptions rather than a hundred. */
@@ -91,6 +99,15 @@ export interface EnrichReport {
    * of the two layers is wrong, and it is worth knowing which.
    */
   contradictions: string[];
+  /**
+   * Route-and-verb pairs the endpoint table disproved, like `GET /api/posts` (#47).
+   *
+   * Unlike `contradictions` these are acted on rather than merely reported: the atlas
+   * holds the verb for that path, so the sentence is not a lead, it is wrong. The
+   * sentence carrying it was dropped, and this is what it said — printed so that a
+   * missing sentence is a decision the reader can see rather than a silence.
+   */
+  misattributedRoutes: string[];
   usage: EnrichUsage;
   /** Newly generated explanations for the caller to persist. */
   additions: Map<string, CachedExplanation>;
@@ -112,12 +129,22 @@ export async function enrichAtlas(options: EnrichOptions): Promise<EnrichReport>
     filesSkipped: 0,
     declined: false,
     contradictions: [],
+    misattributedRoutes: [],
     usage: { inputTokens: 0, outputTokens: 0, costUsd: 0 },
     additions: new Map(),
   };
 
   const byId = new Map(atlas.nodes.map((node) => [node.id, node]));
   const responsibilities = responsibilitiesByPath(atlas);
+  // Every door the analyzer found, so a sentence can be held to it on the way in. Built
+  // once here and threaded down, because the check has to run wherever text reaches a
+  // node — including text that came back out of the cache, which was written before this
+  // check existed and is re-examined rather than trusted.
+  const routes = methodsByRoute(
+    atlas.nodes
+      .filter((node) => node.kind === 'endpoint')
+      .map((node) => node.meta as unknown as EndpointMeta),
+  );
 
   // --- work out what needs saying ---------------------------------------------
   const appNode = atlas.nodes.find((node) => node.kind === 'app');
@@ -134,7 +161,7 @@ export async function enrichAtlas(options: EnrichOptions): Promise<EnrichReport>
   if (appNode && appFacts) {
     const hit = cache.get(explanationKey('overview', appHash));
     if (hit) {
-      applySummary(appNode, hit.text);
+      applySummary(appNode, hit.text, routes, report);
       report.reusedFromCache++;
     } else {
       pending.overview = true;
@@ -148,7 +175,7 @@ export async function enrichAtlas(options: EnrichOptions): Promise<EnrichReport>
       continue;
     }
     const node = byId.get(item.item.key);
-    if (node) applyModule(node, hit.text, report);
+    if (node) applyModule(node, hit.text, routes, report);
     report.reusedFromCache++;
   }
 
@@ -159,10 +186,7 @@ export async function enrichAtlas(options: EnrichOptions): Promise<EnrichReport>
       continue;
     }
     const node = byId.get(item.item.key);
-    if (node) {
-      applySummary(node, hit.text);
-      report.described++;
-    }
+    if (node && applySummary(node, hit.text, routes, report)) report.described++;
     report.reusedFromCache++;
   }
 
@@ -225,7 +249,7 @@ export async function enrichAtlas(options: EnrichOptions): Promise<EnrichReport>
       const reply = await backend.run(job.request, controller.signal);
       report.requests++;
       accumulate(report.usage, reply.usage);
-      applyReply(job, reply.text, byId, report);
+      applyReply(job, reply.text, byId, routes, report);
     } catch {
       // One failed batch is a dozen missing sentences, not a failed analysis. The
       // static map is the product; the words are the polish on top of it.
@@ -278,14 +302,25 @@ function companiesNotFound(paragraph: string, found: string[]): string[] {
   return missing;
 }
 
-function applyReply(job: Job, text: string, byId: Map<string, AtlasNode>, report: EnrichReport): void {
+function applyReply(
+  job: Job,
+  text: string,
+  byId: Map<string, AtlasNode>,
+  routes: MethodsByRoute,
+  report: EnrichReport,
+): void {
   if (job.tier === 'overview') {
     const node = byId.get(job.nodeIds[0]);
     const paragraph = cleanParagraph(text);
     if (!node || !paragraph) return;
     report.contradictions.push(...companiesNotFound(paragraph, job.knownServices ?? []));
-    applySummary(node, paragraph);
+    // What the model wrote is what gets cached, even when part of it is about to be
+    // dropped: the cache records an answer we paid for, and whether a sentence stands up
+    // to the endpoint table is a judgement against a table that improves between runs.
+    // Storing the trimmed version would bake today's detectors into next year's map, and
+    // storing nothing would buy the same paragraph again on every run.
     remember(report, 'overview', node.id, job.hashes[0], paragraph);
+    applySummary(node, paragraph, routes, report);
     return;
   }
 
@@ -310,20 +345,19 @@ function applyReply(job: Job, text: string, byId: Map<string, AtlasNode>, report
     if (job.tier === 'module') {
       const entry = value as { name?: unknown; text?: unknown };
       const stored = JSON.stringify({ name: entry?.name ?? null, text: entry?.text ?? null });
-      if (applyModule(node, stored, report)) remember(report, 'module', node.id, hash, stored);
+      if (applyModule(node, stored, routes, report)) remember(report, 'module', node.id, hash, stored);
       continue;
     }
 
     const sentence = cleanSentence(value);
     if (!sentence) continue;
-    applySummary(node, sentence);
-    report.described++;
     remember(report, 'file', node.id, hash, sentence);
+    if (applySummary(node, sentence, routes, report)) report.described++;
   }
 }
 
 /** Folders carry a name and a sentence, stored together so one cache hit restores both. */
-function applyModule(node: AtlasNode, stored: string, report: EnrichReport): boolean {
+function applyModule(node: AtlasNode, stored: string, routes: MethodsByRoute, report: EnrichReport): boolean {
   let entry: { name?: unknown; text?: unknown };
   try {
     entry = JSON.parse(stored) as { name?: unknown; text?: unknown };
@@ -337,22 +371,35 @@ function applyModule(node: AtlasNode, stored: string, report: EnrichReport): boo
     node.label = label;
     report.labelled++;
   }
-  if (sentence) {
-    applySummary(node, sentence);
-    report.described++;
-  }
+  if (sentence && applySummary(node, sentence, routes, report)) report.described++;
+  // The answer was usable even if the endpoint table then took the sentence off it, so
+  // it is still worth caching — otherwise the same paragraph is bought again every run.
   return Boolean(label || sentence);
 }
 
 /**
- * A generated sentence never displaces a docstring. That is the ladder in one line:
- * the developer's own words outrank ours, always, whatever order things happen in.
+ * The one door every generated sentence goes through on its way onto a node, whether it
+ * has just been paid for or has come back out of the cache.
+ *
+ * Two rules live here because both have to hold in every code path. A generated sentence
+ * never displaces a docstring — the developer's own words outrank ours, always. And no
+ * sentence may pair one of your routes with a verb the route does not answer to; that
+ * one is dropped rather than corrected, because rewriting the verb would put a sentence
+ * on screen that nobody wrote. Returns whether anything was actually written.
  */
-function applySummary(node: AtlasNode, text: string): void {
-  if (node.summarySource === 'docs') return;
-  node.summary = text;
+function applySummary(node: AtlasNode, text: string, routes: MethodsByRoute, report: EnrichReport): boolean {
+  if (node.summarySource === 'docs') return false;
+
+  const grounded = dropWrongMethods(text, routes);
+  for (const claim of grounded.wrong) {
+    if (!report.misattributedRoutes.includes(claim)) report.misattributedRoutes.push(claim);
+  }
+  if (!grounded.text) return false;
+
+  node.summary = grounded.text;
   node.summarySource = 'ai';
   node.provenance = 'ai';
+  return true;
 }
 
 function remember(report: EnrichReport, tier: EnrichTier, nodeId: string, hash: string, text: string): void {

@@ -184,10 +184,27 @@ function compact(tokens: number): string {
   return tokens >= 1000 ? `${Math.round(tokens / 1000)}k` : String(tokens);
 }
 
+/**
+ * What to say about a sentence that named one of your routes with the wrong verb.
+ *
+ * A description that quietly shrinks is worse than one that says why: the reader is
+ * entitled to know that a claim was made and thrown out, not least because the claim
+ * might have been right and the map wrong.
+ */
+function misattributions(report: EnrichReport): string[] {
+  if (report.misattributedRoutes.length === 0) return [];
+  return [
+    `  Dropped a description that called ${report.misattributedRoutes.join(', ')} — your endpoints answer to different verbs.`,
+    '  The sentence was removed rather than corrected: rewriting it would put words on screen that nothing wrote.',
+  ];
+}
+
 /** The line printed after a successful pass, in the analysis summary. */
 export function describeRun(report: EnrichReport): string[] {
   if (report.declined) return ['  No explanations were written.'];
-  if (report.backend === 'cache') return [];
+  // A dropped sentence is said out loud even on a run that spent nothing, because the
+  // text it was dropped from may have been written months ago and paid for once.
+  if (report.backend === 'cache') return misattributions(report);
 
   const lines: string[] = [];
   const written = report.described + report.labelled;
@@ -220,6 +237,7 @@ export function describeRun(report: EnrichReport): string[] {
       '  Either the write-up over-reached or something real is missing from the map.',
     );
   }
+  lines.push(...misattributions(report));
   // A pass that ran and produced nothing usable has to say so. Silence here reads as
   // "there was nothing to describe", which is the opposite of what happened.
   if (written === 0 && report.requests > 0 && report.failedRequests === 0) {
