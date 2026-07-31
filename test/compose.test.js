@@ -11,11 +11,14 @@ import assert from 'node:assert/strict';
 import path from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
-import { analyzeProject } from '../dist/node/index.js';
+import { analyzeProject, findScopes } from '../dist/node/index.js';
 import { readComposePorts } from '../dist/node/analyze/boundaries/compose.js';
+import { classifyZone } from '../dist/node/analyze/zones.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const FIXTURE = path.join(here, 'fixtures', 'compose');
+const MONO = path.join(here, 'fixtures', 'composemono');
+const MONO_APP = path.join(MONO, 'packages', 'api');
 
 const ports = readComposePorts(FIXTURE);
 const { atlas } = await analyzeProject(FIXTURE, { followReferences: true, cache: 'off' });
@@ -98,6 +101,18 @@ test('a port whose number lives in an env file is a door with no number', () => 
   assert.equal(ports.find((p) => p.target === 'web').hostPort, '8081');
 });
 
+test('a stack stood up for a test run is not a deployment', () => {
+  // `tests/docker-compose.yml` publishes an LDAP fixture on 10389. It is scaffolding in
+  // the same sense `.devcontainer/` is, and neither describes how anybody ships this.
+  assert.equal(
+    ports.some((p) => p.configPath.startsWith('tests/') || p.hostPort === '10389'),
+    false,
+  );
+  // The *path* decides, not the filename: `compose.<env>.yml` is the variant convention
+  // and `test` sits in the same slot as `prod`, so a root-level one would stay.
+  assert.equal(classifyZone('docker-compose.test.yml') === 'test', false);
+});
+
 test('`ports:` somewhere that is not a service attribute is not a port', () => {
   // One nested under `deploy.resources`, one inside a block scalar. A reader that
   // matched the keyword anywhere in the file would draw two doors nobody opened.
@@ -168,4 +183,53 @@ test('published ports do not inflate the auth headline', () => {
 
 test('a repo with no Compose file gains nothing', () => {
   assert.deepEqual(readComposePorts(path.join(here, 'fixtures', 'worker')), []);
+});
+
+// ---------------------------------------------------------------------------
+// The stack is described above the app App Atlas chose to focus on.
+//
+// A large repo is landed on its main app (#34), so the analysis root for the FastAPI
+// template is `backend/` and for cal.com is a package three levels down. Reading the
+// deployment files from *there* walked straight past the compose file at the top of the
+// repo and reported no ports at all on three of six real repos — while the reader
+// itself, called directly, looked perfectly correct.
+
+test('App Atlas picks the app, not the repo, which is exactly the problem', async () => {
+  const scopes = await findScopes(MONO);
+  // The app leads, so this is the directory the analysis lands in — two levels below
+  // the only file that describes the stack.
+  assert.equal(scopes[0].dir, 'packages/api');
+  assert.equal(scopes[0].kind, 'app');
+});
+
+test('narrowing the code does not narrow the deployment files', () => {
+  const found = readComposePorts(MONO, MONO_APP);
+  assert.deepEqual(found.map((p) => `${p.configPath} ${p.hostPort} → ${p.target}`), [
+    '../../docker-compose.yml 5432 → db',
+  ]);
+});
+
+test('and nothing above the directory the user named is ever read', () => {
+  // `app-atlas ./packages/api` means `./packages/api`. The repo root is only ever handed
+  // in from outside; it is never found by walking upwards, so a caller that names a
+  // sub-directory still gets exactly what it asked for.
+  assert.deepEqual(readComposePorts(MONO_APP), []);
+});
+
+const { atlas: scoped } = await analyzeProject(MONO_APP, { repoRoot: MONO, cache: 'off' });
+const { atlas: unscoped } = await analyzeProject(MONO_APP, { cache: 'off' });
+
+test('the door survives the whole pipeline, path and all', () => {
+  const found = scoped.nodes.filter((n) => n.kind === 'endpoint' && n.meta.endpointKind === 'port');
+  assert.deepEqual(found.map((n) => n.name), [
+    '../../docker-compose.yml publishes 5432 on every interface → db',
+  ]);
+  // Relative to the app being mapped, so the path resolves from the atlas's own root
+  // rather than pointing at a file that is not where it says it is.
+  assert.equal(found[0].meta.sites[0].path, '../../docker-compose.yml');
+  assert.equal(
+    unscoped.nodes.some((n) => n.kind === 'endpoint' && n.meta.endpointKind === 'port'),
+    false,
+    'without a repo root there is nothing above the app to read',
+  );
 });
