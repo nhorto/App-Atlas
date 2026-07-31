@@ -165,11 +165,21 @@ test('an f-string gives up its verb but not its table', { skip }, () => {
   assert.ok(!store(app, 'PostgreSQL').meta.tables.includes('limit'));
 });
 
-test('a catalog view keeps its schema, an ordinary table drops it', { skip }, () => {
+test('the database’s own catalog is not one of the app’s tables', { skip }, () => {
+  // A schema-dump script reads `information_schema.columns` the same way it reads
+  // `orders`, so it used to arrive in the data model looking designed. Naming it in
+  // full was no better than shortening it to `columns`: either way the reader is told
+  // they have a table nobody wrote.
   const tables = store(app, 'PostgreSQL').meta.tables;
-  assert.ok(tables.includes('information_schema.columns'), `got ${tables.join(', ')}`);
-  assert.ok(tables.includes('orders'), 'public.orders is just orders');
-  assert.ok(!tables.includes('columns'), 'and the catalog is not mistaken for one of the app’s own');
+  assert.ok(!tables.some((t) => t.startsWith('information_schema.')), `got ${tables.join(', ')}`);
+  assert.ok(!tables.includes('columns'), 'and it is not mistaken for one of the app’s own either');
+  assert.ok(tables.includes('orders'), 'public.orders is still just orders');
+});
+
+test('reading the catalog still counts as reading the database', { skip }, () => {
+  // Dropping the table must not drop the fact. The file did query the database, and a
+  // store that loses the read would trade one wrong answer for a quieter one.
+  assert.ok(store(app, 'PostgreSQL').meta.reads >= 2, 'the read survives losing its table');
 });
 
 test('one table spelled two ways is one table', { skip }, () => {

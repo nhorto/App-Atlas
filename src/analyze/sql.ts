@@ -490,17 +490,56 @@ function tableInStatement(sql: string): string | null {
 const DEFAULT_SCHEMAS = new Set(['public', 'dbo', 'main']);
 
 /**
- * `public.orders` → `orders`, but `information_schema.columns` keeps its schema.
+ * Schemas the database keeps for itself, listed by the vendors rather than by any repo.
  *
- * Dropping every qualifier turns the catalog a schema-dump script reads into a table
- * called `columns` sitting in the list beside the app's own — which invites the reader
- * to go looking for it.
+ * MySQL and MariaDB answer `information_schema`, `performance_schema`, `mysql` and `sys`;
+ * SQL Server `sys` and `information_schema`; PostgreSQL `information_schema` and anything
+ * under `pg_`, which covers `pg_catalog` and the generated `pg_temp_3`.
+ */
+const CATALOG_SCHEMAS = new Set([
+  'information_schema',
+  'performance_schema',
+  'mysql',
+  'sys',
+  'pg_catalog',
+]);
+
+/**
+ * True for a table the database owns — its own listing of tables, columns and routines.
+ *
+ * A schema-dump script reads these the same way it reads anything else, so they arrive
+ * looking exactly like the app's own tables. They are not the app's data model, and a
+ * reader who is told `information_schema.routines` is one of their tables goes looking
+ * for a table nobody wrote. The names come from the database vendors and are reserved,
+ * so matching them is not a guess about any particular repo.
+ */
+export function isCatalogTable(name: string): boolean {
+  const parts = name.toLowerCase().split('.');
+  const table = parts[parts.length - 1];
+  if (parts.length > 1) {
+    const schema = parts[parts.length - 2];
+    if (CATALOG_SCHEMAS.has(schema) || schema.startsWith('pg_')) return true;
+  }
+  // SQLite has no schemas and reserves the prefix; Oracle's catalog views are `v$…`/`gv$…`.
+  return table.startsWith('sqlite_') || /^g?v\$/.test(table);
+}
+
+/**
+ * `public.orders` → `orders`, and the database's own catalog → nothing at all.
+ *
+ * Dropping every qualifier would turn the catalog a schema-dump script reads into a table
+ * called `columns` sitting in the list beside the app's own. Naming it in full is no
+ * better: it still lands under "Database tables" as though someone had designed it.
+ * Answering `null` keeps the honest half — the file did read the database — and leaves
+ * the data model to the tables the app actually owns.
  */
 function qualifiedTable(raw: string): string | null {
   const parts = raw.split('.');
   const table = unquote(parts[parts.length - 1]);
   if (!table || !/^[a-z_][\w$]*$/i.test(table)) return null;
+  const schema = parts.length > 1 ? unquote(parts[parts.length - 2]) : '';
+  const full = schema ? `${schema}.${table}` : table;
+  if (isCatalogTable(full)) return null;
   if (parts.length === 1) return table;
-  const schema = unquote(parts[parts.length - 2]);
   return DEFAULT_SCHEMAS.has(schema) ? table : `${schema}.${table}`;
 }
