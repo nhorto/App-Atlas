@@ -16,6 +16,8 @@
  *     is not a map, and the atlas itself is one command away for anything deeper.
  */
 import type { AtlasGraph } from '../model/graph.js';
+import { describeChanges } from '../model/changes.js';
+import type { AtlasChanges, DoorChange } from '../model/types.js';
 import { authHeadline } from '../model/exposure.js';
 import { buildInsights } from '../model/insights.js';
 import type { RouteInsight } from '../model/insights.js';
@@ -28,6 +30,7 @@ const MAX_PARTS = 14;
 const MAX_TYPES = 24;
 const MAX_START_FILES = 8;
 const MAX_ENV = 30;
+const MAX_CHANGED_DOORS = 20;
 
 /** Doors nobody outside can knock on, so they never appear in the auth table. */
 const OTHER_DOORS = new Set(['webhook', 'cron', 'queue', 'cli', 'file-read']);
@@ -68,6 +71,12 @@ export function renderAtlasMarkdown(graph: AtlasGraph, options: MarkdownOptions 
     out.push(`${app.summary}${mark(app.summarySource)}`);
     out.push('');
   }
+
+  // --- what changed ---
+  // First, because an agent handed this map at the start of a session is most often
+  // being asked to carry on from where the last one stopped, and because the reader who
+  // is not an agent came here asking what the weekend did to their app.
+  appendChanges(out, meta.changes);
 
   // --- numbers ---
   out.push('## By the numbers');
@@ -240,6 +249,43 @@ export function renderAtlasMarkdown(graph: AtlasGraph, options: MarkdownOptions 
   out.push('');
 
   return out.join('\n');
+}
+
+/**
+ * The "since the last run" section, or the one line that says why there is not one.
+ *
+ * The first-run line is not filler. A brief that simply omits this section leaves the
+ * reader to assume no news is good news, when the truth is that nobody has looked yet —
+ * and this file is read by agents, which are exactly the readers most likely to fill a
+ * silence with an assumption.
+ */
+function appendChanges(out: string[], changes: AtlasChanges | undefined): void {
+  const report = describeChanges(changes);
+  if (!report) return;
+
+  out.push('## What changed since the last run');
+  out.push('');
+  out.push(
+    report.tone === 'warn' ? `**${sentenceCase(report.headline.text)}.**` : `${sentenceCase(report.headline.text)}.`,
+  );
+  appendDoors(out, report.headline.doors);
+  for (const line of report.lines) {
+    out.push('');
+    out.push(`${sentenceCase(line.text)}.`);
+    appendDoors(out, line.doors);
+  }
+  out.push('');
+}
+
+/** The doors one sentence is about, named under it, so nobody has to go hunting. */
+function appendDoors(out: string[], doors: DoorChange[]): void {
+  if (doors.length === 0) return;
+  out.push('');
+  for (const door of doors.slice(0, MAX_CHANGED_DOORS)) {
+    const where = door.path ? ` — \`${door.path}${door.line ? `:${door.line}` : ''}\`` : '';
+    out.push(`- \`${door.name}\`${door.writes ? ' — writes data' : ''}${where}`);
+  }
+  if (doors.length > MAX_CHANGED_DOORS) out.push(`- …and ${doors.length - MAX_CHANGED_DOORS} more.`);
 }
 
 /** Marks a sentence a model wrote. The repo's own docstrings need no marking. */

@@ -26,9 +26,11 @@ import type { EnrichReport } from './enrich/index.js';
 import { describeRun, writeTheWords } from './enrich/session.js';
 import { renderAtlasMarkdown } from './export/markdown.js';
 import { initConventions } from './init.js';
+import { describeChanges, diffAtlas } from './model/changes.js';
+import type { ChangeNote } from './model/changes.js';
 import { authHeadline } from './model/exposure.js';
 import { AtlasGraph } from './model/graph.js';
-import type { Atlas, AtlasStats } from './model/types.js';
+import type { Atlas, DoorChange } from './model/types.js';
 import { markStaleDocs } from './model/staleness.js';
 import { grammarTier } from './model/tiers.js';
 import { atlasDbPath, atlasJsonPath, loadAtlas, persistAtlas, readScopes, scopesPath, writeScopes } from './model/store.js';
@@ -94,7 +96,7 @@ withAiOptions(
 ).action(async (dir: string, options: SharedOptions) => {
   const { atlas, scopes } = await runAnalysis(dir, options);
   const handle = await runServer(dir, atlas, scopes, options);
-  if (options.watch) startWatching(dir, handle, options, atlas.meta.stats);
+  if (options.watch) startWatching(dir, handle, options);
 });
 
 withAiOptions(
@@ -232,9 +234,14 @@ async function produceAtlas(
   // Set before anything is written, so the name on disk is the name in the switcher.
   if (run.name) atlas.meta.name = run.name;
 
+  // The atlas the last successful run left behind, read before this one overwrites it.
+  // It is the baseline for both of the questions that need two snapshots to answer:
+  // which docstrings the code has outgrown, and what moved since Tuesday.
+  const previous = loadAtlas(root);
+
   // The docstrings the repo already has are in the atlas by now. Everything below
   // fills the gaps they leave — and, on a repeat run, mostly just reads the cache.
-  markStaleDocs(loadAtlas(root), atlas);
+  markStaleDocs(previous, atlas);
   const words = await writeTheWords({
     root,
     atlas,
@@ -252,6 +259,13 @@ async function produceAtlas(
   // Descriptions were written and stale docstrings flagged after the counting was
   // done, so the numbers are counted again rather than left subtly wrong.
   atlas.meta.stats = computeStats(atlas.nodes, atlas.edges);
+
+  // Worked out here and stamped onto the atlas rather than recomputed by each screen,
+  // because `export` and `serve` run in later processes by which time the baseline has
+  // been overwritten — and because the summary, the brief and the web app saying
+  // different things about the same week would be worse than saying nothing.
+  atlas.meta.changes = diffAtlas(previous, atlas);
+
   const { dbPath, jsonPath } = persistAtlas(root, atlas, options.json);
   return { atlas, words, dbPath, jsonPath };
 }
@@ -337,6 +351,10 @@ async function runSingleAnalysis(root: string, options: SharedOptions): Promise<
     // them are worth.
     const tier = grammarTier(atlas.nodes);
     if (tier) console.log(pc.dim(`  ${tier.display} read by grammar, not by a compiler — links between files are likely, not certain.`));
+    // Above the counts, because "what did it do to my app since Tuesday" is the question
+    // somebody who let an agent write code all weekend came here with. The counts are
+    // the answer to a question they already know the shape of.
+    printChanges(atlas.meta.changes);
     console.log('');
     console.log(`  ${pad(s.files)} files       ${pad(s.functions)} functions`);
     console.log(`  ${pad(s.modules)} folders     ${pad(s.types)} types`);
@@ -382,6 +400,41 @@ async function runSingleAnalysis(root: string, options: SharedOptions): Promise<
   }
 
   return atlas;
+}
+
+/** Enough named doors to act on; past this the list stops being read and starts being scrolled. */
+const MAX_DOORS_PRINTED = 6;
+
+/**
+ * What moved since the last run, printed above the numbers.
+ *
+ * Doors are named individually under the sentence that is about them, because "2 new
+ * routes have no auth check" sends somebody hunting through a table and the whole point
+ * of this block is that they should not have to. Everything else stays a count.
+ */
+function printChanges(changes: Atlas['meta']['changes']): void {
+  const report = describeChanges(changes);
+  if (!report) return;
+
+  console.log('');
+  const paint = report.tone === 'warn' ? pc.yellow : report.tone === 'ok' ? pc.green : pc.dim;
+  printNote(report.headline, paint);
+  for (const line of report.lines) printNote(line, pc.dim);
+}
+
+function printNote(note: ChangeNote, paint: (text: string) => string): void {
+  console.log(paint(`  ${note.text}`));
+  for (const door of note.doors.slice(0, MAX_DOORS_PRINTED)) {
+    console.log(paint(`    ${doorLine(door)}`));
+  }
+  const hidden = note.doors.length - MAX_DOORS_PRINTED;
+  if (hidden > 0) console.log(paint(`    ...and ${hidden} more`));
+}
+
+/** "POST /api/reset  writes data  src/api/reset.ts:12" — the name, the stakes, where to look. */
+function doorLine(door: DoorChange): string {
+  const where = door.path ? `${door.path}${door.line ? `:${door.line}` : ''}` : '';
+  return [door.name, door.writes ? 'writes data' : '', where].filter(Boolean).join('  ');
 }
 
 /**
@@ -518,12 +571,11 @@ async function runServer(
  * means it only re-reads what changed. The one difference is that it never stops to ask
  * about spending money: a question that appears mid-edit, over and over, is not consent.
  */
-function startWatching(dir: string, handle: ServerHandle, options: SharedOptions, from: AtlasStats): void {
+function startWatching(dir: string, handle: ServerHandle, options: SharedOptions): void {
   const root = path.resolve(dir);
   console.log(pc.dim('    Watching for changes — the map updates itself.'));
   console.log('');
 
-  let previous = from;
   const watcher = watchProject({
     root,
     onChange: async (paths) => {
@@ -534,15 +586,16 @@ function startWatching(dir: string, handle: ServerHandle, options: SharedOptions
       const seconds = ((Date.now() - started) / 1000).toFixed(1);
       console.log(`  ${pc.green('↻')} ${describeChange(paths)} ${pc.dim(`· ${seconds}s`)}`);
 
-      // The number this tool exists to surface. Someone watching their agent work
-      // should hear about a new open door the moment it appears, not next Tuesday.
-      const before = previous;
-      previous = atlas.meta.stats;
-      if (atlas.meta.stats.unprotectedRoutes > before.unprotectedRoutes) {
-        const added = atlas.meta.stats.unprotectedRoutes - before.unprotectedRoutes;
-        console.log(
-          pc.yellow(`    ${added} new ${plural(added, 'route has', 'routes have')} no auth check App Atlas can see.`),
-        );
+      // Somebody watching their agent work should hear about a new open door the moment
+      // it appears, not next Tuesday. Read off the same diff every other surface reads,
+      // which also means naming the door rather than reporting that a total went up —
+      // one route closing while another opens used to net out to silence.
+      const doors = atlas.meta.changes?.doors;
+      for (const door of doors?.newOpen ?? []) {
+        console.log(pc.yellow(`    new, and nothing checks it: ${doorLine(door)}`));
+      }
+      for (const door of doors?.lostCheck ?? []) {
+        console.log(pc.yellow(`    the auth check is gone from: ${doorLine(door)}`));
       }
     },
     onError: (err) => console.error(pc.yellow(`  ! Watching stopped working: ${err.message}`)),
