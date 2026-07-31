@@ -2,11 +2,12 @@
 /**
  * @fileoverview The `app-atlas` command line.
  *
- * Five ways in, all doing the least surprising thing:
+ * Six ways in, all doing the least surprising thing:
  *   app-atlas [dir]          analyze, then open the map
  *   app-atlas analyze [dir]  analyze only
  *   app-atlas serve [dir]    open the map from a previous analysis
  *   app-atlas export [dir]   write ATLAS.md for a coding agent
+ *   app-atlas mcp [dir]      answer a coding agent over the Model Context Protocol
  *   app-atlas init [dir]     teach the user's agent to write docstrings
  *
  * A monorepo runs the same pipeline once per app; `--watch` runs it again on every
@@ -32,6 +33,7 @@ import { authHeadline } from './model/exposure.js';
 import { AtlasGraph } from './model/graph.js';
 import type { Atlas, DoorChange } from './model/types.js';
 import { markStaleDocs } from './model/staleness.js';
+import { startMcpServer } from './mcp/index.js';
 import { grammarTier } from './model/tiers.js';
 import { atlasDbPath, atlasJsonPath, loadAtlas, persistAtlas, readScopes, scopesPath, writeScopes } from './model/store.js';
 import { startServer } from './server/index.js';
@@ -184,6 +186,18 @@ program
     console.log(pc.dim('  Point your coding agent at it — one line in CLAUDE.md or AGENTS.md:'));
     console.log(pc.dim(`    Read ${path.basename(target)} before changing code. It is the map of this app.`));
     console.log('');
+  });
+
+program
+  .command('mcp')
+  .description('answer a coding agent over the Model Context Protocol, on stdin and stdout')
+  .argument('[dir]', 'project directory', '.')
+  .action(async (dir: string) => {
+    // Deliberately silent, and deliberately not an analysis. Under stdio transport
+    // stdout carries the protocol and nothing else, and a client that starts its servers
+    // at the beginning of a session will not wait forty seconds for a first answer — so
+    // this reads the atlas `analyze` already wrote, and says so when there is not one.
+    await startMcpServer({ root: path.resolve(dir) });
   });
 
 program
