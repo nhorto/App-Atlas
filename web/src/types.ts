@@ -342,7 +342,7 @@ export interface OverviewView {
   rootId: string;
   app: AtlasNode | null;
   topLevel: LevelNode[];
-  busiestFiles: { node: AtlasNode; connections: number }[];
+  whereToLookFirst: { node: AtlasNode; imports: number }[];
   zoneCounts: Record<string, number>;
   changes: ChangeReport | null;
 }

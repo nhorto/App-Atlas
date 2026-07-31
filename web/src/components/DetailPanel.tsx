@@ -439,7 +439,7 @@ function OverviewPanel({
   onReveal: (id: string) => void;
 }) {
   if (!overview) return <aside className="panel" />;
-  const { meta, busiestFiles } = overview;
+  const { meta, whereToLookFirst } = overview;
   const documented = meta.stats.files > 0 ? Math.round((meta.stats.documentedFiles / meta.stats.files) * 100) : 0;
 
   return (
@@ -498,15 +498,17 @@ function OverviewPanel({
         </dl>
       </section>
 
-      {busiestFiles.length > 0 ? (
-        <Section title="Most connected files" hint="A good place to start reading">
+      {whereToLookFirst.length > 0 ? (
+        <Section title="Where to look first" hint="The files that pull the most of your app together">
           <ul className="link-list">
-            {busiestFiles.map(({ node, connections }) => (
+            {whereToLookFirst.map(({ node, imports }) => (
               <li key={node.id}>
                 <button onClick={() => onReveal(node.id)}>
                   <span className={`dot zone-${node.zone}`} />
                   <span className="link-name">{node.name}</span>
-                  <span className="link-note">{connections}</span>
+                  <span className="link-note" title={`imports ${imports} ${imports === 1 ? 'file' : 'files'} directly`}>
+                    {imports}
+                  </span>
                 </button>
                 {node.path ? <span className="link-path">{node.path}</span> : null}
               </li>
