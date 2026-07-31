@@ -73,6 +73,16 @@ export interface PersonalTable {
   id: string;
   /** The table as the schema names it. */
   name: string;
+  /**
+   * The same table's other names, when the queries reached it under more than one.
+   *
+   * A SQLAlchemy app names its table twice: `select(User)` records the class name, and a
+   * migration or raw query records `users`. Both arrive as table nodes, both are joined
+   * to the same model, and both hold identical columns. Listing them as two rows would
+   * say an app holds personal data in two tables when it holds it in one — an inflation
+   * of exactly the number somebody is about to repeat in a meeting.
+   */
+  alsoKnownAs: string[];
   path: string | null;
   columns: PersonalColumn[];
   /**
@@ -273,6 +283,8 @@ export function findPersonalData(nodes: Iterable<AtlasNode>, edges: Iterable<Atl
   const found: PersonalTable[] = [];
   const unknownColumns: { id: string; name: string }[] = [];
   const ambiguousOnly: { id: string; name: string }[] = [];
+  /** Table node id → the model that declared its columns, when one did. */
+  const sameTable = new Map<string, string>();
 
   for (const table of tables) {
     const meta = table.meta as unknown as TypeMeta;
@@ -292,6 +304,9 @@ export function findPersonalData(nodes: Iterable<AtlasNode>, edges: Iterable<Atl
     }
     if (columns.length === 0) continue;
 
+    const declaredBy = (table.meta as { declaredBy?: string }).declaredBy;
+    if (declaredBy) sameTable.set(table.id, declaredBy);
+
     // A row has to be earned by a name that means one thing. An `Organisation` table with
     // a `name` column is not a personal-data finding, and a list that says it is stops
     // being read — which costs more than the row was ever worth.
@@ -303,6 +318,7 @@ export function findPersonalData(nodes: Iterable<AtlasNode>, edges: Iterable<Atl
     found.push({
       id: table.id,
       name: table.name,
+      alsoKnownAs: [],
       path: table.path,
       columns,
       doors: reachingDoors(sitesByTable.get(table.id) ?? [], doorsBySite),
@@ -314,8 +330,67 @@ export function findPersonalData(nodes: Iterable<AtlasNode>, edges: Iterable<Atl
     if (directs !== 0) return directs;
     return b.columns.length - a.columns.length || a.name.localeCompare(b.name);
   });
+  // After the sort, so the row that survives a collapse is the best-evidenced one.
+  collapseSameTable(found, sameTable);
 
-  return { tables: found, ambiguousOnly, unknownColumns, tablesConsidered: tables.length };
+  return {
+    tables: found,
+    // The same fold, for the same reason: this is a *count* a reader will repeat, and
+    // `CookBook` and `cookbooks` are one table.
+    ambiguousOnly: dedupeByModel(ambiguousOnly, sameTable),
+    unknownColumns,
+    tablesConsidered: tables.length,
+  };
+}
+
+/**
+ * Fold the rows that are one table wearing two names into a single row.
+ *
+ * Two table nodes joined to the same model class are the same table by construction —
+ * that is what the join established. Keeping both would double every count taken off this
+ * list. The surviving row keeps the other names so nothing a reader might search for is
+ * lost, and the doors are unioned because each name was reached from different code.
+ *
+ * Rows without a declaring model are left exactly as they are: two SQL tables that happen
+ * to share nothing but a schema are not the same table, and there is no evidence here to
+ * say otherwise.
+ */
+function collapseSameTable(tables: PersonalTable[], declaredBy: Map<string, string>): void {
+  const first = new Map<string, PersonalTable>();
+  for (let i = tables.length - 1; i >= 0; i--) {
+    const table = tables[i];
+    const model = declaredBy.get(table.id);
+    if (!model) continue;
+    const held = first.get(model);
+    if (!held) {
+      first.set(model, table);
+      continue;
+    }
+    // Keep the earlier row — it is the better-evidenced one under the sort that follows —
+    // and move this row's name and doors onto it.
+    if (!held.alsoKnownAs.includes(table.name)) held.alsoKnownAs.push(table.name);
+    for (const door of table.doors) {
+      if (!held.doors.some((known) => known.id === door.id)) held.doors.push(door);
+    }
+    held.doors.sort((a, b) => a.name.localeCompare(b.name));
+    tables.splice(i, 1);
+  }
+  for (const table of tables) table.alsoKnownAs.sort();
+}
+
+/** The same collapse for a plain name list: one entry per table, whatever it is called. */
+function dedupeByModel(
+  entries: { id: string; name: string }[],
+  declaredBy: Map<string, string>,
+): { id: string; name: string }[] {
+  const seen = new Set<string>();
+  return entries.filter((entry) => {
+    const model = declaredBy.get(entry.id);
+    if (!model) return true;
+    if (seen.has(model)) return false;
+    seen.add(model);
+    return true;
+  });
 }
 
 function countDirect(table: PersonalTable): number {

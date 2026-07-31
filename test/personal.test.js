@@ -224,6 +224,74 @@ test('on a real fixture the section names the table, the column and the doors', 
   assert.match(markdown, /has not been cleared/);
 });
 
+test('a SQLAlchemy table is given the columns its model declares (#80)', async () => {
+  // The columns were always in the atlas — on the model *class*, while the table node
+  // the queries produced sat empty beside it. On mealie that was 34 tables reporting
+  // "columns unknown" with `email` and `password` a few nodes away.
+  const { atlas } = await analyzeProject(path.join(here, 'fixtures', 'pymodels'), {
+    cache: 'off',
+    followReferences: true,
+  });
+  const tables = atlas.nodes.filter((node) => node.kind === 'type' && node.meta.typeKind === 'table');
+  const byName = new Map(tables.map((node) => [node.name, node]));
+
+  const invoices = byName.get('invoices');
+  assert.ok(invoices, `no invoices table: ${[...byName.keys()].join(', ')}`);
+  assert.deepEqual(invoices.meta.fields.map((f) => f.name), ['id', 'customer_id', 'total_cents', 'status']);
+  // Where the columns came from, so nobody has to wonder why a database table is
+  // carrying Python type annotations.
+  assert.equal(invoices.meta.declaredBy, 'models.py');
+  assert.equal(invoices.meta.observed, false, 'the columns were found, so it is no longer declared nowhere');
+});
+
+test('the fullest declaration of a table wins over a migration stub', async () => {
+  // Two classes declare `customers`: the model with five columns and a migration stub
+  // with two. Refusing on the collision is what left mealie with 16 empty tables; they
+  // are not rival claims, they are partial views of one table.
+  const { atlas } = await analyzeProject(path.join(here, 'fixtures', 'pymodels'), {
+    cache: 'off',
+    followReferences: true,
+  });
+  const customers = atlas.nodes.find(
+    (node) => node.kind === 'type' && node.meta.typeKind === 'table' && node.name === 'customers',
+  );
+  assert.ok(customers, 'no customers table');
+  assert.deepEqual(
+    customers.meta.fields.map((f) => f.name),
+    ['id', 'email', 'full_name', 'phone_number', 'is_active'],
+    'took the stub instead of the model',
+  );
+
+  // …and the whole point of the join: the classification now has something to read.
+  const report = findPersonalData(atlas.nodes, atlas.edges);
+  const row = report.tables.find((t) => t.name === 'customers');
+  assert.ok(row, 'the joined table produced no finding');
+  assert.deepEqual(row.columns.filter((c) => c.strength === 'direct').map((c) => c.column), ['email', 'phone_number']);
+});
+
+test('one table reached under two names is one row, not two', () => {
+  // A SQLAlchemy app names its table twice — `select(User)` records the class name and
+  // a raw query records `users`. Two rows would say personal data lives in two tables
+  // when it lives in one, which is the number somebody repeats in a meeting.
+  const a = table('User', ['email', 'password'], 'type:store#User');
+  const b = table('users', ['email', 'password'], 'type:store#users');
+  a.meta.declaredBy = 'db/models/users.py';
+  b.meta.declaredBy = 'db/models/users.py';
+
+  const report = findPersonalData([a, b], []);
+  assert.equal(report.tables.length, 1, `collapsed to ${report.tables.map((t) => t.name).join(', ')}`);
+  assert.deepEqual(report.tables[0].alsoKnownAs.length, 1);
+});
+
+test('two tables with no declaring model are left as two', () => {
+  // Nothing here says they are the same table, so nothing here may merge them.
+  const report = findPersonalData(
+    [table('staff', ['email'], 'type:a'), table('members', ['email'], 'type:b')],
+    [],
+  );
+  assert.equal(report.tables.length, 2);
+});
+
 test('a project where nothing matches gets no section rather than an empty scare', async () => {
   // A heading that promises personal data over a list of caveats reads either as an
   // alarm or as a clean bill of health, and a name match is not strong enough for either.
