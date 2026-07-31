@@ -10,6 +10,8 @@
  */
 import type { Atlas, AtlasEdge, AtlasMeta, AtlasNode, EdgeKind } from './types.js';
 import { CONTAINER_KINDS } from './types.js';
+import { describeChanges } from './changes.js';
+import type { ChangeReport } from './changes.js';
 
 export interface LevelNode extends AtlasNode {
   childCount: number;
@@ -91,6 +93,12 @@ export interface OverviewView {
   topLevel: LevelNode[];
   busiestFiles: { node: AtlasNode; connections: number }[];
   zoneCounts: Record<string, number>;
+  /**
+   * What moved since the previous run, already turned into sentences. Built here rather
+   * than in the browser so the page cannot phrase it differently from the command line
+   * that produced it. `null` on an atlas written before this existed.
+   */
+  changes: ChangeReport | null;
 }
 
 const MAX_LEVEL_NODES = 400;
@@ -389,6 +397,7 @@ export class AtlasGraph {
       topLevel,
       busiestFiles,
       zoneCounts,
+      changes: describeChanges(this.meta.changes),
     };
   }
 

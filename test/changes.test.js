@@ -254,6 +254,21 @@ test('ATLAS.md leads with the new open doors once there is a baseline', async ()
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
+/**
+ * The overview screen builds none of its own wording. If it ever did, the page and the
+ * command line that produced the atlas could describe the same week differently.
+ */
+test('the overview view carries the same sentences the command line prints', async () => {
+  const dir = scratch('sample', 'overview');
+  const atlas = await analyze(dir);
+
+  assert.equal(new AtlasGraph(atlas).getOverview().changes, null, 'an atlas nobody diffed says nothing');
+
+  atlas.meta.changes = diffAtlas(null, atlas);
+  assert.deepEqual(new AtlasGraph(atlas).getOverview().changes, describeChanges(atlas.meta.changes));
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
 // ---------------------------------------------------------------------------
 // The baseline on disk, which is the part no unit test can see.
 

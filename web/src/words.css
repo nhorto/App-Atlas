@@ -212,6 +212,134 @@
   color: var(--ink-soft);
 }
 
+/* --- what changed since the last run ------------------------------------- */
+
+/* A marginal note rather than a card: a rule down the left, the way an editor marks a
+   changed passage. Terracotta only when a door is open — the accent means "look here"
+   everywhere else in this app, and a first run that has nothing to compare against is
+   not something to look at. */
+.changes {
+  margin-top: 24px;
+  padding: 2px 0 2px 14px;
+  border-left: 3px solid var(--line-strong);
+}
+
+.changes-warn {
+  border-left-color: var(--accent);
+}
+
+.changes h2 {
+  margin: 0 0 6px;
+  font-size: 11.5px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--ink-faint);
+}
+
+.changes-headline {
+  margin: 0;
+  font-size: 14.5px;
+  line-height: 1.55;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.changes-muted .changes-headline {
+  font-weight: 400;
+  color: var(--ink-soft);
+}
+
+.changes-warn .changes-headline {
+  color: var(--accent-deep);
+}
+
+.changes-line {
+  margin: 10px 0 0;
+  font-size: 13.5px;
+  line-height: 1.55;
+  color: var(--ink);
+}
+
+.changes-doors {
+  list-style: none;
+  margin: 6px 0 0;
+  padding: 0;
+}
+
+.changes-doors button {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  width: 100%;
+  padding: 3px 6px 3px 0;
+  border: 0;
+  background: none;
+  text-align: left;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+}
+
+.changes-doors button:hover .changes-door-name {
+  color: var(--accent);
+}
+
+.changes-door-name {
+  font-family: var(--mono);
+  font-size: 12.5px;
+  transition: color 120ms ease;
+}
+
+/* The one attribute that changes what an open door costs, so it is the one attribute
+   allowed to interrupt the line. */
+.changes-door-writes {
+  flex: none;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  font-size: 10.5px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--accent-deep);
+}
+
+.changes-door-where {
+  margin-left: auto;
+  overflow: hidden;
+  font-size: 11.5px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  color: var(--ink-faint);
+}
+
+.changes-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 12px;
+}
+
+.change-badge {
+  padding: 2px 8px;
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink-soft);
+  cursor: default;
+}
+
+.change-badge.is-added {
+  border-color: rgba(55, 132, 90, 0.4);
+  color: #2c6a48;
+}
+
+.change-badge.is-removed {
+  border-color: rgba(176, 69, 43, 0.35);
+  color: var(--accent-deep);
+}
+
 /* The numbers, set like an almanac's figure strip: no boxes, hairlines between. */
 .overview-stats {
   display: flex;

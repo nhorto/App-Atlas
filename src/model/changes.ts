@@ -256,13 +256,17 @@ export interface ChangeReport {
  *
  * The first run gets a sentence too. Saying nothing would leave a reader to assume the
  * absence of news is good news, when in fact nobody has looked yet.
+ *
+ * No sentence returned here ends in a full stop: the command line sets them as lines and
+ * the exported brief and the web page set them as sentences, so the punctuation belongs
+ * to whichever of them is doing the setting.
  */
 export function describeChanges(changes: AtlasChanges | null | undefined): ChangeReport | null {
   if (!changes) return null;
 
   if (changes.baseline === 'none') {
     return say('muted', 'first run — no earlier atlas to compare against, so nothing here is new and nothing is missing', [
-      'The next run will say what changed since this one.',
+      'the next run will say what changed since this one',
     ]);
   }
 
@@ -270,7 +274,7 @@ export function describeChanges(changes: AtlasChanges | null | undefined): Chang
     return say(
       'muted',
       `nothing to compare against — ${changes.because ?? 'the atlas on disk was written under different conditions'}`,
-      ['A diff across that gap would be noise rather than news. The next run will say what changed.'],
+      ['a diff across that gap would be noise rather than news, so the next run is the one that will say what changed'],
     );
   }
 
