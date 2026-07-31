@@ -8,11 +8,17 @@
  *
  * Guards are *found* here and *attached to endpoints* in build.ts, because a
  * middleware matcher in one file can protect a route declared in another.
+ *
+ * The same walk also reports the mirror image of a guard: a call into an auth library's
+ * own sign-in, sign-up or sign-out routine. That is not protection — it is the reason a
+ * door has none, and it belongs beside the guards because it is found the same way,
+ * from the call rather than from anybody's choice of function name.
  */
 import { Node } from 'ts-morph';
 import type { CallExpression, ClassDeclaration, SourceFile } from 'ts-morph';
 import type { GuardInfo } from '../../model/types.js';
-import { authProviderForPackage } from './catalog.js';
+import { authEntryForCall, authProviderForPackage } from './catalog.js';
+import type { AuthEntryPoint } from './catalog.js';
 import { argAt, dottedName, literalString, looksLikeRouter, objectProp, stringArray } from './ast.js';
 import type { BoundaryDetector, DetectorContext } from './types.js';
 
@@ -93,11 +99,60 @@ function isAuthContext(root: string, ctx: DetectorContext): boolean {
 }
 
 function providerFor(root: string, ctx: DetectorContext): string {
+  return packageProvider(root, ctx) ?? 'custom';
+}
+
+/**
+ * The auth library a name came out of, or `null` when it did not come out of one.
+ *
+ * Kept apart from `providerFor` above, whose `custom` fallback means "something checks
+ * this and we cannot say what". Here the absence of an answer has to stay an absence:
+ * "we could not trace this" must never read as "some auth library".
+ */
+function packageProvider(root: string, ctx: DetectorContext): string | null {
   const binding = ctx.imports.get(root);
-  if (binding?.external) return authProviderForPackage(binding.module) ?? 'custom';
+  if (binding?.external) return authProviderForPackage(binding.module);
   const local = ctx.locals.get(root);
-  if (local?.module) return authProviderForPackage(local.module) ?? 'custom';
-  return 'custom';
+  if (local?.module) return authProviderForPackage(local.module);
+  return null;
+}
+
+// ---------------------------------------------------------------------------
+// The other kind of auth call: the one that hands a session out
+// ---------------------------------------------------------------------------
+
+/**
+ * Auth providers the project actually depends on, cached against the signal set the
+ * whole run shares.
+ *
+ * A detector is only allowed to recognise a library the project declares — an invented
+ * box on the map is worse than a missing one — and here the gate does a second job:
+ * `x.auth.signOut` is GoTrue's shape, and only worth reading as GoTrue's in a repo that
+ * installed Supabase.
+ */
+const providersByPackages = new WeakMap<Set<string>, Set<string>>();
+
+function declaredAuthProviders(packages: Set<string>): Set<string> {
+  const cached = providersByPackages.get(packages);
+  if (cached) return cached;
+  const found = new Set<string>();
+  for (const pkg of packages) {
+    const provider = authProviderForPackage(pkg);
+    if (provider) found.add(provider);
+  }
+  providersByPackages.set(packages, found);
+  return found;
+}
+
+/**
+ * The sign-in, sign-up, sign-out or password-reset routine a call names, if it names
+ * one and the project depends on the library it belongs to.
+ */
+function signInEntry(dotted: string, ctx: DetectorContext): AuthEntryPoint | null {
+  const declared = declaredAuthProviders(ctx.signals.packages);
+  if (declared.size === 0) return null;
+  const entry = authEntryForCall(dotted, packageProvider(dotted.split('.')[0], ctx));
+  return entry && declared.has(entry.provider) ? entry : null;
 }
 
 // ---------------------------------------------------------------------------
@@ -122,6 +177,23 @@ export const authDetector: BoundaryDetector = {
         nodeId: ctx.enclosing(node),
         matchers: [],
         sourceId: ctx.fileId,
+      });
+      return;
+    }
+
+    // The same walk finds the calls that are a guard's mirror image. A handler that
+    // calls the auth library's own sign-in cannot require the caller to be signed in
+    // already, and reporting that as an unguarded door is how a security list gets a
+    // reputation for crying wolf (#40).
+    const entry = signInEntry(dotted, ctx);
+    if (entry) {
+      ctx.emit({
+        type: 'sign-in-call',
+        provider: entry.provider,
+        what: entry.what,
+        call: dotted,
+        nodeId: ctx.enclosing(node),
+        site: ctx.site(node, dotted),
       });
       return;
     }
