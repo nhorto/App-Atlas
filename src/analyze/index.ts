@@ -61,11 +61,16 @@ import { dominantZone } from './zones.js';
  * into a checked-in file is making a false claim about where that file came from, and
  * that costs more than the one stated absence in "what changed" that the bump buys.
  *
- * 0.11.0 is the ordinary case again: a table that reported "columns unknown" now carries
- * the columns its ORM model declares, so a cache written by 0.10.0 answers a different
+ * 0.11.0 is the ordinary case: a table that reported "columns unknown" now carries the
+ * columns its ORM model declares, so a cache written by 0.10.0 answers a different
  * question about the same file.
+ *
+ * 0.12.0 is the other case, like 0.10.0 before it. The analyzer sees exactly what it saw
+ * — the change is in how the words layer groups those findings before describing them, and
+ * that layer has its own `PROMPT_VERSION` to invalidate what it cached. This number moves
+ * anyway, to stay level with `package.json` for the sake of the line stamped into ATLAS.md.
  */
-export const TOOL_VERSION = '0.11.0';
+export const TOOL_VERSION = '0.12.0';
 
 export interface AnalyzeOptions {
   maxFiles?: number;
