@@ -115,6 +115,10 @@ export interface EnrichReport {
    * sentence is not evidence. It is a lead: the paragraph and the diagram are drawn
    * from the same list and shown together, so a name in one and not the other means one
    * of the two layers is wrong, and it is worth knowing which.
+   *
+   * "Found" means found *anywhere the reader looks* — as a service, as a data store, or
+   * as a framework — not in the service list alone (#83). A lead nobody believes is worth
+   * less than no lead, and this one used to fire on every run of our own fixture.
    */
   contradictions: string[];
   /**
@@ -248,7 +252,10 @@ export async function enrichAtlas(options: EnrichOptions): Promise<EnrichReport>
       hashes: [appHash],
       paths: [''],
       request: overviewRequest(appFacts),
-      knownServices: appFacts.services,
+      // Everything the paragraph was handed that the reader can also see for themselves.
+      // Derived here rather than stored on `AppFacts`, which is the prompt payload and
+      // whose JSON is the cache key — this adds nothing new to ask about.
+      namesOnScreen: [...appFacts.services, ...appFacts.stores, ...appFacts.frameworks],
     });
   }
   for (const batch of chunk(pending.groups, GROUPS_PER_REQUEST)) {
@@ -329,30 +336,62 @@ interface Job {
   /** The path shown in the prompt, also in that order. Accepted as a reply key. */
   paths: string[];
   request: { system: string; user: string; maxOutputTokens: number };
-  /** Overview only: the companies the structure did find, to check the prose against. */
-  knownServices?: string[];
+  /**
+   * Overview only: everything about this app the reader will find on their own screen —
+   * the services, the stores and the frameworks. What the prose is held against.
+   */
+  namesOnScreen?: string[];
 }
 
 /**
- * Companies the paragraph names that the structure does not have.
+ * Companies the paragraph names that the reader will not find anywhere on their screen.
  *
  * Only names from the catalog count. "Stripe" appearing in prose beside a diagram with
  * no Stripe box means the detectors missed a payment integration or the model invented
  * one, and either is worth a line in the run report. Anything the tool has never heard
  * of is not evidence of a gap — it is a word.
+ *
+ * **The comparison is against everything shown, not the service list alone** (#83). A
+ * store is a box on the boundary screen and a framework is the "Built with" line, so a
+ * paragraph naming either is naming something the reader can see. Checking only the
+ * services made the fixture report `Supabase` and `Vercel` as unfounded on every single
+ * run — Supabase being a detected store holding two of its tables, Vercel being the
+ * framework whose cron door carries a schedule. A warning that fires every time is one
+ * people learn to scroll past, and this one fired on the repo everything else is tested
+ * against.
+ *
+ * Matching runs both ways through {@link mentions}, so it no longer matters that a store
+ * arrives spelled `Supabase Postgres (page_views, client_errors)` rather than `Supabase`.
  */
-function companiesNotFound(paragraph: string, found: string[]): string[] {
-  const already = new Set(found.map((name) => name.toLowerCase()));
+function companiesNotShown(paragraph: string, shown: string[]): string[] {
+  const onScreen = shown.join('\n');
   const missing: string[] = [];
   for (const name of knownServiceNames()) {
-    if (already.has(name.toLowerCase())) continue;
-    // Whole words only: "Resend" must not match "resends", and a one-word company name
-    // is exactly the kind of thing that appears inside another word.
-    if (new RegExp(`\\b${name.replace(/[.*+?^${}()|[\\]\\\\]/g, '\\\\$&')}\\b`, 'i').test(paragraph)) {
-      missing.push(name);
-    }
+    if (!mentions(paragraph, name)) continue;
+    if (mentions(onScreen, name)) continue;
+    missing.push(name);
   }
   return missing;
+}
+
+/**
+ * Whether a company is named in this text, as a whole name rather than part of a word.
+ *
+ * `\b` cannot do this job. Half the reason is the escaping — the version this replaces
+ * compiled to a no-op, so `Trigger.dev` matched "TriggerXdev" and `Email (SMTP)` matched
+ * "Email SMTP", both of which are the tool inventing a finding out of a typo. The other
+ * half is that `\b` is defined against word characters, so it never fires after the
+ * closing bracket of `Email (SMTP)` and that name could not be matched at all.
+ *
+ * Explicit lookarounds say the thing actually meant: not butted up against a letter or a
+ * digit. "Resend" still does not match "resends".
+ */
+function mentions(text: string, name: string): boolean {
+  return new RegExp(`(?<![A-Za-z0-9])${escapeForRegExp(name)}(?![A-Za-z0-9])`, 'i').test(text);
+}
+
+function escapeForRegExp(text: string): string {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
 function applyReply(
@@ -366,7 +405,7 @@ function applyReply(
     const node = byId.get(job.nodeIds[0]);
     const paragraph = cleanParagraph(text);
     if (!node || !paragraph) return;
-    report.contradictions.push(...companiesNotFound(paragraph, job.knownServices ?? []));
+    report.contradictions.push(...companiesNotShown(paragraph, job.namesOnScreen ?? []));
     // What the model wrote is what gets cached, even when part of it is about to be
     // dropped: the cache records an answer we paid for, and whether a sentence stands up
     // to the endpoint table is a judgement against a table that improves between runs.
