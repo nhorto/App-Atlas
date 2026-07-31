@@ -19,7 +19,9 @@
  * about intent — each one is a fact already in the graph:
  *
  *   - `page`      — the framework's own conventions say a browser renders this.
- *   - `auth-mount`— the app's auth provider is mounted at this address.
+ *   - `auth-mount`— the auth provider is mounted at this address, or this door's own
+ *                   handler calls the provider's sign-in routine. Both are "the door
+ *                   people sign in through", which is what every screen calls this.
  *   - `unreadable`— a file this route imports could not be read, so "no check found"
  *                   is a statement about the analyzer, not about the code.
  */
@@ -31,6 +33,7 @@ import type {
   EndpointMeta,
   OpenVerdict,
   ServiceMeta,
+  SignInCall,
 } from './types.js';
 
 export type { OpenKind, OpenVerdict } from './types.js';
@@ -78,14 +81,21 @@ export function classifyOpenDoors(nodes: AtlasNode[], edges: AtlasEdge[]): Map<s
   const unreadable = new Map<string, string>();
   /** Files that import an auth package directly — the fact the mount rule is about. */
   const authFiles = new Map<string, string>();
+  /** Where the app's own data lives, for telling a sign-in apart from a sign-in *and*. */
+  const stores = new Set<string>();
+  let signInDoors = 0;
 
   for (const node of nodes) {
     switch (node.kind) {
       case 'endpoint': {
         const meta = node.meta as unknown as EndpointMeta;
         if (isAuthRelevant(meta) && meta.guards.length === 0) open.push(node);
+        if (meta.signInCall) signInDoors++;
         break;
       }
+      case 'store':
+        stores.add(node.id);
+        break;
       case 'service':
         if ((node.meta as unknown as ServiceMeta).category === 'auth') authServices.set(node.id, node.name);
         break;
@@ -111,6 +121,7 @@ export function classifyOpenDoors(nodes: AtlasNode[], edges: AtlasEdge[]): Map<s
   const importsOf = unreadable.size > 0 ? edgesByKind(edges, 'imports') : null;
   const authMounts =
     authServices.size > 0 || authFiles.size > 0 ? authMountFiles(edges, authServices, authFiles) : null;
+  const dataWriters = signInDoors > 0 ? doorsWritingData(edges, stores) : null;
 
   for (const node of open) {
     const meta = node.meta as unknown as EndpointMeta;
@@ -134,6 +145,23 @@ export function classifyOpenDoors(nodes: AtlasNode[], edges: AtlasEdge[]): Map<s
         kind: 'auth-mount',
         because: `${provider} is mounted here — this is the door people sign in through`,
       });
+      continue;
+    }
+
+    // The same door in its other shape (#40): not an address the provider is mounted
+    // on, but a handler that calls the provider's own sign-in. A server action that
+    // signs you in cannot require you to be signed in already, and on a Supabase repo
+    // that mistake was five of eleven findings — enough to teach a reader that the
+    // eleven are noise.
+    //
+    // Qualified the same way the page rule below is, and for the same reason: a handler
+    // that signs somebody in *and* writes the app's own data is doing more than opening
+    // the door, so it stays in the list that gets read. Deliberately asked of the graph
+    // rather than of `meta.writes`, which is no help here — every server action is
+    // stamped `writes: true` the moment it is found, on the grounds that it might, so
+    // that flag would switch this rule off for exactly the doors it is about.
+    if (meta.signInCall && !dataWriters?.has(node.id)) {
+      verdicts.set(node.id, { kind: 'auth-mount', because: becauseSignIn(meta.signInCall) });
       continue;
     }
 
@@ -337,4 +365,45 @@ function providerMountedIn(files: string[], mounts: Map<string, string>): string
  */
 function isCatchAll(route: string | null): boolean {
   return route !== null && route.includes('*');
+}
+
+/**
+ * Doors whose own handler was seen writing to somewhere the app keeps data.
+ *
+ * Two hops, both of them facts the analyzer already recorded: `writes-to` says which
+ * function wrote, `exposed-by` says which door that function answers. Only stores
+ * count. A sign-out handler that posts to the auth provider it is signing you out of
+ * has not done anything beyond signing you out, and counting that as "and writes data"
+ * would disqualify the very doors this is meant to let through.
+ */
+function doorsWritingData(edges: AtlasEdge[], stores: Set<string>): Set<string> {
+  const doors = new Set<string>();
+  if (stores.size === 0) return doors;
+
+  const writers = new Set<string>();
+  for (const edge of edges) {
+    if (edge.kind === 'writes-to' && stores.has(edge.toId)) writers.add(edge.fromId);
+  }
+  if (writers.size === 0) return doors;
+
+  for (const edge of edges) {
+    if (edge.kind === 'exposed-by' && writers.has(edge.toId)) doors.add(edge.fromId);
+  }
+  return doors;
+}
+
+/**
+ * The sentence a non-programmer is shown for a sign-in door.
+ *
+ * Its first half is a fact they can check in ten seconds — open the file, find that
+ * call — and its second half says only what the call is for. Signing out gets its own
+ * wording because "reached before you have a session" would simply be untrue of it, and
+ * a sentence that is nearly right is how a reader stops believing the rest of them.
+ */
+function becauseSignIn(call: SignInCall): string {
+  const why =
+    call.what === 'sign-out'
+      ? 'which ends a session rather than checking for one'
+      : 'which people reach before they have a session';
+  return `calls ${call.call} — ${call.provider}'s own ${call.what} routine, ${why}`;
 }
