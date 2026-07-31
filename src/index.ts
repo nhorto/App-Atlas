@@ -57,6 +57,30 @@ export {
 export type { ScopeRecord } from './model/store.js';
 export { startServer } from './server/index.js';
 export type { ServerHandle } from './server/index.js';
+export {
+  AtlasSource,
+  callMcpTool,
+  claimStdout,
+  encodeMessage,
+  handleMcpMessage,
+  isKnownTool,
+  LineFramer,
+  MCP_TOOLS,
+  parseMessage,
+  RPC_ERROR,
+  startMcpServer,
+  SUPPORTED_PROTOCOLS,
+} from './mcp/index.js';
+export type {
+  AtlasApp,
+  JsonRpcRequest,
+  JsonRpcResponse,
+  McpOptions,
+  ProtocolStream,
+  Resolution,
+  ToolDefinition,
+  ToolResult,
+} from './mcp/index.js';
 export { isInteresting, watchProject } from './watch.js';
 export type { WatchOptions, Watcher } from './watch.js';
 export * from './model/types.js';
