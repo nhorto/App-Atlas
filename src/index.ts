@@ -15,6 +15,8 @@ export type { CachedExplanation, EnrichBackend, EnrichRequest, EnrichTier } from
 export { cleanLabel, cleanParagraph, cleanSentence, parseJsonReply } from './enrich/validate.js';
 export { initConventions } from './init.js';
 export { countStaleDocs, isStaleDoc, markStaleDocs, STALE_DOCS_KEY } from './model/staleness.js';
+export { describeChanges, diffAtlas } from './model/changes.js';
+export type { ChangeReport } from './model/changes.js';
 export { AtlasGraph } from './model/graph.js';
 export type { LevelView, NodeView, OverviewView } from './model/graph.js';
 export { buildBoundaryView } from './model/boundary.js';

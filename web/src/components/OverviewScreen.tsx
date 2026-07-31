@@ -11,8 +11,9 @@
  * generates prose about your code owes you a straight answer about how much of what
  * you just read it made up.
  */
+import { Fragment } from 'react';
 import type { ReactNode } from 'react';
-import type { AtlasNode, LevelNode, OverviewView, Tour } from '../types';
+import type { AtlasChanges, ChangeNote, ChangeReport, AtlasNode, DoorChange, LevelNode, OverviewView, Tour } from '../types';
 import { zoneLabel } from './AtlasNodeCard';
 import { TrustLabel } from './Trust';
 
@@ -74,6 +75,12 @@ export function OverviewScreen({ view, tours, onDrill, onReveal, onStartTour, on
           </p>
         </section>
       )}
+
+      {/* Above the figures, because somebody who has been steering an agent all weekend
+          did not come here to learn how many files they have. Whether the last run left
+          anything to compare against is part of the answer, so the block appears even on
+          a first run — silence would read as "nothing happened". */}
+      {view.changes ? <Changes report={view.changes} changes={meta.changes} onReveal={onReveal} /> : null}
 
       <section className="overview-stats">
         <Stat value={stats.files} label="files" />
@@ -190,6 +197,106 @@ export function OverviewScreen({ view, tours, onDrill, onReveal, onStartTour, on
       ) : null}
     </div>
   );
+}
+
+/**
+ * What moved since the previous run.
+ *
+ * Every sentence here was written by the model layer and is handed over verbatim, so
+ * this screen and the command line that produced the atlas cannot describe the same week
+ * differently. All this component decides is what gets a name and what gets a number:
+ * doors are named, because "2 new routes have no auth check" leaves the reader hunting;
+ * the ordinary churn becomes three badges, because nobody reads a list of file counts.
+ */
+function Changes({
+  report,
+  changes,
+  onReveal,
+}: {
+  report: ChangeReport;
+  changes: AtlasChanges | undefined;
+  onReveal: (id: string) => void;
+}) {
+  // Once there is a real comparison, the sentence about ordinary churn gives way to the
+  // badges below — they say the same thing in less space. With no baseline there are no
+  // badges and no churn, and the line that survives is the one explaining why.
+  const compared = changes?.baseline === 'compared';
+  const lines = compared ? report.lines.filter((line) => line.doors.length > 0) : report.lines;
+
+  return (
+    <section className={`changes changes-${report.tone}`}>
+      <h2>Since the last run</h2>
+      <Note note={report.headline} lead onReveal={onReveal} />
+      {lines.map((line) => (
+        <Fragment key={line.text}>
+          <Note note={line} onReveal={onReveal} />
+        </Fragment>
+      ))}
+      {compared ? <ChangeBadges changes={changes} /> : null}
+    </section>
+  );
+}
+
+function Note({ note, lead, onReveal }: { note: ChangeNote; lead?: boolean; onReveal: (id: string) => void }) {
+  return (
+    <>
+      <p className={lead ? 'changes-headline' : 'changes-line'}>{sentenceCase(note.text)}.</p>
+      {note.doors.length > 0 ? (
+        <ul className="changes-doors">
+          {note.doors.map((door) => (
+            <li key={door.id}>
+              <button onClick={() => onReveal(door.id)} title={whereOf(door)}>
+                <span className="changes-door-name">{door.name}</span>
+                {door.writes ? <span className="changes-door-writes">writes data</span> : null}
+                <span className="changes-door-where">{whereOf(door)}</span>
+              </button>
+            </li>
+          ))}
+        </ul>
+      ) : null}
+    </>
+  );
+}
+
+/**
+ * The shape of the churn: how much appeared, vanished and merely differs. Hovering gives
+ * the breakdown by kind, which is detail rather than headline — the point of the badges
+ * is scale, so that a reader can tell one renamed helper from a rewritten app.
+ */
+function ChangeBadges({ changes }: { changes: AtlasChanges }) {
+  const detail = (field: 'added' | 'removed' | 'changed') =>
+    Object.entries(changes.byKind)
+      .filter(([, counts]) => counts[field] > 0)
+      .map(([kind, counts]) => `${counts[field]} ${kind}`)
+      .join(', ') || 'nothing';
+
+  return (
+    <div className="changes-badges">
+      <span className="change-badge is-added" title={detail('added')}>
+        {signed('+', changes.total.added)} added
+      </span>
+      <span className="change-badge is-removed" title={detail('removed')}>
+        {signed('−', changes.total.removed)} removed
+      </span>
+      <span className="change-badge is-changed" title={detail('changed')}>
+        {changes.total.changed} changed
+      </span>
+    </div>
+  );
+}
+
+/** "−0 removed" reads as a change; a plain zero reads as the absence of one. */
+function signed(sign: string, value: number): string {
+  return value === 0 ? '0' : `${sign}${value}`;
+}
+
+function whereOf(door: DoorChange): string {
+  if (!door.path) return door.endpointKind;
+  return door.line ? `${door.path}:${door.line}` : door.path;
+}
+
+function sentenceCase(text: string): string {
+  return text.charAt(0).toUpperCase() + text.slice(1);
 }
 
 function Stat({ value, label, onClick }: { value: number; label: string; onClick?: () => void }) {

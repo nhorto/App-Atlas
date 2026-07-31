@@ -264,6 +264,62 @@ export interface ArchetypeVerdict {
   because: string[];
 }
 
+// --- what changed since the last run (issue #41) ---
+
+/**
+ * Whether the last run left anything this one could honestly be compared against.
+ * `none` is a first analysis, `incomparable` is an atlas from a different version of the
+ * tool or a different directory, and neither of them means "nothing changed".
+ */
+export type BaselineState = 'none' | 'incomparable' | 'compared';
+
+export interface ChangeCounts {
+  added: number;
+  removed: number;
+  changed: number;
+}
+
+/** One door that arrived, vanished or lost its lock. */
+export interface DoorChange {
+  id: string;
+  /** `POST /api/users`, or the door's own name when it has no address. */
+  name: string;
+  endpointKind: EndpointKind;
+  writes: boolean;
+  path: string | null;
+  line: number | null;
+}
+
+export interface AtlasChanges {
+  baseline: BaselineState;
+  because: string | null;
+  since: string | null;
+  total: ChangeCounts;
+  byKind: Partial<Record<NodeKind, ChangeCounts>>;
+  doors: {
+    newTotal: number;
+    newOpen: DoorChange[];
+    lostCheck: DoorChange[];
+    removed: DoorChange[];
+  };
+}
+
+/** One sentence about the week, plus the doors it is about. */
+export interface ChangeNote {
+  text: string;
+  doors: DoorChange[];
+}
+
+/**
+ * The sentences, written by the model layer rather than by this page — the command line
+ * and this screen must never phrase the same week differently.
+ */
+export interface ChangeReport {
+  tone: 'ok' | 'warn' | 'muted';
+  headline: ChangeNote;
+  lines: ChangeNote[];
+}
+
 export interface AtlasMeta {
   formatVersion: number;
   toolVersion: string;
@@ -276,6 +332,8 @@ export interface AtlasMeta {
   /** Absent on atlases analyzed before archetypes existed; treat as `unknown`. */
   archetype?: ArchetypeVerdict;
   stats: AtlasStats;
+  /** Absent on atlases analyzed before this existed; that is not "nothing changed". */
+  changes?: AtlasChanges;
   warnings: string[];
 }
 
@@ -286,6 +344,7 @@ export interface OverviewView {
   topLevel: LevelNode[];
   busiestFiles: { node: AtlasNode; connections: number }[];
   zoneCounts: Record<string, number>;
+  changes: ChangeReport | null;
 }
 
 // --- the words layer (SPEC.md 5.5) ---
