@@ -174,6 +174,29 @@ export function moduleOf(relPath: string): string {
 }
 
 /**
+ * The directory a file sits in, or `''` for one at the root of the repo.
+ *
+ * Wanted because not every language's import names a file. A Go import names a package,
+ * which is a directory, and every `.go` file in it is that package — so the thing a
+ * mount asked for may be the folder rather than any one file inside it.
+ */
+function dirOf(relPath: string): string {
+  const slash = relPath.lastIndexOf('/');
+  return slash === -1 ? '' : relPath.slice(0, slash);
+}
+
+/**
+ * Whether a module path answers to what a mount asked for.
+ *
+ * The tail rather than the whole, because what a mount writes is relative to wherever
+ * the app is started from and nothing in the repo records that: `app/api/routes/items`
+ * has to be able to find `backend/app/api/routes/items.py`.
+ */
+function answersTo(where: string, wanted: string): boolean {
+  return where === wanted || where.endsWith(`/${wanted}`);
+}
+
+/**
  * How a router is named wherever it is referred to: the file it was built in, as
  * another file would import it, and the variable it was bound to.
  *
@@ -208,9 +231,14 @@ class Builds {
   /**
    * The mounted router's own key, or null when the import led nowhere we can see.
    *
-   * A Python module name is relative to the directory the app is started from, so
-   * `app/api/routes/items` has to be able to find `backend/app/api/routes/items.py`.
-   * Matching on the tail does that; requiring a single match keeps it from doing more.
+   * Asked twice, because a module path can name two different things. Usually it names a
+   * file, which is how Python and TypeScript both spell an import, and that is the more
+   * precise reading so it is tried first. Only when no file answers is the path read as a
+   * *directory* — which is what a Go import always is, `internal/api` standing for every
+   * `.go` file in `internal/api/`, none of which the mount can name.
+   *
+   * Ordering them this way is what keeps the directory reading from loosening anything:
+   * a language whose imports name files never reaches it.
    */
   childOf(mount: RouterMountFinding): string | null {
     // A mount with no module names a router built in the mounting file itself.
@@ -218,19 +246,30 @@ class Builds {
       return mount.childVar === null ? null : routerKey(moduleOf(mount.path), mount.childVar);
     }
     const wanted = mount.childModule;
-    const inModule = (build: RouterBuildFinding) => {
-      const module = moduleOf(build.path);
-      return module === wanted || module.endsWith(`/${wanted}`);
-    };
+    // The root directory is spelled `''`, and every file in the repo sits under it. A
+    // mount that asked for everything has asked for nothing we can name.
+    if (wanted === '') return null;
+    return (
+      this.only(mount.childVar, (build) => answersTo(moduleOf(build.path), wanted)) ??
+      this.only(mount.childVar, (build) => answersTo(dirOf(build.path), wanted))
+    );
+  }
 
-    const byName = mount.childVar ? (this.byVar.get(mount.childVar) ?? []).filter(inModule) : [];
+  /**
+   * The single router a mount can only mean, under one reading of the path it named, or
+   * null when the answer is not exactly one.
+   *
+   * The name the mount used is often not the name the router was declared under:
+   * `const app = new Hono(); … export const mcpRouter = app` is the ordinary shape, and
+   * `export default router` gives no name at all. So when the name finds nothing the file
+   * answers for itself — one router in it means one answer, two means we do not know
+   * which, and not knowing is reported as not knowing.
+   */
+  private only(childVar: string | null, matches: (build: RouterBuildFinding) => boolean): string | null {
+    const byName = childVar ? (this.byVar.get(childVar) ?? []).filter(matches) : [];
     if (byName.length === 1) return routerKey(moduleOf(byName[0].path), byName[0].varName);
 
-    // The name the mount used is often not the name the router was declared under:
-    // `const app = new Hono(); … export const mcpRouter = app` is the ordinary shape,
-    // and `export default router` gives no name at all. So the file answers for itself
-    // — one router in it means one answer, two means we do not know which.
-    const inFile = [...this.byKey.values()].filter(inModule);
+    const inFile = [...this.byKey.values()].filter(matches);
     return inFile.length === 1 ? routerKey(moduleOf(inFile[0].path), inFile[0].varName) : null;
   }
 }

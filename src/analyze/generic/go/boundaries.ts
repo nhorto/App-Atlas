@@ -46,6 +46,24 @@ const METHODS = new Set(['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIO
 /** Methods that change something on the other side. */
 const WRITE_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
 
+/**
+ * Frameworks that name the handler before the checks standing in front of it.
+ *
+ * Echo's method reads `GET(path string, h HandlerFunc, m ...MiddlewareFunc)`: the handler
+ * has to come first, because the middleware is the variadic tail. gin writes the same
+ * line the other way round, `GET(path string, handlers ...HandlerFunc)` with the real
+ * handler last — and so does the standard library, and so does every router that takes
+ * exactly one argument after the path.
+ *
+ * Reading an Echo route the gin way names the last middleware as the handler. The door
+ * then points at the lock rather than at what is behind it, and the search for checks
+ * "one hop out from the handler" begins in the wrong function.
+ *
+ * Keyed on the label `frameworks.ts` gives a declared dependency, so this is a fact about
+ * what the repo's `go.mod` brings in rather than about a variable somebody named `e`.
+ */
+const HANDLER_FIRST = new Set(['Echo']);
+
 /** How the standard library and the routers register a handler without naming a verb. */
 const HANDLERS = new Set(['HandleFunc', 'Handle', 'Any', 'All', 'Match']);
 
@@ -320,13 +338,14 @@ function detectRoutes(
     if (method === 'Mount') {
       const child = call.args.map(nameOf).find((name) => name !== null) ?? null;
       const dot = child?.indexOf('.') ?? -1;
+      const module = dot > 0 ? (imports.get(child!.slice(0, dot)) ?? null) : null;
       findings.push({
         type: 'router-mount',
         path: file.path,
         hostVar: host.varName,
-        // `api.Router()` names a package, and the package is a directory of files. The
-        // merge layer matches on the tail, which is why the local name is enough.
-        childModule: dot > 0 ? (imports.get(child!.slice(0, dot)) ?? null) : null,
+        childModule: module === null ? null : packageDir(module, input.signals.goModule),
+        // `api.Routes()` names the call that hands the router over, not the variable it
+        // was built under — which is why the package it came from has to answer instead.
         childVar: dot > 0 ? child!.slice(dot + 1).replace(/\(\)$/, '') : child,
         hasPrefix: firstString(call.args) !== null,
         prefix: firstString(call.args),
@@ -346,9 +365,12 @@ function detectRoutes(
     //
     // Naming the *first* name as the handler put gitea's `DeleteProjectColumn` on screen
     // as the thing protecting `DELETE /projects/{id}` — a handler wearing the label of a
-    // lock, on the screen where that distinction is the whole point.
+    // lock, on the screen where that distinction is the whole point. Echo is the one
+    // framework that really does write it that way round, and it says so in `go.mod`.
     const after = call.args.slice(1).map(nameOf).filter((name): name is string => name !== null);
-    const handler = after[after.length - 1] ?? null;
+    const handlerFirst = HANDLER_FIRST.has(host.framework);
+    const handler = (handlerFirst ? after[0] : after[after.length - 1]) ?? null;
+    const middleware = handlerFirst ? after.slice(1) : after.slice(0, -1);
     const handlerScope = handler?.includes('.') ? (handler.split('.').pop() ?? null) : handler;
     const finding: EndpointFinding = {
       type: 'endpoint',
@@ -369,7 +391,7 @@ function detectRoutes(
       routerVar: host.varName,
       // Every name on the line except the handler. Whether any of them is really a check
       // is decided in the merge, against what the project's functions actually do.
-      paramTypes: after.slice(0, -1).map((name) => name.split('.').pop() ?? name),
+      paramTypes: middleware.map((name) => name.split('.').pop() ?? name),
     };
     doorsAt.set(call.startIndex, finding);
     if (call.scope) wiring.add(call.scope.split('.').pop() ?? call.scope);
@@ -392,6 +414,23 @@ function detectRoutes(
   }
 
   return wiring;
+}
+
+/**
+ * The folder a Go import names, written the way the repo lays its own files out.
+ *
+ * A Go import names a package, and a package is a directory: `github.com/me/app/internal/api`
+ * is the folder `internal/api`, and every `.go` file in it is that package. `go.mod` says
+ * what prefix this repo's own folders carry, which is the only thing that can tell one of
+ * ours from somebody else's.
+ *
+ * An import that is not ours is handed back exactly as written. Trimming it down to
+ * something that looks like a folder of ours is how `github.com/other/api` would come to
+ * stand for our own `api/`, and a prefix invented that way is worse than no prefix at all.
+ */
+function packageDir(module: string, ownModule: string | null): string {
+  if (!ownModule || !module.startsWith(`${ownModule}/`)) return module;
+  return module.slice(ownModule.length + 1);
 }
 
 /**
