@@ -242,7 +242,7 @@ test('a function that only reads never gets a "writes to" arrow', () => {
 
 test('names the companies data goes to, from SDKs and from literal URLs', () => {
   const names = insights.services.map((s) => s.name).sort();
-  assert.deepEqual(names, ['Clerk', 'PostHog', 'Resend', 'Stripe']);
+  assert.deepEqual(names, ['Clerk', 'PostHog', 'Resend', 'Stripe', 'updates.example.dev']);
 
   const posthog = insights.services.find((s) => s.name === 'PostHog');
   assert.deepEqual(posthog.evidence, ['api.us.posthog.com'], 'resolved from the URL, not guessed');
@@ -250,6 +250,15 @@ test('names the companies data goes to, from SDKs and from literal URLs', () => 
   const resend = insights.services.find((s) => s.name === 'Resend');
   assert.equal(resend.category, 'email');
   assert.equal(resend.sends, true, 'sending mail is data leaving the app');
+});
+
+test('a host held in a constant is still a host the app calls', () => {
+  // `const BASE = "https://…"` then `fetch(`${BASE}/latest.json`)` is how everyone writes
+  // it, and reading only the literal in the argument finds an empty string — so a repo
+  // that plainly calls the internet was summarised as talking to nobody.
+  const feed = insights.services.find((s) => s.name === 'updates.example.dev');
+  assert.ok(feed, `not found among: ${insights.services.map((s) => s.name).join(', ')}`);
+  assert.equal(feed.category, 'other', 'an unrecognised host is not guessed into a brand');
 });
 
 test('inventories every environment variable and checks it against .env.example', () => {
@@ -382,7 +391,7 @@ test('counts the boundary in the headline stats', () => {
   const s = atlas.meta.stats;
   assert.equal(s.endpoints, endpoints.length);
   assert.equal(s.stores, 2);
-  assert.equal(s.externalServices, 4);
+  assert.equal(s.externalServices, 5);
   assert.equal(s.envVars, 10);
   // Crons and config are not doors a stranger can knock on.
   assert.equal(s.routes, insights.auth.routes.length);

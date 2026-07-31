@@ -176,9 +176,13 @@ export function renderAtlasMarkdown(graph: AtlasGraph, options: MarkdownOptions 
       out.push(`- **${store.name}** (${store.client}) — ${store.reads} reads, ${store.writes} writes${tables}`);
     }
     for (const service of insights.services) {
+      // A host we could not put a company's name to *is* its own evidence, so "via" would
+      // print the same address twice on one line and tell the reader nothing the second
+      // time. Naming the package or SDK it came from is the only version worth saying.
+      const via = service.evidence.filter((item) => item !== service.name).slice(0, 2);
       out.push(
         `- **${service.name}** (${service.category}) — ${service.callSites} call ${service.callSites === 1 ? 'site' : 'sites'}${
-          service.evidence.length > 0 ? ` via ${service.evidence.slice(0, 2).join(', ')}` : ''
+          via.length > 0 ? ` via ${via.join(', ')}` : ''
         }`,
       );
     }

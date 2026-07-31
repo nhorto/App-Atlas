@@ -10,8 +10,8 @@
  * makes precision matter: a hostname we cannot resolve is reported as a hostname, not
  * guessed into a brand.
  */
-import { Node } from 'ts-morph';
-import type { CallExpression, NewExpression } from 'ts-morph';
+import { Node, VariableDeclarationKind } from 'ts-morph';
+import type { CallExpression, NewExpression, SourceFile } from 'ts-morph';
 import type { ServiceCategory } from '../../model/types.js';
 import { isInternalHost, serviceForHost, serviceForPackage } from './catalog.js';
 import { dottedName, literalPrefix, literalString, objectProp } from './ast.js';
@@ -83,11 +83,11 @@ function httpCall(call: CallExpression, dotted: string, ctx: DetectorContext): b
 
   // `axios.create({ baseURL })` names the service for every call made through it.
   if (last === 'create') {
-    const base = literalPrefix(objectProp(call.getArguments()[0], 'baseURL'));
+    const base = urlArgument(objectProp(call.getArguments()[0], 'baseURL'), ctx);
     return base ? report(base, call, ctx, false) : false;
   }
 
-  const url = literalPrefix(call.getArguments()[0]);
+  const url = urlArgument(call.getArguments()[0], ctx);
   if (!url) return false;
 
   const writes = WRITE_VERBS.has(last) || methodOfOptions(call) !== null;
@@ -118,6 +118,52 @@ function report(url: string, call: CallExpression, ctx: DetectorContext, writes:
     site: ctx.site(call),
   });
   return true;
+}
+
+/**
+ * The address a call is aimed at, following one hop to a constant in the same file.
+ *
+ * Nobody writes the host twice. They write `const BASE_URL = "https://…"` at the top and
+ * then `fetch(\`${BASE_URL}/latest.json\`)`, and reading only the literal in the argument
+ * finds an empty string and reports nothing — so a repo that plainly calls out to the
+ * internet is summarised as talking to nobody, which is the one answer worse than saying
+ * a hostname we could not put a company's name to.
+ *
+ * One hop, `const` only, same file. A `let` can be reassigned between the declaration and
+ * the call, and following a constant across a module boundary is a different and larger
+ * claim — both are left alone rather than guessed at.
+ */
+function urlArgument(node: Node | undefined, ctx: DetectorContext): string | null {
+  const direct = literalPrefix(node);
+  if (direct) return direct;
+  if (!node) return null;
+
+  if (Node.isIdentifier(node)) return constantsIn(ctx.sf).get(node.getText()) ?? null;
+
+  // A template whose head is empty begins with its first substitution: `${BASE}/path`.
+  if (Node.isTemplateExpression(node)) {
+    const first = node.getTemplateSpans()[0]?.getExpression();
+    if (first && Node.isIdentifier(first)) return constantsIn(ctx.sf).get(first.getText()) ?? null;
+  }
+  return null;
+}
+
+/** Module-level `const NAME = "…"` in one file, read once and kept for its other calls. */
+const fileConstants = new WeakMap<SourceFile, Map<string, string>>();
+
+function constantsIn(sf: SourceFile): Map<string, string> {
+  const cached = fileConstants.get(sf);
+  if (cached) return cached;
+  const found = new Map<string, string>();
+  for (const statement of sf.getVariableStatements()) {
+    if (statement.getDeclarationKind() !== VariableDeclarationKind.Const) continue;
+    for (const declaration of statement.getDeclarations()) {
+      const text = literalString(declaration.getInitializer());
+      if (text) found.set(declaration.getName(), text);
+    }
+  }
+  fileConstants.set(sf, found);
+  return found;
 }
 
 function hostOf(url: string): string | null {
