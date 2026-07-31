@@ -28,7 +28,24 @@ import { pythonPlugin } from './py/index.js';
 import { typescriptPlugin } from './ts/index.js';
 import { dominantZone } from './zones.js';
 
-export const TOOL_VERSION = '0.6.0';
+/**
+ * What this build of App Atlas calls itself, and the answer to two questions that are
+ * easy to mistake for bookkeeping.
+ *
+ * It is mixed into the incremental cache's fingerprint, so raising it throws away every
+ * cached finding — which is the point. A cache entry records what *an analyzer* saw, not
+ * what the file says, and a reader that has learned to recognise a new shape disagrees
+ * with the one that filled the cache.
+ *
+ * It also decides whether the last run counts as a baseline for `diffAtlas`. Leaving it
+ * behind is worse than untidy: a stale atlas gets accepted as comparable, and every door
+ * the newer reader can see for the first time is reported as a door that appeared since
+ * yesterday. Going from 0.6.0 to 0.7.0 moved gitea from 757 doors to 1,053, so that is
+ * three hundred routes announced as new to somebody who changed nothing.
+ *
+ * Raise it whenever the analyzer's answers change, not only when its interface does.
+ */
+export const TOOL_VERSION = '0.7.0';
 
 export interface AnalyzeOptions {
   maxFiles?: number;
