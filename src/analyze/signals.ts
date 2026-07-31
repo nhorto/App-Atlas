@@ -160,7 +160,21 @@ export interface ProjectSignals {
   envExamplePath: string | null;
 }
 
-export function readSignals(root: string, packageJson: Record<string, unknown> | null): ProjectSignals {
+/**
+ * Everything the config files say, for one app.
+ *
+ * `repoRoot` is the directory the user asked about and defaults to `root`, the app being
+ * mapped. The two differ only when this run has narrowed to one app inside a bigger repo,
+ * and exactly one signal cares: a deployment file describes the whole stack and lives at
+ * the top of the repo, while everything else here — the `.env.example`, the Prisma
+ * schema, the wrangler config — belongs to the app that owns it and is read from `root`
+ * as it always was.
+ */
+export function readSignals(
+  root: string,
+  packageJson: Record<string, unknown> | null,
+  repoRoot: string = root,
+): ProjectSignals {
   const packages = readPackages(packageJson);
   const prisma = readPrismaSchema(root);
   return {
@@ -177,7 +191,7 @@ export function readSignals(root: string, packageJson: Record<string, unknown> |
     remixRoutesDir: hasRemix(packages) ? firstExistingDir(root, ['app/routes']) : null,
     crons: readVercelCrons(root),
     workers: readWorkers(root),
-    publishedPorts: readComposePorts(root),
+    publishedPorts: readComposePorts(repoRoot, root),
     prisma,
     // When Prisma is present its migrations are generated from schema.prisma, so
     // reading both would declare every table twice.

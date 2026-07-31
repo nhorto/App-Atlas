@@ -80,6 +80,17 @@ const SKIP_DIRS = new Set([
 /**
  * Every port every Compose file in the tree says it publishes on the host.
  *
+ * **`repoRoot` is the directory the user asked about; `appRoot` is the app inside it we
+ * happened to focus on, and only the second is allowed to narrow anything.** App Atlas
+ * lands a large repo on its main app (#34), so the analysis root for cal.com is
+ * `packages/app-store/zoomvideo` and for the FastAPI template it is `backend/` — and a
+ * search that started there would walk straight past the `docker-compose.yml` sitting at
+ * the top of the repo, which is the only place the stack is described. So the *search*
+ * starts at `repoRoot` and the *paths* are reported against `appRoot`, which keeps every
+ * site in the atlas resolvable from the atlas's own root. `repoRoot` is never guessed at
+ * by walking upwards: if somebody runs `app-atlas ./backend`, `./backend` is the whole
+ * world and a file above it is out of bounds.
+ *
  * Files are read **one at a time and never merged**, and that is the honest answer to a
  * repo with `compose.yml`, `compose.override.yml` and `compose.prod.yml` in it. Merging
  * them would mean knowing which ones somebody runs together, which nothing in the repo
@@ -89,12 +100,12 @@ const SKIP_DIRS = new Set([
  * reported against the file that made it, and the reader is told which file that was —
  * rather than being handed one reconciled answer that no single file supports.
  *
- * Sub-directories are searched too, three deep: a monorepo keeps its stack in
+ * Sub-directories are searched three deep: a monorepo keeps its stack in
  * `apps/api/docker-compose.yml` far more often than at the root. Hidden directories are
  * skipped, `.devcontainer/` among them — a dev container publishes ports on one
  * developer's laptop, which is the least deployment-like thing in any repo.
  */
-export function readComposePorts(root: string, maxDepth = 3): PublishedPort[] {
+export function readComposePorts(repoRoot: string, appRoot: string = repoRoot, maxDepth = 3): PublishedPort[] {
   const out: PublishedPort[] = [];
 
   const walk = (dir: string, depth: number): void => {
@@ -110,16 +121,16 @@ export function readComposePorts(root: string, maxDepth = 3): PublishedPort[] {
         if (depth >= maxDepth || SKIP_DIRS.has(entry.name) || entry.name.startsWith('.')) continue;
         walk(full, depth + 1);
       } else if (COMPOSE_FILE.test(entry.name)) {
-        out.push(...readOne(root, full));
+        out.push(...readOne(appRoot, full));
       }
     }
   };
 
-  walk(root, 0);
+  walk(repoRoot, 0);
   return out.sort((a, b) => a.configPath.localeCompare(b.configPath) || a.line - b.line);
 }
 
-function readOne(root: string, absPath: string): PublishedPort[] {
+function readOne(appRoot: string, absPath: string): PublishedPort[] {
   let text: string;
   try {
     text = fs.readFileSync(absPath, 'utf8');
@@ -130,7 +141,11 @@ function readOne(root: string, absPath: string): PublishedPort[] {
   const lines = readLines(text);
   if (!lines) return [];
 
-  const configPath = toPosix(path.relative(root, absPath));
+  // Relative to the app being mapped, not to the repo, so that every path in the atlas
+  // resolves from the same place. A stack described above a scoped app therefore reads
+  // `../../docker-compose.yml`, which is ugly and true — and a bare `docker-compose.yml`
+  // there would point at a file that is not where it says it is.
+  const configPath = toPosix(path.relative(appRoot, absPath));
   const out: PublishedPort[] = [];
 
   // A file called `compose.yml` with no `services:` in it is a fragment, a template, or
