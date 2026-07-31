@@ -774,8 +774,14 @@ function capitalize(value: string): string {
   return value.charAt(0).toUpperCase() + value.slice(1);
 }
 
-/** Exported name → the declaration that defines it. */
-function exportedDeclarations(sf: SourceFile): Map<string, Node> {
+/**
+ * Exported name → the declaration that defines it.
+ *
+ * Shared with the SvelteKit and Remix detectors, because "the file system is the router
+ * and the exported names are the handlers" is one convention wearing three sets of
+ * clothes.
+ */
+export function exportedDeclarations(sf: SourceFile): Map<string, Node> {
   const out = new Map<string, Node>();
   for (const fn of sf.getFunctions()) {
     if (fn.isExported() || fn.isDefaultExport()) out.set(fn.getName() ?? 'default', fn);
@@ -787,7 +793,7 @@ function exportedDeclarations(sf: SourceFile): Map<string, Node> {
 }
 
 /** The declaration behind `export default` — a page's component, usually. */
-function defaultExport(sf: SourceFile): Node | undefined {
+export function defaultExport(sf: SourceFile): Node | undefined {
   for (const fn of sf.getFunctions()) {
     if (fn.isDefaultExport()) return fn;
   }
