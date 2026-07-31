@@ -55,7 +55,7 @@ import { dominantZone } from './zones.js';
  *
  * Raise it whenever the analyzer's answers change, not only when its interface does.
  */
-export const TOOL_VERSION = '0.8.0';
+export const TOOL_VERSION = '0.9.0';
 
 export interface AnalyzeOptions {
   maxFiles?: number;
