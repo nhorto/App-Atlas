@@ -24,6 +24,7 @@ import type { RouteInsight } from '../model/insights.js';
 import { grammarTier } from '../model/tiers.js';
 import type { UnimportedView } from '../model/unimported.js';
 import { buildTypeView } from '../model/typeview.js';
+import { findPersonalData } from '../model/personal.js';
 import type { SummarySource } from '../model/types.js';
 
 const MAX_ROUTES = 40;
@@ -32,6 +33,10 @@ const MAX_TYPES = 24;
 const MAX_START_FILES = 8;
 const MAX_ENV = 30;
 const MAX_CHANGED_DOORS = 20;
+/** Enough for a reader to see the shape of the access; the boundary table has them all. */
+const MAX_REACHING_DOORS = 6;
+/** Long enough for a real schema, short enough that the section is still read. */
+const MAX_PERSONAL_TABLES = 12;
 
 /** Doors nobody outside can knock on, so they never appear in the auth table. */
 const OTHER_DOORS = new Set(['webhook', 'cron', 'queue', 'cli', 'file-read']);
@@ -216,6 +221,8 @@ export function renderAtlasMarkdown(graph: AtlasGraph, options: MarkdownOptions 
     out.push('');
   }
 
+  appendPersonalData(out, graph);
+
   if (shapes.length > 0) {
     out.push('## Key types');
     out.push('');
@@ -376,6 +383,86 @@ function appendPorts(out: string[], graph: AtlasGraph): void {
     out.push(`- ${where}${claim}`);
   }
   if (ports.length > MAX_PORTS) out.push(`- …and ${ports.length - MAX_PORTS} more.`);
+  out.push('');
+}
+
+/**
+ * Tables whose column names suggest they hold personal data (issue #48).
+ *
+ * The wording carries the whole risk here. This is a name match — no value was ever read
+ * — and the sentence a reader takes away in a customer meeting has to survive being wrong
+ * in both directions: a column called `address` that holds a wallet, and a column called
+ * `payload` that holds a passport number. So the section states its own method up front,
+ * separates the direct matches from the ambiguous ones instead of totalling them, and
+ * says plainly that a table missing from the list has not been cleared.
+ *
+ * Written only when something matched. An always-present section here would invite the
+ * opposite reading of the one `appendUnimported` needs — "no personal data found" is a
+ * claim this method is nowhere near strong enough to make.
+ */
+function appendPersonalData(out: string[], graph: AtlasGraph): void {
+  const report = findPersonalData(graph.allNodes(), graph.allEdges());
+  // Nothing matched means no section. The heading promises findings, and printing it over
+  // an empty list — nothing but caveats — reads either as a scare or as a clean bill of
+  // health, and this method is not strong enough to issue either. The tables whose
+  // columns nobody declared are already listed as `columns unknown` directly above.
+  if (report.tables.length === 0) return;
+
+  out.push('## Columns whose names suggest personal data');
+  out.push('');
+  out.push(
+    'Matched on column **names** only — App Atlas has not read a single value, and this is not a ' +
+      'compliance answer. A name is evidence of what a column was meant to hold, not proof: `address` is a ' +
+      'wallet on some apps, and a column called `payload` or `user_reference` can hold a passport number ' +
+      'and match nothing here. **A table absent from this list has not been cleared — it has only failed ' +
+      'to match a name.**',
+  );
+  out.push('');
+
+  for (const table of report.tables.slice(0, MAX_PERSONAL_TABLES)) {
+    const direct = table.columns.filter((column) => column.strength === 'direct');
+    const ambiguous = table.columns.filter((column) => column.strength === 'ambiguous');
+    // Every listed table has at least one direct match — that is what earns the row — so
+    // the direct clause always leads and the ambiguous one is only ever a suffix. Kept in
+    // its own clause, never totalled with the first, because the whole point of the
+    // distinction is that one list is worth acting on and the other is worth a glance.
+    let shape = direct.map((column) => `\`${column.column}\``).join(', ');
+    if (ambiguous.length > 0) {
+      shape += `, and, less certainly, ${ambiguous.map((column) => `\`${column.column}\``).join(', ')}`;
+    }
+    const doors =
+      table.doors.length > 0
+        ? ` — reached by ${table.doors.slice(0, MAX_REACHING_DOORS).map((door) => `\`${door.name}\``).join(', ')}${
+            table.doors.length > MAX_REACHING_DOORS ? ` and ${table.doors.length - MAX_REACHING_DOORS} more` : ''
+          }`
+        : '';
+    out.push(`- **${table.name}** — ${shape}${doors}`);
+  }
+  if (report.tables.length > MAX_PERSONAL_TABLES) {
+    out.push(`- …and ${report.tables.length - MAX_PERSONAL_TABLES} more.`);
+  }
+
+  if (report.ambiguousOnly.length > 0) {
+    out.push('');
+    out.push(
+      `${n(report.ambiguousOnly.length)} further ${plural(report.ambiguousOnly.length, 'table', 'tables')} ` +
+        `matched only on an ambiguous name such as \`name\` or \`city\`, which is too weak to list as a finding: ` +
+        `${report.ambiguousOnly.slice(0, MAX_PERSONAL_TABLES).map((table) => `\`${table.name}\``).join(', ')}` +
+        `${report.ambiguousOnly.length > MAX_PERSONAL_TABLES ? ', and others' : ''}.`,
+    );
+  }
+
+  if (report.unknownColumns.length > 0) {
+    out.push('');
+    out.push(
+      report.unknownColumns.length === 1
+        ? 'One more table is named in queries with no schema declaring its columns, so nothing here could ' +
+          `look at it either way: \`${report.unknownColumns[0].name}\`.`
+        : `${n(report.unknownColumns.length)} more tables are named in queries with no schema declaring their ` +
+          'columns, so nothing here could look at them either way: ' +
+          `${report.unknownColumns.map((table) => `\`${table.name}\``).join(', ')}.`,
+    );
+  }
   out.push('');
 }
 

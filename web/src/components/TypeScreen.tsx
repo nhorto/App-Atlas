@@ -242,6 +242,21 @@ function TypeCardNode({ data, selected }: NodeProps) {
                 {field.isId ? <span className="tfield-key" title="primary key">⚿</span> : null}
                 {field.name}
                 {field.optional ? '?' : ''}
+                {/* On the row, never on the card. The evidence is this one column's
+                    name, and a badge on the table would read as a verdict about all
+                    of it. The title says what matched and how much it is worth. */}
+                {field.personal ? (
+                  <span
+                    className={`tfield-personal is-${field.personal.strength}`}
+                    title={
+                      field.personal.strength === 'direct'
+                        ? `The name matches ${field.personal.matched} — this column looks like personal data. Matched on the name only; no value was read.`
+                        : `The name matches ${field.personal.matched}, which often means personal data and often does not. Matched on the name only; no value was read.`
+                    }
+                  >
+                    {field.personal.strength === 'direct' ? 'personal' : 'personal?'}
+                  </span>
+                ) : null}
               </span>
               <span className="tfield-type">{field.type}</span>
               {field.linkTo ? (
