@@ -12,6 +12,8 @@ import type { Atlas, AtlasEdge, AtlasMeta, AtlasNode, EdgeKind } from './types.j
 import { CONTAINER_KINDS } from './types.js';
 import { describeChanges } from './changes.js';
 import type { ChangeReport } from './changes.js';
+import { findUnimported } from './unimported.js';
+import type { UnimportedView } from './unimported.js';
 
 export interface LevelNode extends AtlasNode {
   childCount: number;
@@ -99,6 +101,13 @@ export interface OverviewView {
    * that produced it. `null` on an atlas written before this existed.
    */
   changes: ChangeReport | null;
+  /**
+   * The files nothing else in the app imports — the other half of "where to look first",
+   * and the answer to a question somebody who let an agent build for a weekend cannot
+   * answer for themselves. Carries its own refusal, so a screen can tell "none" from
+   * "not asked". See `model/unimported.ts`.
+   */
+  unimported: UnimportedView;
 }
 
 const MAX_LEVEL_NODES = 400;
@@ -398,6 +407,7 @@ export class AtlasGraph {
       busiestFiles,
       zoneCounts,
       changes: describeChanges(this.meta.changes),
+      unimported: findUnimported(this.allNodes(), this.relations, this.meta),
     };
   }
 
