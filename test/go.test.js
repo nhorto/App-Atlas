@@ -1,12 +1,14 @@
 /**
  * @fileoverview End-to-end tests for the generic tier, proved on Go.
  *
- * Four fixtures, because Go services come in shapes that break different rules.
+ * Five fixtures, because Go services come in shapes that break different rules.
  * `gohttp` uses chi, which is where sub-routers, closures and middleware live; `gostd`
  * uses nothing at all but `net/http`, which is a large fraction of real Go and would be a
  * blank page for anything that only knows frameworks; `gomount` splits its routes across
- * packages, which is what every Go service does once it outgrows one file; and `goecho`
- * writes its route calls back to front from every other router in the language.
+ * packages, which is what every Go service does once it outgrows one file; `goecho`
+ * writes its route calls back to front from every other router in the language; and
+ * `gowrap` never names a router library at all, because it wrapped one in a type of its
+ * own first — which is what gitea and PocketBase both do.
  *
  * Nothing here needs Go installed. The grammar is a WebAssembly file this repo ships, so
  * these run identically on a machine that has never had a Go toolchain on it — which is
@@ -23,11 +25,13 @@ const CHI = path.join(here, 'fixtures', 'gohttp');
 const STDLIB = path.join(here, 'fixtures', 'gostd');
 const PACKAGES = path.join(here, 'fixtures', 'gomount');
 const ECHO = path.join(here, 'fixtures', 'goecho');
+const WRAPPED = path.join(here, 'fixtures', 'gowrap');
 
 const { atlas } = await analyzeProject(CHI, { followReferences: true, cache: 'off' });
 const std = (await analyzeProject(STDLIB, { followReferences: true, cache: 'off' })).atlas;
 const split = (await analyzeProject(PACKAGES, { followReferences: true, cache: 'off' })).atlas;
 const echo = (await analyzeProject(ECHO, { followReferences: true, cache: 'off' })).atlas;
+const wrapped = (await analyzeProject(WRAPPED, { followReferences: true, cache: 'off' })).atlas;
 
 const find = (kind, name) => atlas.nodes.find((n) => n.kind === kind && n.name === name);
 const file = (relPath) => atlas.nodes.find((n) => n.kind === 'file' && n.path === relPath);
@@ -171,6 +175,49 @@ test('a router handed in as a parameter is already at its full address', () => {
   // prefix to add, and adding one would be inventing an address nobody serves.
   assert.ok(doors(split).includes('GET /admin/status'));
   assert.ok(!doors(split).some((name) => name.includes('/api/v1/admin')));
+});
+
+// ---------------------------------------------------------------------------
+// Routers a repo wrapped in a type of its own
+// ---------------------------------------------------------------------------
+
+test('a router this repo wrapped in a type of its own is still a router', () => {
+  // `func Routes() *web.Router { r := web.NewRouter(); … }`, where `web` is this repo's
+  // own package. Nothing in that file names a router library, so a rule gated on the
+  // four libraries we know builds nothing — and every door in the service goes missing.
+  assert.deepEqual(wrapped.meta.warnings, [], 'a silent parse failure must not pass as a pass');
+  assert.deepEqual(doors(wrapped), [
+    'GET /api/v1/orders/',
+    'GET /api/v1/version',
+    'GET /healthz',
+    'GET /packages/{name}/files',
+    'GET /v2/token',
+    'POST /api/v1/orders/',
+    'POST /packages/{name}/files',
+  ]);
+});
+
+test('the type stands in for the library nobody declared', () => {
+  // `chi` is in `go.mod`, but the file that builds this router has never heard of it.
+  // Naming the door after the type is what a reader would have to go and look at anyway.
+  assert.equal(door(wrapped, 'GET /api/v1/version').meta.framework, 'web.Router');
+});
+
+test('an ordinary New() beside a router is not a router', () => {
+  // `warm := cache.New()` sits in the same function as the router, spelled the same way,
+  // and `warm.Get("orders:recent")` is a cache lookup. Read as a route it becomes an
+  // address nobody serves, on the one screen people read out to customers.
+  assert.ok(!doors(wrapped).some((name) => name.includes('orders:recent')));
+  assert.equal(doors(wrapped).length, 7, 'and nothing else was invented either');
+});
+
+test('two routers built in one file under one name are two routers', () => {
+  // `CommonRoutes` and `ContainerRoutes` both open with `r := web.NewRouter()`, and they
+  // are mounted at addresses with nothing in common. Told apart only by the variable,
+  // they are one router with two prefixes — and one address has to be picked or given up.
+  assert.ok(doors(wrapped).includes('GET /packages/{name}/files'));
+  assert.ok(doors(wrapped).includes('GET /v2/token'));
+  assert.ok(!doors(wrapped).some((name) => name.includes('…')), 'neither one is given up');
 });
 
 // ---------------------------------------------------------------------------
