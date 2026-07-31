@@ -1,0 +1,49 @@
+# Publishes to npm when a version tag is pushed.
+#
+# The point of doing this here rather than from a laptop is `--provenance`: npm records
+# which commit and which workflow produced the tarball, and shows it on the package
+# page. App Atlas asks people to run it over source code they have not published, so
+# "this is the code that was audited" is worth the extra file.
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      # Provenance is signed with a short-lived OIDC token, not a stored secret.
+      id-token: write
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22.x'
+          registry-url: https://registry.npmjs.org
+          cache: npm
+
+      # A tag that disagrees with package.json publishes a version nobody asked for,
+      # under a name that will never be reused, and npm has no undo past 72 hours.
+      - name: The tag and package.json must agree
+        run: |
+          tagged="${GITHUB_REF_NAME#v}"
+          declared=$(node -p "require('./package.json').version")
+          if [ "$tagged" != "$declared" ]; then
+            echo "tag $GITHUB_REF_NAME says $tagged, package.json says $declared" >&2
+            exit 1
+          fi
+
+      - run: npm ci
+
+      # Also runs by itself as prepublishOnly; running it here means a red suite stops
+      # the job before anything touches the registry.
+      - run: npm test
+
+      - run: npm publish --provenance --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
