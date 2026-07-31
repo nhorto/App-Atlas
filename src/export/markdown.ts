@@ -27,6 +27,7 @@ import type { UnimportedView } from '../model/unimported.js';
 import { buildTypeView } from '../model/typeview.js';
 import { findPersonalData } from '../model/personal.js';
 import type { SummarySource } from '../model/types.js';
+import { buildGroups } from '../model/groups.js';
 
 const MAX_ROUTES = 40;
 const MAX_PARTS = 14;
@@ -191,16 +192,24 @@ export function renderAtlasMarkdown(graph: AtlasGraph, options: MarkdownOptions 
   }
 
   // --- the parts ---
-  const parts = overview.topLevel.filter((node) => node.kind === 'module').slice(0, MAX_PARTS);
+  // The groups, not the top-level folders. They are the unit every description here was
+  // written about, and pairing a description with a different folder's count is how `app`
+  // came to read "Build Settings · 96 files" — a true sentence about its five config
+  // files, printed against a subtree that is ninety-six, eighty-nine of them a dashboard.
+  const byId = new Map(graph.allNodes().map((node) => [node.id, node]));
+  const parts = buildGroups(graph.allNodes(), graph.allEdges())
+    .groups.map((group) => ({ group, node: byId.get(group.id) }))
+    .slice(0, MAX_PARTS);
   if (parts.length > 0) {
     out.push('## The parts');
     out.push('');
-    for (const part of parts) {
-      const files = Number(part.meta.descendantFileCount ?? part.childCount);
-      const summary = part.summary ? ` — ${oneLine(part.summary)}${mark(part.summarySource)}` : '';
+    for (const { group, node } of parts) {
+      const files = group.fileCount;
+      const summary = node?.summary ? ` — ${oneLine(node.summary)}${mark(node.summarySource)}` : '';
       // A folder the repo has retired is still listed — a backstop somebody runs by hand
       // is worth knowing about — but it is said out loud, so it is not read as current.
-      const retired = retirementOf(part) ? ' **[retired]**' : '';
+      const retired = group.retired ? ' **[retired]**' : '';
+      const part = { path: group.path, name: group.name, zone: group.zone };
       out.push(`- \`${part.path || part.name}\` (${files} ${plural(files, 'file')}, ${part.zone})${retired}${summary}`);
     }
     out.push('');
