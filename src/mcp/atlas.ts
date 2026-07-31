@@ -40,7 +40,7 @@ export type Resolution =
  * there to ask.
  */
 export class AtlasSource {
-  private readonly cache = new Map<string, { stamp: number; graph: AtlasGraph }>();
+  private readonly cache = new Map<string, { stamp: string; graph: AtlasGraph }>();
 
   constructor(readonly root: string) {}
 
@@ -96,7 +96,7 @@ export class AtlasSource {
   /** Reads the atlas for one directory, reusing the last read while the file is unchanged. */
   private graphFor(dir: string): AtlasGraph | null {
     const stamp = stampOf(dir);
-    if (stamp === null) {
+    if (!stamp) {
       this.cache.delete(dir);
       return null;
     }
@@ -115,21 +115,24 @@ export class AtlasSource {
 }
 
 /**
- * When this project's atlas was last written, as a number that changes whenever it is.
+ * A short string that changes whenever this project's atlas does, and is empty when
+ * there is not one.
  *
- * Both files are considered because `loadAtlas` will fall back to the JSON export when
- * the database is missing, and a stamp that ignores the file actually being read would
- * serve a stale answer forever.
+ * Both files are considered because `loadAtlas` falls back to the JSON export when the
+ * database is missing, and a stamp that ignored the file actually being read would serve
+ * a stale answer forever. Size rides along with the timestamp because two writes can
+ * land inside the same millisecond, and re-reading a file needlessly is cheaper than
+ * answering an agent about code it has already changed.
  */
-function stampOf(dir: string): number | null {
-  let newest: number | null = null;
+function stampOf(dir: string): string {
+  const parts: string[] = [];
   for (const file of [atlasDbPath(dir), atlasJsonPath(dir)]) {
     try {
       const stat = fs.statSync(file);
-      newest = newest === null ? stat.mtimeMs : Math.max(newest, stat.mtimeMs);
+      parts.push(`${stat.mtimeMs}:${stat.size}`);
     } catch {
       /* a missing file is one of the two normal answers */
     }
   }
-  return newest;
+  return parts.join('|');
 }

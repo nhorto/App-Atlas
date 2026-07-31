@@ -493,7 +493,7 @@ Measured on the same three Go repos, before and after, by diffing door lists:
 
 Known and unfixed, filed rather than papered over: two gitea doors still print an address that does not answer ([#60](https://github.com/nhorto/App-Atlas/issues/60)), and a five-second interpreter probe means a busy machine can be mistaken for one with no Python on it ([#58](https://github.com/nhorto/App-Atlas/issues/58)).
 
-**MCP — the map, answered instead of pasted: ✅ complete (2026-07-31).** `app-atlas mcp`, closing [#42](https://github.com/nhorto/App-Atlas/issues/42) and the agent-facing half of section 7. Six tools over the `AtlasGraph` that already existed — `unguarded_doors`, `list_doors`, `what_calls`, `where_is`, `data_stores`, `env_vars` — in `src/mcp/`, three files and no new dependency. 37 new tests, 364 in total.
+**MCP — the map, answered instead of pasted: ✅ complete (2026-07-31).** `app-atlas mcp`, closing [#42](https://github.com/nhorto/App-Atlas/issues/42) and the agent-facing half of section 7. Six tools over the `AtlasGraph` that already existed — `unguarded_doors`, `list_doors`, `what_calls`, `where_is`, `data_stores`, `env_vars` — in `src/mcp/`, four files and no new dependency. 38 new tests, 365 in total.
 
 This is distribution, not analysis. Every neighbour in [LANDSCAPE.md](docs/LANDSCAPE.md) has been here for a year; the graph, the queries and the export were all already written. What was missing was a wrapper.
 

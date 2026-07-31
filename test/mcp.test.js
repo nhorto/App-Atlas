@@ -485,6 +485,21 @@ test('in a workspace the answer names the app it is about, and the ones it is no
   assert.match(textOf(missing), /web, tools/, 'says what it could have answered about');
 });
 
+test('a re-analysis while the server is running is picked up by the next call', () => {
+  // The loop section 7 predicted: the agent edits, `analyze --watch` re-runs beside it,
+  // and the agent asks whether the route it just wrote has a check. It only exists if a
+  // long-lived server notices that the file underneath it has been replaced.
+  const dir = path.join(workspace, 'rewritten');
+  fs.mkdirSync(dir, { recursive: true });
+  const source = new AtlasSource(dir);
+
+  persistAtlas(dir, exposure.atlas);
+  assert.equal(callMcpTool(source, 'unguarded_doors', {}).structuredContent.unguardedCount, 3);
+
+  persistAtlas(dir, library.atlas);
+  assert.equal(callMcpTool(source, 'unguarded_doors', {}).structuredContent.nothingToGuard, true);
+});
+
 // ---------------------------------------------------------------------------
 // The whole thing, over a real pipe
 // ---------------------------------------------------------------------------
