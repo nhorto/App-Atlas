@@ -178,6 +178,28 @@ interface Scope {
   endIndex: number;
 }
 
+/**
+ * A router built inside the function that hands it back, and the name everywhere else
+ * knows it by.
+ *
+ * `func CommonRoutes() *web.Router { r := web.NewRouter(); … }` is mounted in another
+ * package entirely, as `r.Mount("/api/packages", packages_router.CommonRoutes())`. The
+ * mount can only write the function's name; the routes inside can only write the
+ * variable's; and unless those are the same router, the prefix never reaches the
+ * addresses it belongs in front of.
+ *
+ * A range rather than a rename, because the variable is local and reused. gitea's
+ * `routers/api/packages/api.go` builds `r` twice, in `CommonRoutes` and in
+ * `ContainerRoutes` — two routers, mounted at two different addresses, and telling them
+ * apart is the whole of what the reader is owed.
+ */
+interface RouterAlias {
+  varName: string;
+  identity: string;
+  startIndex: number;
+  endIndex: number;
+}
+
 function detectRoutes(
   input: BoundaryInput,
   imports: Map<string, string>,
@@ -197,6 +219,9 @@ function detectRoutes(
   /** Router variable → the framework that built it. */
   const routers = new Map<string, string>();
   const scopes: Scope[] = [];
+  const aliases: RouterAlias[] = [];
+  /** Functions that have already lent their name to a router, so the first one keeps it. */
+  const named = new Set<string>();
 
   // The standard library's own mux is a router with no dependency to declare. `http`
   // itself is one too: `http.HandleFunc` registers on a mux the runtime owns.
@@ -224,6 +249,73 @@ function detectRoutes(
     return goFrameworkFor(module);
   };
 
+  /**
+   * The function a call is written inside, when it is written inside one.
+   *
+   * By containment rather than by name, because a method and a plain function can share a
+   * name and the question here is which body the call sits in.
+   */
+  const enclosingDef = (call: GCall): GDef | null => {
+    let best: GDef | null = null;
+    for (const def of file.defs) {
+      if (def.kind !== 'function') continue;
+      if (def.startIndex > call.startIndex || def.endIndex < call.endIndex) continue;
+      if (!best || def.startIndex > best.startIndex) best = def;
+    }
+    return best;
+  };
+
+  /**
+   * The function a call sits inside, when that function declares it hands a router back:
+   * `func Routes() *web.Router { m := web.NewRouter(); … }`.
+   *
+   * The written type again, which is the evidence the parameter rule above already trusts
+   * — read at the other end of the function this time.
+   */
+  const handedBack = (call: GCall): { def: GDef; type: string } | null => {
+    const def = enclosingDef(call);
+    if (!def) return null;
+    const type = bareType(def.returns);
+    return ROUTER_TYPE.test(type) ? { def, type } : null;
+  };
+
+  /**
+   * The label for a router whose constructor belongs to a package none of the framework
+   * tables have heard of.
+   *
+   * `func Routes() *web.Router { m := web.NewRouter(); m.Get("/version", …) }` is gitea's
+   * entire `/api/v1` surface, and `web` there is gitea's own wrapper rather than anybody's
+   * router library. Asked only which library the constructor came from, this file answers
+   * "none", builds nothing, and several hundred doors go missing — along with the
+   * `r.Mount("/api/packages", …)` written in front of them, which is left with no build to
+   * attach itself to.
+   *
+   * Two things are demanded of the type, and both are load-bearing: the package has to be
+   * one this file imported, and the constructor has to come *from* the package that
+   * declares the type — `web.NewRouter()` for a `*web.Router`. `New` is close to the most
+   * common function name in Go, and a rule that asked only about the return type would
+   * make a router out of every logger opened inside a function that hands a router back.
+   */
+  const wrappedFramework = (call: GCall, handed: { def: GDef; type: string } | null): string | null => {
+    if (!handed) return null;
+    const dot = handed.type.indexOf('.');
+    if (dot <= 0 || call.receiver !== handed.type.slice(0, dot)) return null;
+    const module = imports.get(call.receiver);
+    if (!module) return null;
+    // A known library gets its own name; anything else is named after the type it is,
+    // which is the answer the parameter rule gives for that same type.
+    return goFrameworkFor(module) ?? handed.type;
+  };
+
+  /** What a router variable is called outside the function it was built in. */
+  const identityOf = (varName: string, index: number): string => {
+    for (const alias of aliases) {
+      if (alias.varName !== varName) continue;
+      if (alias.startIndex <= index && alias.endIndex >= index) return alias.identity;
+    }
+    return varName;
+  };
+
   /** Which router a call is written on, and what stands in front of it. */
   const innermost = (index: number): Scope | null => {
     let best: Scope | null = null;
@@ -241,7 +333,7 @@ function detectRoutes(
     }
     if (!call.receiver) return null;
     const framework = routers.get(call.receiver);
-    return framework ? { varName: call.receiver, framework } : null;
+    return framework ? { varName: identityOf(call.receiver, call.startIndex), framework } : null;
   };
 
   // --- pass one: what the routers are ---------------------------------------
@@ -252,15 +344,31 @@ function detectRoutes(
     const method = call.method ?? '';
     const bound = boundName(file, call);
 
-    // `r := chi.NewRouter()`, `e := echo.New()`, `mux := http.NewServeMux()`
-    if (call.receiver && CONSTRUCTORS.has(method)) {
-      const framework = frameworkOfPackage(call.receiver);
-      if (framework && bound) {
+    // `r := chi.NewRouter()`, `e := echo.New()`, `mux := http.NewServeMux()` — and
+    // `m := web.NewRouter()`, where `web` is this repo's own wrapper around one of them.
+    if (call.receiver && CONSTRUCTORS.has(method) && bound) {
+      const handed = handedBack(call);
+      const framework = frameworkOfPackage(call.receiver) ?? wrappedFramework(call, handed);
+      if (framework) {
         routers.set(bound, framework);
+        // A router built to be handed back is known everywhere else by the name of the
+        // function handing it over, because that is the only name a mount ever writes.
+        // The second router a function builds keeps its own name: one function is one
+        // name, and two builds under it would be one router as far as the merge can see.
+        const identity = handed && !named.has(handed.def.name) ? handed.def.name : bound;
+        if (identity !== bound) {
+          named.add(identity);
+          aliases.push({
+            varName: bound,
+            identity,
+            startIndex: handed!.def.startIndex,
+            endIndex: handed!.def.endIndex,
+          });
+        }
         findings.push({
           type: 'router-build',
           routerName: call.callee,
-          varName: bound,
+          varName: identity,
           path: file.path,
           line: call.line,
           hasPrefix: false,
@@ -489,6 +597,17 @@ function routeFor(call: GCall, method: string, framework: string): { method: str
 }
 
 /**
+ * The type a name was written with, with everything that is not the type taken off:
+ * `*router.RouterGroup[*core.RequestEvent]` → `router.RouterGroup`.
+ *
+ * Generics first, because their contents are full types of their own and stripping the
+ * stars before the brackets welds the outer type onto the inner one.
+ */
+function bareType(type: string): string {
+  return type.replace(/\[.*$/, '').replace(/^[*&[\]]+/, '');
+}
+
+/**
  * `version` → `/version`.
  *
  * Every Go router treats a route path as absolute from the router it is written on, and
@@ -496,13 +615,6 @@ function routeFor(call: GCall, method: string, framework: string): { method: str
  * it is an address nobody can paste into a browser, which for the one screen people read
  * out to customers is the difference between an answer and a puzzle.
  */
-/** `*router.RouterGroup[*core.RequestEvent]` → `router.RouterGroup`. */
-function bareType(type: string): string {
-  // Generics first: their contents are full types of their own, and stripping the stars
-  // before the brackets welds the outer type onto the inner one.
-  return type.replace(/\[.*$/, '').replace(/^[*&[\]]+/, '');
-}
-
 function absolute(route: string): string {
   if (route === '' || route.startsWith('/')) return route;
   return `/${route}`;
