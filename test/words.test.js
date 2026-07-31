@@ -667,6 +667,88 @@ test('init writes conventions once, and leaves what was already there', () => {
   }
 });
 
+// ---------------------------------------------------------------------------
+// What the prompt actually says (issue #49)
+// ---------------------------------------------------------------------------
+//
+// These assert on the prompt rather than on the reply, because the prompt is what the
+// change was. A model given a group and no arrows cannot write about how the app fits
+// together no matter how good it is, and a model told the wrong thing about a guard will
+// write the wrong thing back in fluent prose.
+
+/** The one request in a run that describes the groups. */
+async function groupPrompt() {
+  const atlas = await freshAtlas();
+  const backend = stubBackend();
+  await enrichAtlas({ atlas, backend, cache: new Map() });
+  const request = backend.calls.find((call) => call.user.includes('parts of one codebase'));
+  assert.ok(request, 'no group request was made');
+  return request.user;
+}
+
+test('a group is described with the groups it hands off to', async () => {
+  const prompt = await groupPrompt();
+
+  // The fixture's whole architecture in one line: every route handler goes through the
+  // one shared folder. Without this the model sees two unrelated folders.
+  assert.match(prompt, /\[1\] src\/app[\s\S]*?hands off to: src\/lib/);
+  assert.match(prompt, /\[2\] src\/lib[\s\S]*?used by: src\/app/);
+});
+
+test('a group is described with what it owns, not just what it holds', async () => {
+  const prompt = await groupPrompt();
+
+  assert.match(prompt, /src\/lib[\s\S]*?calls out to: Clerk, PostHog, Resend, Stripe/);
+  assert.match(prompt, /src\/app[\s\S]*?ways in:.*GET \/api\/users \(checked by clerkMiddleware\)/);
+});
+
+test('one door’s reason for having no guard is never lent to another', async () => {
+  // The bug this pins was live for one build. The reasons were hoisted to a single line
+  // per group, so `PAGE /` being public by design was printed as the explanation for the
+  // whole group — including `createOrder`, the fixture's deliberately-unguarded server
+  // action, which the security screen counts and which must stay countable.
+  const prompt = await groupPrompt();
+
+  assert.match(prompt, /PAGE \/ \(no check found — a page rather than an API route/);
+  assert.match(prompt, /createOrder \(no check found\)/);
+  assert.doesNotMatch(prompt, /createOrder \(no check found —/);
+  assert.doesNotMatch(prompt, /CRON \/api\/cron\/digest \(no check found —/);
+});
+
+test('the overview is given the handoffs and told to follow them', async () => {
+  const atlas = await freshAtlas();
+  const backend = stubBackend();
+  await enrichAtlas({ atlas, backend, cache: new Map() });
+
+  const request = backend.calls.find((call) => /one paragraph/.test(call.user));
+  assert.ok(request, 'no overview request was made');
+  assert.match(request.user, /The parts of the codebase, and which part hands off to which:/);
+  assert.match(request.user, /- src\/app — 8 files, mostly api; hands off to src\/lib/);
+  assert.match(request.user, /must follow the handoffs above end to end/);
+});
+
+test('describing groups does not leave the folders inside them unnamed', async () => {
+  // Cutting the fixture into 5 groups took the folder count that gets a plain-English
+  // name from 14 to 4. Better prose about the app, worse map of it — every box under
+  // src/app/api lost its label. Folders that are not groups keep the older, thinner ask.
+  const atlas = await freshAtlas();
+  await enrichAtlas({ atlas, backend: stubBackend(), cache: new Map() });
+
+  const folders = atlas.nodes.filter((n) => n.kind === 'module');
+  const named = folders.filter((n) => n.label);
+  assert.equal(named.length, folders.length, 'every folder on the map should carry a name');
+
+  const deep = atlas.nodes.find((n) => n.meta.dirPath === 'src/app/api/orders');
+  assert.ok(deep?.label, 'a folder inside a group still needs a name of its own');
+});
+
+test('a group of one file is not "1 files"', async () => {
+  const prompt = await groupPrompt();
+
+  assert.match(prompt, /size: 1 file, mostly/);
+  assert.doesNotMatch(prompt, /1 files/);
+});
+
 function escapeRe(text) {
   return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }

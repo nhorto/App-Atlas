@@ -92,7 +92,7 @@ export interface CachedExplanation {
  * answer to the question we now ask. Every cache key carries it, so a bump
  * invalidates deliberately rather than by accident.
  */
-export const PROMPT_VERSION = 1;
+export const PROMPT_VERSION = 2;
 
 /** Cache key. Same content plus same question equals same answer, at any price. */
 export function explanationKey(tier: EnrichTier, hash: string): string {
