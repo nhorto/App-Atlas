@@ -120,6 +120,26 @@ export interface FileMeta {
   exportedNames: string[];
   functionCount: number;
   typeCount: number;
+  /**
+   * A framework runs this file itself — a Next.js page or layout, a SvelteKit hook, an
+   * Expo screen. Nothing in the repo imports it, and that is the convention working
+   * rather than a file nobody uses. Holds the framework's name; absent on every other
+   * file, and on any file analyzed before this existed.
+   */
+  frameworkOwned?: string;
+  /**
+   * A manifest names this file as a way in — `main`, `bin`, an entry in `exports`, or a
+   * script that runs it. Holds the field it was named in, so a reader can go and look.
+   */
+  declaredEntry?: string;
+  /**
+   * Import specifiers naming something inside this project that could not be resolved —
+   * a path alias like `@/lib/db` whose mapping lives in a config this run never read.
+   * Each one is a link between two of the project's own files that is missing from the
+   * graph, which is why it is recorded rather than quietly dropped. Absent when there
+   * were none, and on any file analyzed before this existed.
+   */
+  unresolvedImports?: string[];
 }
 
 /** meta for kind === 'function' */
@@ -513,6 +533,31 @@ export interface AtlasChanges {
   doors: DoorChanges;
 }
 
+/**
+ * What this run was actually able to look at.
+ *
+ * Two facts, and missing either of them turns a true sentence into a false one. Both
+ * exist for the questions phrased as an *absence* — "nothing imports this file" — where
+ * the answer is produced by not finding something, and so is indistinguishable from the
+ * answer produced by never having looked.
+ *
+ * `references` is false when `--no-refs` skipped the pass that records who uses what.
+ * `wholeRepo` is false when a big repo was narrowed to its main app (#34), which puts
+ * every sibling package that might import this app outside the map.
+ */
+export interface AtlasCoverage {
+  /** The symbol-reference pass ran. False when `--no-refs` was passed. */
+  references: boolean;
+  /** The analyzed directory is the whole repo the user named, not one app inside it. */
+  wholeRepo: boolean;
+  /**
+   * Formats present in the project that import modules and that no analyzer here reads
+   * — Vue, Svelte and Astro components — with how many of each there are. Empty for
+   * most repos, and its emptiness is the claim: every module in this project was read.
+   */
+  unreadFormats: { ext: string; count: number }[];
+}
+
 export interface AtlasMeta {
   /** Bumped when the on-disk shape changes incompatibly. */
   formatVersion: number;
@@ -537,6 +582,13 @@ export interface AtlasMeta {
    * read. Absent on atlases written before M5.
    */
   incremental?: { reused: number; analyzed: number };
+  /**
+   * How much of the pipeline ran, and how much of the repo was in view. Absent on
+   * atlases written before this existed, which means "nobody recorded it" — a third
+   * thing again from yes and from no, and the surfaces that read it treat it as
+   * unknown rather than assuming the happy answer.
+   */
+  coverage?: AtlasCoverage;
   /**
    * What moved since the previous run. Optional because atlases written before this
    * existed are still readable — and because a missing value means "nobody asked",
