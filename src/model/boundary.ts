@@ -126,6 +126,10 @@ const INPUT_FAMILIES: InputFamily[] = [
   { family: 'cron', label: 'Scheduled jobs', kinds: ['cron'] },
   { family: 'queue', label: 'Background jobs', kinds: ['queue'] },
   { family: 'realtime', label: 'Realtime', kinds: ['realtime'] },
+  // Doors a deployment file opens rather than code. Their own card, never folded in with
+  // the API routes: they carry no auth verdict, and a card whose "open" badge counted
+  // them would be counting ports nothing is supposed to check.
+  { family: 'ports', label: 'Ports a deployment file publishes', kinds: ['port'] },
   // A library's whole boundary. Split in two because the commitments are different:
   // changing a function's behaviour breaks callers at runtime, changing a type's
   // shape breaks them at compile time.
@@ -336,6 +340,7 @@ const INPUT_NOUNS: Record<string, string> = {
   cron: 'scheduled job',
   queue: 'worker',
   realtime: 'subscription',
+  ports: 'published port',
   exports: 'function',
   'export-types': 'type',
 };
