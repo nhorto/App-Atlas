@@ -34,6 +34,7 @@ import { AtlasGraph } from './model/graph.js';
 import type { Atlas, DoorChange } from './model/types.js';
 import { markStaleDocs } from './model/staleness.js';
 import { startMcpServer } from './mcp/index.js';
+import { isTrackedByGit } from './util/git.js';
 import { grammarTier } from './model/tiers.js';
 import { atlasDbPath, atlasJsonPath, loadAtlas, persistAtlas, readScopes, scopesPath, writeScopes } from './model/store.js';
 import { startServer } from './server/index.js';
@@ -169,13 +170,18 @@ program
       return;
     }
 
-    const markdown = renderAtlasMarkdown(new AtlasGraph(atlas), { toolVersion: TOOL_VERSION });
+    // Where it is going has to be settled before it is written, because a map somebody
+    // commits says less than one they keep to themselves (issue #69). `--stdout` is
+    // never shared: it goes to whoever typed the command.
+    const target = path.resolve(root, typeof options.md === 'string' ? options.md : 'ATLAS.md');
+    const shared = options.stdout ? false : isTrackedByGit(target);
+
+    const markdown = renderAtlasMarkdown(new AtlasGraph(atlas), { toolVersion: TOOL_VERSION, shared });
     if (options.stdout) {
       process.stdout.write(markdown);
       return;
     }
 
-    const target = path.resolve(root, typeof options.md === 'string' ? options.md : 'ATLAS.md');
     fs.writeFileSync(target, markdown, 'utf8');
 
     const relative = path.relative(process.cwd(), target) || target;

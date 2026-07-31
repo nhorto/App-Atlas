@@ -233,3 +233,39 @@ test('the door survives the whole pipeline, path and all', () => {
     'without a repo root there is nothing above the app to read',
   );
 });
+
+/**
+ * The exported brief, which is the surface a coding agent actually reads (#73).
+ *
+ * These doors were on the map and missing from the export for one release, because the
+ * section that would have held them is introduced by "a stranger cannot knock on them" —
+ * true of a cron, false of a database published on every interface. So they get their
+ * own section, and the wording is the whole point of it.
+ */
+test('the exported brief names the ports, under a heading that is true of them', async () => {
+  const { renderAtlasMarkdown } = await import('../dist/node/index.js');
+  const { AtlasGraph } = await import('../dist/node/index.js');
+  const markdown = renderAtlasMarkdown(AtlasGraph.fromAtlas(atlas));
+
+  assert.match(markdown, /## Ports a deployment file publishes/);
+  // The subject of every sentence is the file, never a machine: an agent reading this
+  // must not be able to tell somebody their database is exposed.
+  assert.match(markdown, /Declared in the files named below, not observed on any machine/);
+  assert.match(markdown, /`docker-compose\.yml:15` — publishes 5432 on every interface → db/);
+  // The file is named once, not twice: it leads the line and is not repeated after it.
+  assert.doesNotMatch(markdown, /docker-compose\.yml publishes .* — `docker-compose\.yml/);
+  assert.doesNotMatch(markdown, /port 5432 is open/i);
+
+  // Filed apart from the crons and workers, whose heading says nobody can reach them.
+  const ports = markdown.indexOf('## Ports a deployment file publishes');
+  const others = markdown.indexOf('## Also runs on its own');
+  assert.ok(ports !== -1);
+  if (others !== -1) assert.ok(ports < others, 'the knockable doors come first');
+});
+
+test('a repo with no published port gets no section about ports', async () => {
+  const { renderAtlasMarkdown, AtlasGraph } = await import('../dist/node/index.js');
+  const bare = await analyzeProject(path.join(here, 'fixtures', 'sample'), { cache: 'off' });
+  const markdown = renderAtlasMarkdown(AtlasGraph.fromAtlas(bare.atlas));
+  assert.doesNotMatch(markdown, /## Ports a deployment file publishes/);
+});

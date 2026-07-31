@@ -35,10 +35,22 @@ const MAX_CHANGED_DOORS = 20;
 /** Doors nobody outside can knock on, so they never appear in the auth table. */
 const OTHER_DOORS = new Set(['webhook', 'cron', 'queue', 'cli', 'file-read']);
 
+const MAX_PORTS = 20;
+
 export interface MarkdownOptions {
   /** Stamped into the header so a stale copy is obvious. Defaults to the atlas's own. */
   generatedAt?: string;
   toolVersion?: string;
+  /**
+   * This file is committed, so it is read by people who did not run it (issue #69).
+   *
+   * Passed in rather than worked out here, because the renderer is handed a graph and
+   * should not be asking the filesystem questions — and because the caller is the only
+   * one that knows where the text is going. Left off, everything is written as though
+   * for the person who ran the command, which is the right default for `--stdout` and
+   * for a map nobody shares.
+   */
+  shared?: boolean;
 }
 
 export function renderAtlasMarkdown(graph: AtlasGraph, options: MarkdownOptions = {}): string {
@@ -76,7 +88,7 @@ export function renderAtlasMarkdown(graph: AtlasGraph, options: MarkdownOptions 
   // First, because an agent handed this map at the start of a session is most often
   // being asked to carry on from where the last one stopped, and because the reader who
   // is not an agent came here asking what the weekend did to their app.
-  appendChanges(out, meta.changes);
+  appendChanges(out, meta.changes, Boolean(options.shared));
 
   // --- numbers ---
   out.push('## By the numbers');
@@ -126,6 +138,12 @@ export function renderAtlasMarkdown(graph: AtlasGraph, options: MarkdownOptions 
     }
     out.push('');
   }
+
+  // Ports come before the crons and workers below, and are deliberately not filed with
+  // them: that section exists for doors a stranger *cannot* knock on, and a port
+  // published on every interface is the most knockable thing in the repo. Folding these
+  // in would have put a published database under a heading saying nobody can reach it.
+  appendPorts(out, graph);
 
   // Webhooks, crons and workers are not measured for auth coverage — a stranger cannot
   // knock on them — but an agent about to change this code still needs to know they run.
@@ -267,8 +285,29 @@ export function renderAtlasMarkdown(graph: AtlasGraph, options: MarkdownOptions 
  * reader to assume no news is good news, when the truth is that nobody has looked yet —
  * and this file is read by agents, which are exactly the readers most likely to fill a
  * silence with an assumption.
+ *
+ * Which is why a committed map gets a sentence rather than nothing at all (issue #69).
+ * "The last run" means the last run *on this machine*, against a baseline kept in
+ * `.app-atlas/`, which is not committed and never leaves it. In a file several people
+ * regenerate, that comparison is unanswerable in both directions: a reader has no way to
+ * know whose run it was, and whoever regenerates from a fresh checkout has no baseline at
+ * all, so an honest "first run" quietly overwrites real information and looks in the diff
+ * like an ordinary update. The facts in this file have to be facts every regenerator
+ * would produce.
  */
-function appendChanges(out: string[], changes: AtlasChanges | undefined): void {
+function appendChanges(out: string[], changes: AtlasChanges | undefined, shared: boolean): void {
+  if (shared) {
+    out.push('## What changed since the last run');
+    out.push('');
+    out.push(
+      'Not recorded here. This file is committed, and what changed since the last run is a comparison against ' +
+        'an atlas kept in `.app-atlas/`, which is not — so the answer depends on who ran it and when, and would ' +
+        'be wrong for everyone else reading this. Run `app-atlas analyze` to see it for yourself.',
+    );
+    out.push('');
+    return;
+  }
+
   const report = describeChanges(changes);
   if (!report) return;
 
@@ -283,6 +322,46 @@ function appendChanges(out: string[], changes: AtlasChanges | undefined): void {
     out.push(`${sentenceCase(line.text)}.`);
     appendDoors(out, line.doors);
   }
+  out.push('');
+}
+
+/**
+ * The ports a deployment file in this repo says it publishes on the host.
+ *
+ * Its own section, because these are the only doors on the map that no application code
+ * opens: there is no handler to read and no auth check to look for, so every other
+ * section's vocabulary — method, route, guard — has nothing to say about them.
+ *
+ * The heading names the *file*, not a server, and so does every line under it. "Port
+ * 5432 is open" is a claim about somebody's infrastructure that this tool has no way to
+ * check; "compose.yml publishes 5432" is a claim about a file in the repo, which is all
+ * that was read. An agent reading this brief must not come away able to tell a customer
+ * their database is exposed on the strength of a file nobody may ever run.
+ */
+function appendPorts(out: string[], graph: AtlasGraph): void {
+  const ports = graph
+    .nodesOfKind('endpoint')
+    .filter((node) => String((node.meta as { endpointKind?: string }).endpointKind) === 'port');
+  if (ports.length === 0) return;
+
+  out.push('## Ports a deployment file publishes');
+  out.push('');
+  out.push(
+    'Declared in the files named below, not observed on any machine. Nothing here says the stack is running, ' +
+      'and a production deploy may publish something else entirely.',
+  );
+  out.push('');
+  for (const node of ports.slice(0, MAX_PORTS)) {
+    const meta = node.meta as { sites?: { path: string; line?: number }[] };
+    const site = meta.sites?.[0];
+    // The door names its own file, because that is what makes it a claim about a file
+    // rather than about a server. Printing the path again after it just reads as noise,
+    // so the line number joins the name it already carries.
+    const claim = site && node.name.startsWith(`${site.path} `) ? node.name.slice(site.path.length + 1) : node.name;
+    const where = site ? `\`${site.path}${site.line ? `:${site.line}` : ''}\` — ` : '';
+    out.push(`- ${where}${claim}`);
+  }
+  if (ports.length > MAX_PORTS) out.push(`- …and ${ports.length - MAX_PORTS} more.`);
   out.push('');
 }
 

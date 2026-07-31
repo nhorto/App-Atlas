@@ -6,9 +6,7 @@
 
 ## What changed since the last run
 
-Nothing to compare against — the atlas already on disk was written by App Atlas v0.6.0 and this is v0.8.0.
-
-A diff across that gap would be noise rather than news, so the next run is the one that will say what changed.
+Not recorded here. This file is committed, and what changed since the last run is a comparison against an atlas kept in `.app-atlas/`, which is not — so the answer depends on who ran it and when, and would be wrong for everyone else reading this. Run `app-atlas analyze` to see it for yourself.
 
 ## By the numbers
 
