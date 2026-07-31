@@ -12,7 +12,15 @@ export { selectBackend } from './enrich/backends/index.js';
 export { describeRun, writeTheWords } from './enrich/session.js';
 export { explanationKey, estimateTokens, PROMPT_VERSION } from './enrich/types.js';
 export type { CachedExplanation, EnrichBackend, EnrichRequest, EnrichTier } from './enrich/types.js';
-export { cleanLabel, cleanParagraph, cleanSentence, parseJsonReply } from './enrich/validate.js';
+export {
+  cleanLabel,
+  cleanParagraph,
+  cleanSentence,
+  dropWrongMethods,
+  methodsByRoute,
+  parseJsonReply,
+} from './enrich/validate.js';
+export type { Grounded, KnownRoute, MethodsByRoute } from './enrich/validate.js';
 export { initConventions } from './init.js';
 export { countStaleDocs, isStaleDoc, markStaleDocs, STALE_DOCS_KEY } from './model/staleness.js';
 export { describeChanges, diffAtlas } from './model/changes.js';

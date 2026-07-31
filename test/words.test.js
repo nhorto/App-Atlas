@@ -9,8 +9,9 @@
  * it useless as a test.
  *
  * The assertions that matter most are the ones about restraint: a generated sentence
- * must never displace a docstring, an unasked-for key must never reach the atlas, and
- * nothing may be spent without being approved.
+ * must never displace a docstring, an unasked-for key must never reach the atlas,
+ * nothing may be spent without being approved, and no sentence may give one of your
+ * routes a verb it does not answer to.
  */
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -24,9 +25,11 @@ import {
   cleanLabel,
   cleanParagraph,
   cleanSentence,
+  dropWrongMethods,
   enrichAtlas,
   initConventions,
   markStaleDocs,
+  methodsByRoute,
   parseJsonReply,
   analyzeProject,
   writeTheWords,
@@ -458,6 +461,115 @@ test('keeps a paragraph whole', () => {
   const text = 'Your app takes web requests. It stores them. It charges cards.';
   assert.equal(cleanParagraph(text), text);
   assert.equal(cleanParagraph('too short'), null);
+});
+
+// ---------------------------------------------------------------------------
+// Routes keep their own verbs (#47)
+// ---------------------------------------------------------------------------
+
+/**
+ * The shape the bug was found in: a save endpoint at POST, an edit endpoint at PATCH
+ * behind a path parameter, one literal path sitting beside that parameter, and one door
+ * whose verb the analyzer never learned.
+ */
+function doors() {
+  return methodsByRoute([
+    { method: 'POST', route: '/api/posts' },
+    { method: 'PATCH', route: '/api/posts/:postId' },
+    { method: 'GET', route: '/api/posts/count' },
+    { method: 'ANY', route: '/api/proxy' },
+  ]);
+}
+
+test('a sentence that gives one of your routes the wrong verb does not survive', () => {
+  // The sentence that started this: saving attributed to a GET, next to compiler facts,
+  // with nothing on the page to tell the reader which of the two had been checked.
+  const said = 'Your app saves a post through GET /api/posts.';
+  assert.equal(dropWrongMethods(said, doors()).text, null);
+  assert.deepEqual(dropWrongMethods(said, doors()).wrong, ['GET /api/posts']);
+  // And it is dropped, never repaired: nothing anywhere says POST.
+  assert.ok(!/POST/.test(String(dropWrongMethods(said, doors()).text)));
+});
+
+test('the same sentence with the verb the route actually has is kept', () => {
+  const said = 'Your app saves a post through POST /api/posts.';
+  assert.equal(dropWrongMethods(said, doors()).text, said);
+});
+
+test('naming a route without any verb is not a claim about its verb', () => {
+  // Half a fact is still a fact. "Saved through /api/posts" says nothing about a method,
+  // so there is nothing to disagree with, and the door is the useful half of the sentence.
+  const said = 'Your app saves a post through /api/posts and edits it at /api/posts/:postId.';
+  assert.equal(dropWrongMethods(said, doors()).text, said);
+});
+
+test('a path parameter is the same route however the model spells it', () => {
+  for (const spelling of ['/api/posts/:postId', '/api/posts/{postId}', '/api/posts/<postId>', '/api/posts/[id]']) {
+    const said = `Edits go through DELETE ${spelling} every time.`;
+    assert.equal(dropWrongMethods(said, doors()).text, null, spelling);
+    assert.equal(dropWrongMethods(`Edits go through PATCH ${spelling} every time.`, doors()).text !== null, true, spelling);
+  }
+  // A model that writes the parameter out as a value is still naming that route.
+  assert.equal(dropWrongMethods('Edits go through DELETE /api/posts/42 every time.', doors()).text, null);
+});
+
+test('a route the map has never heard of is left alone', () => {
+  // Silence in the atlas means nobody could see the route, not that it is absent, so an
+  // unknown path is not evidence of an invented one.
+  const said = 'Comments are removed with DELETE /api/comments/:id when a thread closes.';
+  assert.equal(dropWrongMethods(said, doors()).text, said);
+});
+
+test('a parameter in the prose is not a claim about a literal route beside it', () => {
+  // `/api/posts/count` is a GET and sits in the same slot as `/api/posts/:postId`. If a
+  // parameter were allowed to match a literal segment, that GET would excuse this
+  // sentence — and the wrong verb on the edit route would reach the reader.
+  assert.equal(dropWrongMethods('Anyone can GET /api/posts/:postId to read one back.', doors()).text, null);
+});
+
+test('a door whose verb we never learned cannot be contradicted', () => {
+  // `ANY`, `PAGE`, `CRON` and a null method are detectors' words for doors that do not
+  // answer to an HTTP verb. Not knowing a verb is not the same as knowing it is wrong.
+  const table = methodsByRoute([
+    { method: 'ANY', route: '/api/proxy' },
+    { method: 'PAGE', route: '/dashboard' },
+    { method: null, route: '/api/hook' },
+  ]);
+  for (const said of [
+    'Anything can reach POST /api/proxy without a check.',
+    'A visitor can POST /dashboard from the browser.',
+    'Stripe calls DELETE /api/hook when a charge settles.',
+  ]) {
+    assert.equal(dropWrongMethods(said, table).text, said, said);
+  }
+});
+
+test('one wrong verb costs its sentence, not the paragraph', () => {
+  // The unit matters. A clause is smaller but excising one leaves prose nobody wrote;
+  // the whole paragraph is bigger than the damage, and would take the true sentences
+  // about the folders and the database down with one bad verb.
+  const paragraph =
+    'Your app takes in web requests. Posts are saved through GET /api/posts. Everything lands in Postgres.';
+  assert.equal(
+    dropWrongMethods(paragraph, doors()).text,
+    'Your app takes in web requests. Everything lands in Postgres.',
+  );
+});
+
+test('a verb counts only when it is shouted, and only when it is next to the path', () => {
+  const table = doors();
+  // "post" and "options" are ordinary English words that happen to be spelled like
+  // methods. Reading them as claims would delete true sentences.
+  const noun = 'The post at /api/posts/42 was written yesterday.';
+  assert.equal(dropWrongMethods(noun, table).text, noun);
+  // A verb on the far side of an "and" belongs to the next path, not to this one.
+  const shared = 'Drafts are saved at /api/posts and GET /api/posts/count returns the total.';
+  assert.equal(dropWrongMethods(shared, table).text, shared);
+  // But a verb joined to another verb in front of the same path is a claim about it.
+  assert.equal(dropWrongMethods('It supports GET and POST /api/posts today.', table).text, null);
+  // And a path inside somebody else's URL is not one of your routes at all.
+  const stripe = 'It charges cards with POST https://api.stripe.com/api/posts every night.';
+  assert.equal(dropWrongMethods(stripe, table).text, stripe);
 });
 
 // ---------------------------------------------------------------------------
