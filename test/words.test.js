@@ -346,6 +346,20 @@ test('keeps a paragraph whole', () => {
   assert.equal(cleanParagraph('too short'), null);
 });
 
+test('a paragraph full of filenames is not broken at the dots', () => {
+  // The dot in `importer.py` is not the end of a sentence. Splitting on every full stop
+  // and rejoining with a space turned it into `importer. py`, and doubled the space
+  // after the real sentence ends.
+  const text =
+    'Data comes in through scripts/importer/importer.py and scripts/importer/cutlist_importer.py, ' +
+    'which read incoming cut lists. Probe scripts like scripts/api/wprobe.py and ' +
+    'scripts/reserve-poc/pfprobe.py query the PowerFab system. The exporter writes to disk.';
+  const cleaned = cleanParagraph(text);
+  assert.match(cleaned, /importer\.py/, 'a filename keeps its extension attached');
+  assert.ok(!/\.\s+(py|js|ts|sql)\b/.test(cleaned), 'no `importer. py`');
+  assert.ok(!/\s{2,}/.test(cleaned), 'a real sentence break is one space, never two');
+});
+
 // ---------------------------------------------------------------------------
 // The ecosystem loop
 // ---------------------------------------------------------------------------

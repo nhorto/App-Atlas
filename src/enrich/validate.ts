@@ -100,8 +100,12 @@ export function cleanParagraph(raw: unknown, maxSentences = 6): string | null {
   if (typeof raw !== 'string') return null;
   const text = unwrap(raw).replace(/[ \t]+/g, ' ').replace(/\n{2,}/g, '\n').trim();
   if (!text || looksLikeFailure(text)) return null;
-  const sentences = text.match(/[^.!?]+[.!?]+/g);
-  const trimmed = sentences && sentences.length > maxSentences ? sentences.slice(0, maxSentences).join(' ') : text;
+  // Split on a full stop that ends a sentence, not on every full stop — the same rule
+  // cleanSentence uses. A paragraph about code is full of `importer.py` and `v1.2`, and
+  // the naive split-on-every-dot then rejoin-with-a-space turned those into
+  // `importer. py`, and doubled the space after real sentence ends.
+  const sentences = text.split(/(?<=[.!?])\s+(?=["'(\[]?[A-Z])/);
+  const trimmed = sentences.length > maxSentences ? sentences.slice(0, maxSentences).join(' ') : text;
   return trimmed.length >= 20 ? trimmed.trim() : null;
 }
 

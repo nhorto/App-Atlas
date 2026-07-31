@@ -183,7 +183,10 @@ function inputDetail(family: string, members: AtlasNode[]): string {
     return `${vars.length} ${vars.length === 1 ? 'variable' : 'variables'}`;
   }
   if (family === 'cli' || family === 'files') {
-    const sites = (members[0].meta as unknown as EndpointMeta).sites.length;
+    // Every member is its own entry point, and each carries its own call sites — count
+    // them all, not just the first member's. Eleven argparse scripts are eleven places,
+    // not one.
+    const sites = members.reduce((n, m) => n + (m.meta as unknown as EndpointMeta).sites.length, 0);
     return `${sites} ${sites === 1 ? 'place' : 'places'}`;
   }
   const noun = INPUT_NOUNS[family] ?? 'entry point';

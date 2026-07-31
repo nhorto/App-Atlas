@@ -10,7 +10,7 @@ import assert from 'node:assert/strict';
 import path from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
-import { analyzeProject, AtlasGraph, buildInsights, classifyZone } from '../dist/node/index.js';
+import { analyzeProject, AtlasGraph, buildBoundaryView, buildInsights, classifyZone } from '../dist/node/index.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const FIXTURE = path.join(here, 'fixtures', 'pyapp');
@@ -26,7 +26,15 @@ test('finds every Python file, and reads its module docstring', { skip }, () => 
   const files = atlas.nodes.filter((n) => n.kind === 'file');
   assert.deepEqual(
     files.map((f) => f.path).sort(),
-    ['app/__init__.py', 'app/db.py', 'app/main.py', 'app/services/billing.py', 'app/tasks.py'],
+    [
+      'app/__init__.py',
+      'app/db.py',
+      'app/main.py',
+      'app/services/billing.py',
+      'app/tasks.py',
+      'scripts/export.py',
+      'scripts/ingest.py',
+    ],
   );
   const db = files.find((f) => f.path === 'app/db.py');
   assert.equal(db.summary, 'Where the sample app keeps its data.');
@@ -110,6 +118,17 @@ test('collects environment variables however they are read', { skip }, () => {
   const env = atlas.nodes.find((n) => n.kind === 'endpoint' && n.meta.endpointKind === 'env');
   const names = env.meta.vars.map((v) => v.name).sort();
   assert.deepEqual(names, ['DATABASE_URL', 'STRIPE_SECRET_KEY']);
+  // The config is read from `.py` files, so the runtime that reads it is Python, not Node.
+  assert.equal(env.meta.framework, 'Python');
+});
+
+test('a command-line family counts every entry point, not just the first', { skip }, () => {
+  const view = buildBoundaryView(new AtlasGraph(atlas));
+  const cli = view.inputs.find((c) => c.family === 'cli');
+  assert.ok(cli, 'the two argparse scripts are a way in');
+  // Two scripts, each an entry point of its own — "1 place" was the bug.
+  assert.equal(cli.count, 2);
+  assert.equal(cli.detail, '2 places');
 });
 
 /**
