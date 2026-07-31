@@ -69,8 +69,13 @@ import { dominantZone } from './zones.js';
  * — the change is in how the words layer groups those findings before describing them, and
  * that layer has its own `PROMPT_VERSION` to invalidate what it cached. This number moves
  * anyway, to stay level with `package.json` for the sake of the line stamped into ATLAS.md.
+ *
+ * 0.12.1 is the same case once more, and the smallest one yet: the run report stopped
+ * calling a detected store and a detected framework unfounded. Not one atlas fact differs,
+ * and `PROMPT_VERSION` does not move either, because the question asked of the model is
+ * unchanged — only what we do with the answer afterwards.
  */
-export const TOOL_VERSION = '0.12.0';
+export const TOOL_VERSION = '0.12.1';
 
 export interface AnalyzeOptions {
   maxFiles?: number;

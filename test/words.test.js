@@ -445,6 +445,53 @@ test('a company in the prose that no detector found is reported as a lead', asyn
   assert.ok(report.contradictions.includes('SendGrid'), report.contradictions.join(', '));
 });
 
+/** What the contradiction check makes of one paragraph, run through the real enricher. */
+async function leadsFrom(paragraph) {
+  const atlas = await freshAtlas();
+  const backend = stubBackend({
+    reply: (request) => (/one paragraph/.test(request.user) ? paragraph : '{}'),
+  });
+  const report = await enrichAtlas({ atlas, backend, cache: new Map() });
+  assert.ok(
+    atlas.nodes.find((n) => n.kind === 'app').summary,
+    'the paragraph never reached the check — the test is measuring the wrong thing',
+  );
+  return report.contradictions;
+}
+
+test('a company on screen as a store or a framework is not a lead (#83)', async () => {
+  // The fixture reported both of these on every single enriched run. Supabase is a
+  // detected store holding two of its tables; Vercel is the framework whose cron door
+  // carries a schedule. Checking the prose against the service list alone called both
+  // unfounded, and a warning that fires every time is one people stop reading.
+  assert.deepEqual(await leadsFrom('Your app writes page views into Supabase Postgres and keeps orders in PostgreSQL.'), []);
+  assert.deepEqual(await leadsFrom('Your app runs on Vercel and stores orders in PostgreSQL.'), []);
+});
+
+test('widening the check did not silence the finding it exists for', async () => {
+  // The other half of #83. Neither of these is a service, a store or a framework here.
+  assert.deepEqual(await leadsFrom('Your app sends text messages through Twilio when an order ships.'), ['Twilio']);
+  assert.deepEqual(await leadsFrom('Your app reports crashes to Sentry, and keeps orders in PostgreSQL.'), ['Sentry']);
+});
+
+test('a company name is matched whole, punctuation and all', async () => {
+  // The escape this replaces compiled to a no-op, so `.` and `()` stayed live as regex
+  // operators: "TriggerXdev" was reported as Trigger.dev and "Email SMTP" as Email (SMTP).
+  // Inventing a finding out of a typo is the same failure as inventing one outright.
+  assert.deepEqual(await leadsFrom('Your app hands background work to TriggerXdev on a schedule.'), []);
+  assert.deepEqual(await leadsFrom('Your app sends mail over Email SMTP directly.'), []);
+
+  // And written exactly, they are still found. `\b` could not do this: it is defined
+  // against word characters, so it never fires after the bracket of `Email (SMTP)`.
+  assert.deepEqual(await leadsFrom('Your app hands background work to Trigger.dev on a schedule.'), ['Trigger.dev']);
+  assert.deepEqual(await leadsFrom('Your app sends mail over Email (SMTP) directly.'), ['Email (SMTP)']);
+});
+
+test('a company name inside a longer word is not a mention', async () => {
+  // The original rule, kept: "Resend" must not be read out of "resends".
+  assert.deepEqual(await leadsFrom('Your app resends a receipt when the first one bounces.'), []);
+});
+
 test('a company the tool has never heard of is a word, not a lead', async () => {
   const atlas = await freshAtlas();
   const backend = stubBackend({

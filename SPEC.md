@@ -792,3 +792,20 @@ The rest of `#48`'s discipline carries over unchanged: an empty guard list is ne
 Untouched on purpose: per-sentence `(ai)` provenance and `enrich/validate.ts`'s bias toward dropping a sentence. A richer prompt is a bigger surface for a confident wrong sentence, so the layer that throws them away did not move.
 
 **What is not yet measured: whether the prose is actually better.** The clustering, the shape and the prompts are verified — on the fixture, on App Atlas itself, on gotify, on the FastAPI template and on `requests` — and prompts are asserted directly in `test/words.test.js` rather than replies. Judging the sentences means real metered runs against a real model, and that spend has not been authorised.
+
+**M8.7 — the lead that fired every time (2026-07-31).** [#83](https://github.com/nhorto/App-Atlas/issues/83), found while measuring M8.6 against a real backend and present long before it. 4 new tests, 512 in total. `TOOL_VERSION` moves to 0.12.1 for the version-stamp reason only; not one atlas fact differs, and `PROMPT_VERSION` stays at 2, because the question asked of the model is unchanged — only what is done with the answer afterwards.
+
+Every enriched run of our own fixture ended with *"The description names Supabase, Vercel, which no detector found."* Both were found. **Supabase** is a detected data store holding two of the fixture's tables and the source of three of its doors; **Vercel** is the framework whose cron door carries a schedule. `companiesNotFound` compared the paragraph against `AppFacts.services` alone, while the prompt hands the model three lists — services, **stores** and **frameworks** — and then flagged it for using two of them.
+
+The check is worth having ([#35](https://github.com/nhorto/App-Atlas/issues/35)): a company in the prose with no box beside it means the detectors missed an integration or the model invented one. But a warning that fires on every single run is one people learn to scroll past, and this one fired on the repo everything else is tested against. It is now compared against everything the reader can find on their own screen — the boundary boxes and the "Built with" line — which is the same set the model was given.
+
+**Two more defects surfaced while measuring, both from one broken line.** The escape guarding the name match compiled to a no-op, so regex metacharacters in catalog names stayed live:
+
+- `Trigger.dev` was reported when the paragraph said **"TriggerXdev"** — the `.` matching any character.
+- `Email (SMTP)` was reported when the paragraph said **"Email SMTP"** — the brackets read as a capture group.
+
+Inventing a finding out of a typo is the same failure as inventing one outright. Fixed, and the `\b` around the name went with it: word boundaries are defined against word characters, so `\b` never fires after the closing bracket of `Email (SMTP)` and that name could not have been matched however it was written. Explicit lookarounds say the thing meant — not butted against a letter or a digit — and "Resend" still is not read out of "resends".
+
+**Verified by probing the shipped behaviour, not by reading the code.** Ten paragraphs through the real enricher, before and after: four false positives gone, both true findings (`Twilio`, `Sentry`) still reported, and the two punctuated names now matched only when written exactly. A full run of the fixture no longer prints the line at all, while the route-verb guard from [#47](https://github.com/nhorto/App-Atlas/issues/47) still drops a sentence in the same run — the loud check went quiet and the useful one did not.
+
+Noted, not fixed: `looksLikeFailure` matches `/^error/i`, so a legitimate paragraph opening "Errors go to…" is discarded as a refusal message. Found because a probe paragraph hit it. The guard's bias toward dropping is deliberate and loosening it deserves its own consideration rather than a ride on this one.
