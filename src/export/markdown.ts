@@ -436,7 +436,10 @@ function appendPersonalData(out: string[], graph: AtlasGraph): void {
             table.doors.length > MAX_REACHING_DOORS ? ` and ${table.doors.length - MAX_REACHING_DOORS} more` : ''
           }`
         : '';
-    out.push(`- **${table.name}** — ${shape}${doors}`);
+    // The other name the same table is reached under, so somebody searching for the one
+    // they remember still finds this row.
+    const aka = table.alsoKnownAs.length > 0 ? ` (also queried as ${table.alsoKnownAs.map((x) => `\`${x}\``).join(', ')})` : '';
+    out.push(`- **${table.name}**${aka} — ${shape}${doors}`);
   }
   if (report.tables.length > MAX_PERSONAL_TABLES) {
     out.push(`- …and ${report.tables.length - MAX_PERSONAL_TABLES} more.`);

@@ -60,8 +60,12 @@ import { dominantZone } from './zones.js';
  * the analyzer sees, as 0.10.0 did. A build that stamps somebody else's version number
  * into a checked-in file is making a false claim about where that file came from, and
  * that costs more than the one stated absence in "what changed" that the bump buys.
+ *
+ * 0.11.0 is the ordinary case again: a table that reported "columns unknown" now carries
+ * the columns its ORM model declares, so a cache written by 0.10.0 answers a different
+ * question about the same file.
  */
-export const TOOL_VERSION = '0.10.0';
+export const TOOL_VERSION = '0.11.0';
 
 export interface AnalyzeOptions {
   maxFiles?: number;
@@ -306,6 +310,8 @@ export async function analyzeProject(rootDir: string, options: AnalyzeOptions = 
     if (entry) node.meta.declaredEntry = entry;
   }
 
+  joinOrmModelsToTables(nodes);
+
   const byId = new Map(nodes.map((node) => [node.id, node]));
   stampSignInCalls(findings, liveEdges, byId);
 
@@ -368,6 +374,111 @@ export async function analyzeProject(rootDir: string, options: AnalyzeOptions = 
  * sign-out button in a module of twenty actions is not a reason to stop reporting the
  * other nineteen.
  */
+/**
+ * Give a table the columns its ORM model already declares (issue #80).
+ *
+ * A SQLAlchemy app arrives as two nodes for the same thing. The queries name a table, so
+ * there is a table node with `observed: true` and no columns at all; the model class is a
+ * separate `class` node that has every column on it. On mealie that meant 34 tables
+ * reporting "columns unknown" while `email`, `password` and `full_name` sat in the atlas
+ * a few nodes away — the type explorer drew a card with a name and no rows, and the
+ * personal-data pass had nothing to look at.
+ *
+ * So this is a join, not a new reader. Nothing here parses anything; it matches a table
+ * to a model and copies across what was already extracted.
+ *
+ * Matched on `__tablename__` first, because that is the class stating outright which
+ * table it maps to, and on the class name second, because SQLAlchemy queries are written
+ * `select(User)` and the table is recorded under the *class* name in that case. Both are
+ * facts the code states. A model whose name matches nothing is left alone rather than
+ * guessed at, and a table matching two models is left alone as well — the point of the
+ * join is that it is unambiguous, and two candidates means it is not.
+ */
+function joinOrmModelsToTables(nodes: AtlasNode[]): void {
+  // Two passes, and the order is the whole trick. A class that declares `__tablename__`
+  // is an ORM model and says so; a class that merely shares its name is usually the
+  // Pydantic schema sitting beside it. On mealie every model has such a twin, and
+  // treating the two as equal candidates made almost every table ambiguous and left 16
+  // of them with no columns at all. So the declaring class is preferred outright, and
+  // only a collision *between two declaring classes* is treated as unresolvable.
+  const models = new Map<string, AtlasNode | null>();
+  const claim = (key: string, node: AtlasNode, declares: boolean) => {
+    const lower = key.toLowerCase();
+    if (!models.has(lower)) {
+      models.set(lower, node);
+      return;
+    }
+    // `null` marks a name two models answer to. Left unresolved on purpose: picking one
+    // would put another model's columns on this table, which is worse than no columns.
+    if (declares) models.set(lower, null);
+  };
+
+  const candidates: AtlasNode[] = [];
+  for (const node of nodes) {
+    if (node.kind !== 'type') continue;
+    const meta = node.meta as { typeKind?: string; tableName?: string; fields?: unknown[] };
+    if (meta.typeKind !== 'class' || !(meta.fields?.length)) continue;
+    candidates.push(node);
+  }
+
+  // Classes that name the same table are not rival claims about different things — they
+  // are partial views of one table, and the fullest one is the real model. A migration
+  // declares a stub of the model it is about to alter: mealie's `RecipeModel` appears
+  // five times, four of them Alembic stubs of three to five columns beside the actual
+  // 49-column model. Refusing on the collision cost 15 tables their columns; taking the
+  // most complete description of a table everyone agrees is the same table does not.
+  const byTable = new Map<string, AtlasNode>();
+  for (const node of candidates) {
+    const tableName = (node.meta as { tableName?: string }).tableName;
+    if (!tableName) continue;
+    const key = tableName.toLowerCase();
+    const held = byTable.get(key);
+    if (!held || fieldCount(node) > fieldCount(held)) byTable.set(key, node);
+  }
+
+  for (const [tableName, node] of byTable) {
+    claim(tableName, node, true);
+    // The class name too, because a SQLAlchemy query is written `select(User)` and the
+    // table gets recorded under the class name rather than the table's own.
+    claim(node.name, node, true);
+  }
+  for (const node of candidates) {
+    if ((node.meta as { tableName?: string }).tableName) continue;
+    // Fills only the names no declaring model answered to, and never overwrites one.
+    if (!models.has(node.name.toLowerCase())) models.set(node.name.toLowerCase(), node);
+  }
+  if (models.size === 0) return;
+
+  for (const node of nodes) {
+    const meta = node.meta as {
+      typeKind?: string;
+      observed?: boolean;
+      fields?: unknown[];
+      declaredBy?: string;
+    };
+    // Only a table nobody has declared. A table read out of a migration or a
+    // `schema.prisma` already has the real thing, and the schema outranks the model.
+    if (meta.typeKind !== 'table' || !meta.observed || (meta.fields?.length ?? 0) > 0) continue;
+
+    const model = models.get(node.name.toLowerCase());
+    if (!model) continue;
+
+    const modelMeta = model.meta as { fields?: unknown[] };
+    meta.fields = modelMeta.fields;
+    // No longer named-in-queries-and-nowhere-else: the declaration was found, and the
+    // card should stop saying the columns are unknowable.
+    meta.observed = false;
+    // Where the columns came from, so a reader can go and check rather than wonder why
+    // a table in a database has Python type annotations on it.
+    meta.declaredBy = model.path ?? model.name;
+  }
+}
+
+/** How many columns a model declares — the measure of how complete a description it is. */
+function fieldCount(node: AtlasNode): number {
+  return ((node.meta as { fields?: unknown[] }).fields ?? []).length;
+}
+
 function stampSignInCalls(
   findings: BoundaryFinding[],
   edges: AtlasEdge[],

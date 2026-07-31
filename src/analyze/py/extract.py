@@ -279,6 +279,27 @@ def class_fields(node):
     return fields
 
 
+def declared_table_name(node):
+    """The table an ORM model maps to, when the class says so outright.
+
+    `__tablename__ = "users"` is how SQLAlchemy spells it, and the same attribute is
+    read by several other declarative ORMs, so this is a fact about the class rather
+    than a guess about a framework. Only a plain string literal counts: a name built
+    at run time out of a variable is a name we do not know.
+
+    `class_fields` skips dunder attributes, and rightly — `__tablename__` is not a
+    column. It is the join between the model class and the table the queries name.
+    """
+    for stmt in node.body:
+        if not isinstance(stmt, ast.Assign):
+            continue
+        for target in stmt.targets:
+            if isinstance(target, ast.Name) and target.id == "__tablename__":
+                if isinstance(stmt.value, ast.Constant) and isinstance(stmt.value.value, str):
+                    return stmt.value.value
+    return None
+
+
 def class_def(node):
     start, end = span(node)
     methods = [function_def(m, owner=node.name) for m in node.body if isinstance(m, (ast.FunctionDef, ast.AsyncFunctionDef))]
@@ -291,6 +312,7 @@ def class_def(node):
         "bases": [unparse(b) or "" for b in node.bases],
         "depends": class_dependencies(node),
         "fields": class_fields(node),
+        "tableName": declared_table_name(node),
         "decorators": [decorator_info(d) for d in node.decorator_list],
         "methods": methods,
         "uses": names_used(node),

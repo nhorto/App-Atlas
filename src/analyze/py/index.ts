@@ -401,6 +401,9 @@ function classNode(id: string, fileId: string, ref: SourceFileRef, def: PyDef, l
       isExported: !def.name.startsWith('_'),
       extends: def.bases ?? [],
       loc: def.endLine - def.line + 1,
+      // Carried so the table this model declares can be matched to the table the
+      // queries name. Absent on every class that is not an ORM model.
+      ...(def.tableName ? { tableName: def.tableName } : {}),
     },
   };
 }

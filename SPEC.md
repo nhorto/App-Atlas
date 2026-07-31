@@ -752,3 +752,20 @@ The door trace is one hop, deliberately: door → handler → table, through the
 Where it currently finds nothing, and that is honest rather than broken: **mealie**, whose SQLAlchemy models declare `email`, `password` and `full_name` through `mapped_column`, which the analyzer does not read into table fields — every table there reports `columns unknown`, and the section is correctly absent rather than reassuring.
 
 `TOOL_VERSION` moves to 0.10.0, and for the opposite reason to last time. The analyzer's answers did **not** change here — the classification happens at render time over facts already in the atlas, and `atlas.json` was verified byte-identical with and without the feature across repeated runs. It moves because it is also the provenance stamped into every generated `ATLAS.md`, and a file that people commit must not claim to have been written by a build that did not write it. The cost is one stated absence in "what changed" at the version boundary, which [#69](https://github.com/nhorto/App-Atlas/issues/69) already handles by saying so plainly.
+
+**M8.5 — a table's columns were in the atlas all along (2026-07-31).** [#80](https://github.com/nhorto/App-Atlas/issues/80), found while measuring M8.4 against mealie. 4 new tests, 487 in total. `TOOL_VERSION` moves to 0.11.0 — the ordinary reason this time, since a table that reported "columns unknown" now carries columns.
+
+**Nothing new is parsed here.** A SQLAlchemy app arrived as two nodes for one thing: the queries name a table, producing a table node with `observed: true` and no columns, while the model class sat a few nodes away with every column on it. On mealie that was **16 tables reporting "columns unknown"** while `email`, `password` and `full_name` were already extracted. `class_fields` had been reading `mapped_column` declarations correctly the whole time; nothing joined them up.
+
+The join is `__tablename__`, read from the class body as a literal — the one place a model states outright which table it maps to, and an attribute several declarative ORMs share, so it is a fact about the class rather than a guess about a framework. Matched on the class name too, because a SQLAlchemy query is written `select(User)` and the table gets recorded under the *class* name in that case.
+
+**Two rules the measurement forced, in order:**
+
+- **A declaring class beats a class that merely shares the name.** Every mealie model has a Pydantic schema beside it with the same name. Treating them as equal candidates made almost every table ambiguous and the refusal left 16 tables empty. A class with `__tablename__` is an ORM model and says so.
+- **The fullest declaration of a table wins.** Alembic migrations redeclare a stub of the model they are about to alter: `RecipeModel` appears five times, four of them stubs of three to five columns beside the real 49-column model. These are not rival claims about different things — they all name the same table, and the most complete one is the description of it. Refusing on that collision was still costing 15 tables their columns.
+
+After both, **mealie reports 0 tables with unknown columns**, down from 16, and the personal-data pass finds `users` — `email`, `password`, and less certainly `full_name`, `username`.
+
+**The join made an older defect louder, so it is fixed here too.** A SQLAlchemy app names its table twice — `select(User)` records `User`, a raw query records `users` — and both arrive as table nodes. Both now join to the same model and carry identical columns, which read as *two* tables holding personal data. That is an inflation of exactly the number somebody repeats in a meeting, so rows joined to the same model are folded into one, keeping the other name (`users` (also queried as `User`)) and the union of their doors. Rows with no declaring model are never merged: nothing says they are the same table.
+
+Not fixed, and deliberately: the duplicate table *nodes* still exist in the graph and still appear twice under "Database tables". Merging node identity means rewriting edges across the boundary view, which is a larger change than this one and does not belong in a fix about columns.

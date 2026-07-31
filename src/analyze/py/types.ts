@@ -65,6 +65,14 @@ export interface PyDef {
    */
   depends?: string[];
   fields?: PyField[];
+  /**
+   * Classes only: the table this model maps to, from a literal `__tablename__`.
+   *
+   * The one thing that ties a model class to the table its queries name — mealie's
+   * `User` class declares `__tablename__ = "users"` — and absent whenever the class is
+   * not an ORM model or builds its name at run time.
+   */
+  tableName?: string | null;
   methods?: PyDef[];
   decorators: PyCall[];
   /**
