@@ -129,6 +129,8 @@ export async function analyzePython(ctx: PluginContext): Promise<PluginResult> {
     texts.set(ref.relPath, text);
     bucket.nodes.push(...buildNodes(ref, file, text));
     declarations.set(ref.relPath, declaredIn(bucket.nodes));
+    const darkCells = darkCellWarning(ref.relPath, file);
+    if (darkCells) warnings.push(darkCells);
   }
   timings.declarations = Date.now() - t2;
 
@@ -279,6 +281,28 @@ function buildNodes(ref: SourceFileRef, file: PyFile, text: string): AtlasNode[]
   fileNode.meta.functionCount = functionCount;
   fileNode.meta.typeCount = typeCount;
   return nodes;
+}
+
+/**
+ * The run-summary line for a notebook only part of which could be read, or null when
+ * all of it was.
+ *
+ * A notebook with three cells the reader cannot see is not the same as a notebook with
+ * none, and the shortfall would otherwise be invisible: the file is on the map, its
+ * other cells are on the map, and nothing says the missing ones exist. The reason
+ * travels on each cell as well, because warnings do not survive into the next run and
+ * the cache does.
+ */
+function darkCellWarning(relPath: string, file: PyFile): string | null {
+  const dark = (file.cells ?? []).filter((cell) => cell.unread);
+  if (dark.length === 0) return null;
+  const code = (file.cells ?? []).filter((cell) => cell.type === 'code').length;
+  const shown = dark.slice(0, 3).map((cell) => `cell ${cell.index} (${cell.unread})`);
+  if (dark.length > shown.length) shown.push(`and ${dark.length - shown.length} more`);
+  return (
+    `${relPath}: ${dark.length} of ${code} code cells are not Python, so nothing they declare is on the map — ` +
+    shown.join(', ')
+  );
 }
 
 /** Which notebook cell a line fell in, or null for an ordinary file. */

@@ -6,7 +6,15 @@
  * functions/types), and produces a complete Atlas. This is the only place that knows
  * the whole pipeline.
  */
-import type { Atlas, AtlasEdge, AtlasNode, AtlasStats, EndpointMeta, Zone } from '../model/types.js';
+import type {
+  Atlas,
+  AtlasEdge,
+  AtlasNode,
+  AtlasStats,
+  EndpointMeta,
+  SignInCall,
+  Zone,
+} from '../model/types.js';
 import { classifyOpenDoors, isAuthRelevant, tallyOpenDoors } from '../model/exposure.js';
 import { authProviderForPackage } from './boundaries/catalog.js';
 import { countStaleDocs } from '../model/staleness.js';
@@ -279,10 +287,12 @@ export async function analyzeProject(rootDir: string, options: AnalyzeOptions = 
     }
   }
 
+  const byId = new Map(nodes.map((node) => [node.id, node]));
+  stampSignInCalls(findings, liveEdges, byId);
+
   // Why each unchecked door is unchecked, written onto the door. Every screen that
   // badges an endpoint then reads one field instead of re-deriving its own answer,
   // which is how the card, the card's group and the summary line stay in agreement.
-  const byId = new Map(nodes.map((node) => [node.id, node]));
   for (const [id, verdict] of classifyOpenDoors(nodes, liveEdges)) {
     const node = byId.get(id);
     if (node) node.meta.open = verdict;
@@ -310,6 +320,51 @@ export async function analyzeProject(rootDir: string, options: AnalyzeOptions = 
   };
 
   return { atlas, project };
+}
+
+/**
+ * Writes "this door's handler calls the auth library's own sign-in" onto the doors it
+ * is true of.
+ *
+ * Same shape as the `authPackage` stamp above and for the same two reasons: `src/model`
+ * must not import a detector, and a fact written onto the node survives into
+ * `atlas.json` for anything reading it afterwards. What the fact *means* for the
+ * headline is decided in `model/exposure.ts`; this only carries it across the layer.
+ *
+ * The detectors report where a call was seen, never which door it answers, because the
+ * file being read has no idea. `exposed-by` is the edge that knows: it points from a
+ * door to the code behind it, so a sign-in call and a handler match only when they are
+ * literally the same function.
+ *
+ * Only a function counts. A call at the top of a file would otherwise excuse every door
+ * that file declares, which is the file-wide guess this rule was written to avoid — one
+ * sign-out button in a module of twenty actions is not a reason to stop reporting the
+ * other nineteen.
+ */
+function stampSignInCalls(
+  findings: BoundaryFinding[],
+  edges: AtlasEdge[],
+  byId: Map<string, AtlasNode>,
+): void {
+  const byHandler = new Map<string, SignInCall>();
+  for (const finding of findings) {
+    if (finding.type !== 'sign-in-call') continue;
+    if (byId.get(finding.nodeId)?.kind !== 'function') continue;
+    byHandler.set(finding.nodeId, {
+      provider: finding.provider,
+      what: finding.what,
+      call: finding.call,
+    });
+  }
+  if (byHandler.size === 0) return;
+
+  for (const edge of edges) {
+    if (edge.kind !== 'exposed-by') continue;
+    const call = byHandler.get(edge.toId);
+    if (!call) continue;
+    const door = byId.get(edge.fromId);
+    if (door?.kind === 'endpoint') (door.meta as unknown as EndpointMeta).signInCall = call;
+  }
 }
 
 /**

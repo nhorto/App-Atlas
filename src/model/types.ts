@@ -230,6 +230,10 @@ export interface EnvVarInfo {
  * Why a door with no visible check is that way. `worth-a-look` is the *absence* of an
  * explanation, and is the only one of these that belongs in a headline — see
  * `model/exposure.ts` for how each is decided.
+ *
+ * `auth-mount` covers both halves of the same idea: the address an auth provider is
+ * mounted on, and a handler that calls the provider's own sign-in routine. Both are
+ * "the door people sign in through", which is what every screen already calls this.
  */
 export type OpenKind = 'worth-a-look' | 'page' | 'auth-mount' | 'unreadable';
 
@@ -237,6 +241,36 @@ export interface OpenVerdict {
   kind: OpenKind;
   /** The fact that decided it, in the reader's words. `null` for `worth-a-look`. */
   because: string | null;
+}
+
+/**
+ * What an auth library's own entry point does for whoever called it.
+ *
+ * The distinction that earns a door its explanation is not the method's name but who
+ * can be on the other end: somebody signing in, signing up or asking for a password
+ * reset has no session yet, and somebody signing out is giving one up.
+ */
+export type SignInKind = 'sign-in' | 'sign-up' | 'sign-out' | 'password reset';
+
+/**
+ * An auth library's own way in or out, found in a door's handler.
+ *
+ * This is the fact behind "public by design" for a sign-in *action* — a server action
+ * or route that calls `supabase.auth.signInWithPassword` cannot require the caller to
+ * be signed in already, because signing them in is what it is for. Written onto the
+ * door by the analyzer so that `src/model` reads a plain field rather than importing a
+ * detector, and so the evidence survives into `atlas.json`.
+ *
+ * The evidence is always the *call*. The name of the function containing it is a guess
+ * about what somebody meant, and this field is never derived from one.
+ */
+export interface SignInCall {
+  /** The auth provider whose API it is: Supabase, NextAuth, Clerk… */
+  provider: string;
+  /** Which way through the door it is. */
+  what: SignInKind;
+  /** The call as written, so a reader can open the file and check in ten seconds. */
+  call: string;
 }
 
 export interface EndpointMeta {
@@ -258,6 +292,12 @@ export interface EndpointMeta {
    * disagree about the same route. Absent when something *does* check it.
    */
   open?: OpenVerdict;
+  /**
+   * This door's handler calls an auth library's own sign-in, sign-up, sign-out or
+   * password-reset routine. Absent on every other door, and on any door analyzed
+   * before this existed.
+   */
+  signInCall?: SignInCall;
   /**
    * Webhooks only: something in the file checks the sender's signature. That check is
    * the lock, which is what takes a webhook out of the auth count — being *called* a

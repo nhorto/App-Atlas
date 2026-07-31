@@ -19,6 +19,7 @@ const readable = atlas.nodes.some((n) => n.kind === 'function');
 const skip = readable ? false : 'no Python 3.9+ on this machine';
 
 const notebook = atlas.nodes.find((n) => n.kind === 'file' && n.path === 'analysis.ipynb');
+const pipeline = atlas.nodes.find((n) => n.kind === 'file' && n.path === 'pipeline.ipynb');
 const fn = (name) => atlas.nodes.find((n) => n.kind === 'function' && n.name === name);
 
 test('a notebook is a source file', () => {
@@ -61,6 +62,59 @@ test('IPython magics do not cost the notebook its other cells', { skip }, () => 
   );
   assert.ok(fn('load_readings'), 'and the cells after the magics still parsed');
   assert.ok(imports.length >= 0);
+});
+
+/**
+ * One cell that is not Python used to blank the whole notebook (#39).
+ *
+ * `pipeline.ipynb` opens with a `%%bash` cell whose body is shell, and has a bare
+ * `pandoc …` line halfway down. Neither mentions `pip` on purpose: what the analyzer
+ * tests is whether a cell parses, never the name of a command, because the next repo's
+ * unreadable line is one nobody has thought of yet.
+ *
+ * The flattened source, for the line numbers below:
+ *
+ *      1-3   cell 1, the shell cell, blanked
+ *      5-7   cell 2, def rolling_mean
+ *      9     cell 3, the pandoc line, blanked
+ *     11-13  cell 4, def trim
+ *     15     cell 5, which calls both
+ */
+test('a cell that is not Python costs that cell, not the notebook', { skip }, () => {
+  assert.ok(fn('rolling_mean'), 'the cell after the shell cell was still read');
+  assert.ok(fn('trim'), 'and so was the one after the second unreadable cell');
+  assert.equal(fn('rolling_mean').summary, 'Average each value with the ones just before it.');
+  assert.ok(!pipeline.meta.unread, 'the notebook itself is not reported unread — most of it was read');
+  assert.equal(pipeline.meta.functionCount, 2);
+  assert.equal(pipeline.meta.cellCount, 5, 'the blanked cells still exist and still count');
+});
+
+test('a blanked cell occupies exactly the lines it did', { skip }, () => {
+  // The whole point of blanking rather than dropping: every range and every line
+  // number below a bad cell still lands on the code the author wrote.
+  assert.equal(fn('rolling_mean').startLine, 5);
+  assert.equal(fn('rolling_mean').endLine, 7);
+  assert.equal(fn('trim').startLine, 11);
+  assert.equal(fn('trim').endLine, 13);
+  assert.equal(fn('rolling_mean').meta.cell, 2);
+  assert.equal(fn('trim').meta.cell, 4);
+});
+
+test('the cells that went dark say so', { skip }, () => {
+  // A notebook with two unreadable cells is not a notebook with none, and nothing else
+  // on the map would give the shortfall away.
+  const dark = pipeline.meta.cells.filter((cell) => cell.unread);
+  assert.deepEqual(
+    dark.map((cell) => cell.index),
+    [1, 3],
+  );
+  assert.match(dark[0].unread, /line 2 of the cell/, 'the address is counted from the top of the cell');
+  assert.equal(dark[0].startLine, 1);
+  assert.equal(dark[0].endLine, 3, 'and it still holds its three lines open');
+  assert.ok(
+    atlas.meta.warnings.some((w) => /pipeline\.ipynb/.test(w) && /2 of 5 code cells/.test(w)),
+    `the run says it out loud: ${atlas.meta.warnings.join(' · ')}`,
+  );
 });
 
 test('the opening markdown cell is the notebook describing itself', { skip }, () => {
