@@ -108,7 +108,15 @@ export function run(command: string, args: string[], input: string, timeoutMs: n
   return new Promise((resolve) => {
     let child;
     try {
-      child = spawn(command, args, { stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true });
+      child = spawn(command, args, {
+        stdio: ['pipe', 'pipe', 'pipe'],
+        windowsHide: true,
+        // `extract.py` lives inside App Atlas, not inside the project being read, so the
+        // `__pycache__` CPython would helpfully write goes into App Atlas's own install
+        // directory — somebody else's `node_modules`, which may be read-only and is
+        // certainly not ours to litter in.
+        env: { ...process.env, PYTHONDONTWRITEBYTECODE: '1' },
+      });
     } catch (err) {
       resolve({ ok: false, stdout: '', stderr: (err as Error).message });
       return;

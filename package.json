@@ -15,12 +15,17 @@
     "app-atlas": "dist/node/cli.js"
   },
   "main": "dist/node/index.js",
+  "exports": {
+    ".": "./dist/node/index.js",
+    "./package.json": "./package.json"
+  },
   "engines": {
     "node": ">=22.5.0"
   },
   "files": [
     "dist",
-    "README.md"
+    "README.md",
+    "!dist/**/__pycache__"
   ],
   "keywords": [
     "codebase",
@@ -28,7 +33,11 @@
     "architecture",
     "static-analysis",
     "typescript",
-    "ai-agents"
+    "python",
+    "golang",
+    "documentation",
+    "ai-agents",
+    "vibe-coding"
   ],
   "scripts": {
     "build": "npm run build:node && npm run build:web",
@@ -38,7 +47,9 @@
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p web/tsconfig.json --noEmit",
     "test": "npm run build:node && node --test test/*.test.js",
     "atlas": "node dist/node/cli.js",
-    "grammars": "node scripts/fetch-grammars.mjs"
+    "grammars": "node scripts/fetch-grammars.mjs",
+    "prepack": "npm run build",
+    "prepublishOnly": "npm test"
   },
   "dependencies": {
     "commander": "^15.0.0",

@@ -46,20 +46,21 @@ nothing to compile). Python projects also need **Python 3.9 or newer** on the ma
 — App Atlas reads Python with Python's own parser rather than guessing at the grammar.
 
 ```bash
-git clone https://github.com/nhorto/App-Atlas.git
-cd App-Atlas
-npm install
-npm run build
+npx app-atlas .
 ```
 
-Then point it at any project:
+That is the whole install. The analyzer runs, writes the atlas into `.app-atlas/`
+inside that project, and opens the map in your browser.
+
+It also takes a path, so you never have to leave the directory you are in:
 
 ```bash
-node dist/node/cli.js "C:\path\to\your\project"
+npx app-atlas ~/code/the-thing-my-agent-built
 ```
 
-The analyzer runs, writes the atlas into `.app-atlas/` inside that project, and opens
-the map in your browser.
+If you would rather have the command permanently, `npm install -g app-atlas` puts
+`app-atlas` on your `PATH`. To work on App Atlas itself, see
+[Development](#development).
 
 ### Commands
 
@@ -501,6 +502,13 @@ tracing so a monorepo can follow a call from the web app through a shared packag
 the API; and more language plugins.
 
 ## Development
+
+```bash
+git clone https://github.com/nhorto/App-Atlas.git
+cd App-Atlas
+npm install
+npm run build
+```
 
 ```bash
 npm run build       # build the CLI and the web app
