@@ -48,7 +48,7 @@ interface Props {
 }
 
 export function OverviewScreen({ view, tours, onDrill, onReveal, onStartTour, onOpenBoundaries }: Props) {
-  const { meta, app, topLevel, busiestFiles } = view;
+  const { meta, app, topLevel, whereToLookFirst } = view;
   const stats = meta.stats;
   const parts = topLevel.filter((node) => node.kind === 'module');
 
@@ -151,16 +151,20 @@ export function OverviewScreen({ view, tours, onDrill, onReveal, onStartTour, on
         </Section>
       ) : null}
 
-      {busiestFiles.length > 0 ? (
-        <Section title="Where to start reading" hint="The files the rest of your app leans on most">
+      {whereToLookFirst.length > 0 ? (
+        <Section title="Where to start reading" hint="The files that pull the most of your app together">
           <ol className="start-list">
-            {busiestFiles.map(({ node, connections }) => (
+            {whereToLookFirst.map(({ node, imports }) => (
               <li key={node.id}>
                 <button onClick={() => onReveal(node.id)} title={sourceOf(node)}>
                   <span className={`dot zone-${node.zone}`} />
                   <span className="start-name">{node.name}</span>
                   <span className={`start-summary source-${node.summarySource ?? 'none'}`}>{describe(node)}</span>
-                  <span className="start-count">{connections}</span>
+                  {/* The order weighs *what* imports a file, so this count is not what
+                      the list is sorted by. Saying so on hover keeps the number a fact. */}
+                  <span className="start-count" title={`imports ${imports} ${imports === 1 ? 'file' : 'files'} directly`}>
+                    {imports}
+                  </span>
                 </button>
               </li>
             ))}

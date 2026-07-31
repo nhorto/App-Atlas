@@ -11,6 +11,8 @@
 import type { Atlas, AtlasEdge, AtlasMeta, AtlasNode, EdgeKind } from './types.js';
 import { CONTAINER_KINDS } from './types.js';
 import { describeChanges } from './changes.js';
+import { rankFiles } from './rank.js';
+import type { RankedFile } from './rank.js';
 import type { ChangeReport } from './changes.js';
 import { findUnimported } from './unimported.js';
 import type { UnimportedView } from './unimported.js';
@@ -93,7 +95,13 @@ export interface OverviewView {
   /** The app node itself — it carries the one-paragraph description of the whole app. */
   app: AtlasNode | null;
   topLevel: LevelNode[];
-  busiestFiles: { node: AtlasNode; connections: number }[];
+  /**
+   * The files worth opening first, best first — ranked by what the app depends on
+   * rather than by how many edges touch them. Renamed from `busiestFiles` when the
+   * ranking changed, because a name that still said "busiest" would have been the one
+   * thing in the atlas quietly describing the old answer.
+   */
+  whereToLookFirst: RankedFile[];
   zoneCounts: Record<string, number>;
   /**
    * What moved since the previous run, already turned into sentences. Built here rather
@@ -379,19 +387,17 @@ export class AtlasGraph {
   getOverview(): OverviewView {
     const topLevel = this.getLevel(this.rootId).nodes;
 
-    const connectionCount = new Map<string, number>();
+    // Import edges are recorded between files already, but a `references` edge can hang
+    // off a function inside one. Lifting every endpoint to the file that contains it
+    // means the ranker sees one graph rather than two, and `rankFiles` keeps only the
+    // import edges it wants.
+    const fileEdges: AtlasEdge[] = [];
     for (const edge of this.relations) {
-      for (const endpoint of [edge.fromId, edge.toId]) {
-        const fileId = this.nearestOfKind(endpoint, 'file');
-        if (fileId) connectionCount.set(fileId, (connectionCount.get(fileId) ?? 0) + edge.weight);
-      }
+      const fromId = this.nearestOfKind(edge.fromId, 'file');
+      const toId = this.nearestOfKind(edge.toId, 'file');
+      if (fromId && toId) fileEdges.push({ ...edge, fromId, toId });
     }
-
-    const busiestFiles = [...connectionCount.entries()]
-      .sort((a, b) => b[1] - a[1])
-      .slice(0, 10)
-      .map(([nodeId, connections]) => ({ node: this.nodes.get(nodeId)!, connections }))
-      .filter((entry) => Boolean(entry.node));
+    const whereToLookFirst = rankFiles(this.nodes.values(), fileEdges);
 
     const zoneCounts: Record<string, number> = {};
     for (const node of this.nodes.values()) {
@@ -404,7 +410,7 @@ export class AtlasGraph {
       rootId: this.rootId,
       app: this.nodes.get(this.rootId) ?? null,
       topLevel,
-      busiestFiles,
+      whereToLookFirst,
       zoneCounts,
       changes: describeChanges(this.meta.changes),
       unimported: findUnimported(this.allNodes(), this.relations, this.meta),

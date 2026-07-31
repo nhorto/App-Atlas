@@ -319,7 +319,9 @@ test('the stars in the env list add up to the number underneath them', () => {
 
 test('a generated sentence is marked, and a docstring is not', () => {
   const graph = copyOfBoundary();
-  const file = graph.getNodeById('file:src/lib/db.ts');
+  // A file that appears in "Where to look first", which since #46 means one that pulls
+  // other files together rather than one everything imports.
+  const file = graph.getNodeById('file:src/app/api/orders/route.ts');
   file.summary = 'A description a model wrote.';
   file.summarySource = 'ai';
 
