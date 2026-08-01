@@ -70,6 +70,11 @@ export async function extractFile(dialect: Dialect, relPath: string, source: str
   try {
     const query = await loadQuery(dialect.id);
     read(file, dialect, query.matches(parsed.root), parsed.root, source);
+    // Declared on `Dialect` since the tier was built and wired when C# arrived — the
+    // first language whose visibility is a keyword the query vocabulary has no capture
+    // for. Runs last, over a file that is otherwise finished, so a dialect can correct
+    // what it knows better rather than having to express it in `.scm`.
+    dialect.finish?.(file, parsed.root, source);
     file.ok = true;
     file.hasErrors = parsed.root.hasError;
   } catch (err) {
@@ -253,7 +258,7 @@ function appendBindings(
     const name = names[i]!;
     if (name.text === '_') continue;
     const value = values.length === names.length ? values[i]! : values[0]!;
-    const callee = calleeOf(value);
+    const callee = calleeOf(value, dialect);
     file.bindings.push({
       name: name.text,
       callee,
@@ -273,8 +278,8 @@ function flatten(node: Node): Node[] {
  * The dotted callee of an expression, when the expression is a call. `chi.NewRouter()`
  * gives `chi.NewRouter`; `&Server{}` gives nothing, and nothing is the honest answer.
  */
-function calleeOf(node: Node): string {
-  const call = node.type.includes('call') ? node : node.descendantsOfType(['call_expression', 'call'])[0];
+function calleeOf(node: Node, dialect: Dialect): string {
+  const call = dialect.calls.has(node.type) ? node : node.descendantsOfType([...dialect.calls])[0];
   if (!call) return '';
   const fn = call.childForFieldName('function') ?? call.namedChildren[0];
   return fn ? collapse(fn.text) : '';
@@ -288,17 +293,43 @@ function firstStringArg(node: Node, dialect: Dialect): string | null {
   return null;
 }
 
+/**
+ * Sees through a node that exists only to hold one other node.
+ *
+ * C# is the reason: `[HttpGet("{id}")]` puts an `attribute_argument` around its string,
+ * so an argument list that plainly holds a route template reads as one unknown thing.
+ * Written as a general rule rather than a C# special case because every grammar has a
+ * few of these — a parenthesised expression is the same shape — and "an argument that is
+ * a wrapper around one expression *is* that expression" is true in all of them.
+ *
+ * Bounded, and it never unwraps a node the dialect has already named: a string literal
+ * with one child is a string literal, not whatever is inside it.
+ */
+function unwrap(node: Node, dialect: Dialect): Node {
+  let current = node;
+  for (let depth = 0; depth < 3; depth++) {
+    if (dialect.strings.has(current.type) || dialect.numbers.has(current.type)) return current;
+    if (dialect.names.has(current.type) || dialect.functions.has(current.type)) return current;
+    if (current.namedChildCount !== 1) return current;
+    const only = current.namedChild(0);
+    if (!only) return current;
+    current = only;
+  }
+  return current;
+}
+
 function argsOf(list: Node | undefined, dialect: Dialect): GValue[] {
   if (!list) return [];
   const out: GValue[] = [];
-  for (const arg of list.namedChildren) {
-    if (!arg) continue;
+  for (const raw of list.namedChildren) {
+    if (!raw) continue;
+    const arg = unwrap(raw, dialect);
     if (dialect.strings.has(arg.type)) out.push({ t: 'str', v: dialect.unquote(arg.text) });
     else if (dialect.numbers.has(arg.type)) out.push({ t: 'num', v: arg.text });
     else if (dialect.functions.has(arg.type)) out.push({ t: 'func', startIndex: arg.startIndex, endIndex: arg.endIndex });
     else if (dialect.names.has(arg.type)) out.push({ t: 'name', v: collapse(arg.text) });
-    else if (arg.type.includes('call')) {
-      const callee = calleeOf(arg);
+    else if (dialect.calls.has(arg.type)) {
+      const callee = calleeOf(arg, dialect);
       out.push(callee ? { t: 'call', v: callee } : { t: 'other' });
     } else out.push({ t: 'other' });
   }

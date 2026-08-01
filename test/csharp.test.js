@@ -1,0 +1,196 @@
+/**
+ * @fileoverview C# through the generic tier.
+ *
+ * The seam's second language, and the point of it. Go proved a tree-sitter grammar could
+ * carry a language; C# is the one that had to arrive without the shared code learning
+ * anything about it — a query file, a dialect, a detector, and `boundaries/build.ts`
+ * still not knowing what language a finding came from.
+ *
+ * C# stressed the seam in three places Go never did, and each is pinned below: its
+ * visibility is a keyword rather than the case of a letter, it says most of what matters
+ * in attributes rather than calls, and it spells "this is a call" as
+ * `invocation_expression` with no letters in common with the word the extractor was
+ * matching on.
+ *
+ * The negative assertions carry the same weight as the positive ones. `Where` and
+ * `Select` are LINQ before they are Entity Framework, `_skus.Add(sku)` is a list, and a
+ * class called `PaymentController` with no attributes on it is somebody's naming
+ * convention — a map that reports any of those has invented something.
+ */
+import assert from 'node:assert/strict';
+import path from 'node:path';
+import test from 'node:test';
+import { fileURLToPath } from 'node:url';
+import { analyzeProject, AtlasGraph, grammarTier } from '../dist/node/index.js';
+
+const here = path.dirname(fileURLToPath(import.meta.url));
+const result = await analyzeProject(path.join(here, 'fixtures', 'csharpapi'), {
+  cache: 'off',
+  followReferences: true,
+});
+
+const nodes = result.atlas.nodes;
+const doors = nodes
+  .filter((node) => node.kind === 'endpoint' && node.meta.endpointKind === 'http-route')
+  .sort((a, b) => a.name.localeCompare(b.name));
+const stores = nodes.filter((node) => node.kind === 'store');
+const services = nodes.filter((node) => node.kind === 'service');
+const guardsOf = (name) => (doors.find((d) => d.name === name)?.meta.guards ?? []).map((g) => g.name);
+
+// ---------------------------------------------------------------------------
+// It reads as C#
+// ---------------------------------------------------------------------------
+
+test('the language is claimed, and the project file says what it is', () => {
+  assert.deepEqual(result.atlas.meta.languages, ['csharp']);
+  // `Microsoft.NET.Sdk.Web` and nothing else declares ASP.NET Core here: the runtime
+  // ships it, so a web service's project file can list no web dependency at all.
+  assert.ok(result.atlas.meta.frameworks.includes('ASP.NET Core'), result.atlas.meta.frameworks.join(', '));
+  assert.ok(result.atlas.meta.frameworks.includes('Entity Framework Core'));
+  assert.ok(result.atlas.meta.frameworks.includes('Dapper'));
+});
+
+test('the reader is told this came from a grammar, not a compiler', () => {
+  const tier = grammarTier(nodes);
+  assert.ok(tier.languages.includes('csharp'));
+  assert.match(tier.display, /C#/, 'and it is spelled C#, not Csharp');
+});
+
+test('nothing failed to parse', () => {
+  assert.deepEqual(result.atlas.meta.warnings, []);
+});
+
+// ---------------------------------------------------------------------------
+// Doors: controllers
+// ---------------------------------------------------------------------------
+
+test('an address split across two attributes is put back together', () => {
+  // `[Route("api/v1/[controller]")]` on the class, `[HttpGet("{id:int}")]` on the method,
+  // and `[controller]` is ASP.NET's own token for the class name minus its suffix.
+  assert.ok(
+    doors.some((door) => door.name === 'GET /api/v1/orders/{id:int}'),
+    doors.map((d) => d.name).join(', '),
+  );
+  assert.ok(doors.some((door) => door.name === 'POST /api/v1/orders'));
+});
+
+test('a class-level [Authorize] locks every action under it', () => {
+  assert.deepEqual(guardsOf('GET /api/v1/orders/{id:int}'), ['[Authorize] on OrdersController']);
+  assert.deepEqual(guardsOf('POST /api/v1/orders'), ['[Authorize] on OrdersController']);
+});
+
+test('[AllowAnonymous] on the action beats [Authorize] on the class', () => {
+  // This is how nearly every ASP.NET app writes its sign-in route, and reading the class
+  // attribute alone would badge the one deliberately-open door as locked. Being wrong in
+  // that direction is the worst thing this tool can do.
+  assert.deepEqual(guardsOf('GET /api/v1/orders/public-status'), []);
+});
+
+test('a class named like a controller is not a door', () => {
+  // `PaymentController` has no [ApiController], no [Route] and no verb attributes. The
+  // suffix is a convention; a door invented from one is a door nobody can knock on.
+  for (const door of doors) {
+    assert.ok(!/payment/i.test(door.name), `invented from a name: ${door.name}`);
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Doors: minimal APIs
+// ---------------------------------------------------------------------------
+
+test('a minimal-API route is a door, with no lock on it', () => {
+  assert.ok(doors.some((door) => door.name === 'GET /health'));
+  assert.deepEqual(guardsOf('GET /health'), []);
+});
+
+test('a group prefix composes, and a chained RequireAuthorization locks', () => {
+  // `var admin = app.MapGroup("/admin");` three lines above the route that uses it. The
+  // binding is the only record that `admin` carries a prefix at all.
+  assert.ok(doors.some((door) => door.name === 'POST /admin/reindex'), doors.map((d) => d.name).join(', '));
+  assert.deepEqual(guardsOf('POST /admin/reindex'), ['.RequireAuthorization()']);
+});
+
+test('the door count is the whole list and nothing else', () => {
+  assert.deepEqual(doors.map((door) => door.name), [
+    'GET /api/v1/orders/{id:int}',
+    'GET /api/v1/orders/public-status',
+    'GET /health',
+    'POST /admin/reindex',
+    'POST /api/v1/orders',
+  ]);
+});
+
+// ---------------------------------------------------------------------------
+// Where data goes
+// ---------------------------------------------------------------------------
+
+test('a DbContext declares the tables, whether or not code has touched them', () => {
+  const ef = stores.find((store) => store.meta.client === 'Entity Framework Core');
+  assert.deepEqual(ef.meta.tables, ['Customers', 'Orders']);
+});
+
+test('Dapper names its table out of the SQL', () => {
+  const dapper = stores.find((store) => store.meta.client === 'Dapper');
+  assert.deepEqual(dapper.meta.tables, ['ledger_entries']);
+  assert.equal(dapper.meta.reads, 1);
+});
+
+test('LINQ over a list is not a database', () => {
+  // `_skus.Where(…).Select(…)`, `_skus.Count()`, `_skus.Add(sku)` in Reporting.cs. Every
+  // one of those method names is also Entity Framework's, which is why they only count
+  // when written on a DbSet the file declared. A table called `_skus` would be a lie
+  // about somebody's schema.
+  const tables = stores.flatMap((store) => store.meta.tables);
+  for (const invented of ['_skus', 'skus']) {
+    assert.ok(!tables.includes(invented), `${invented} is a list: ${tables.join(', ')}`);
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Outbound
+// ---------------------------------------------------------------------------
+
+test('an HttpClient call names the host it reaches', () => {
+  const hosts = services.map((service) => service.name).sort();
+  assert.deepEqual(hosts, ['rates.example-vendor.com', 'telemetry.example-vendor.com']);
+});
+
+test('a URL held in a const is the same fact as the literal', () => {
+  // `private const string FeedUrl = "https://…"` at the top of the class, used in a
+  // method below it — the shape #89 was filed about, in a third language.
+  assert.ok(services.some((service) => service.name === 'rates.example-vendor.com'));
+});
+
+test('an unrecognised host is named, never guessed into a brand', () => {
+  for (const service of services) assert.equal(service.meta.category, 'other');
+});
+
+// ---------------------------------------------------------------------------
+// Visibility, which C# writes as a keyword
+// ---------------------------------------------------------------------------
+
+test('public is read from the word public, not from the capital letter', () => {
+  const file = nodes.find((node) => node.path?.endsWith('Data/ShopContext.cs'));
+  // `Orders` and `Customers` are public properties; `_connectionString` is private and
+  // `InternalNote` is `internal` — visible across the assembly and no further, which is
+  // exactly where the line is drawn. All four are PascalCase or underscore by
+  // convention, and the convention is not what was read.
+  assert.ok(file.meta.exportedNames.includes('ShopContext'));
+  assert.ok(!file.meta.exportedNames.includes('_connectionString'));
+  assert.ok(!file.meta.exportedNames.includes('InternalNote'));
+});
+
+test('a docstring is read verbatim, XML tags and all', () => {
+  const context = nodes.find((node) => node.kind === 'type' && node.name === 'ShopContext');
+  assert.equal(context.summarySource, 'docs');
+  assert.match(context.summary, /Every table this app knows about/);
+});
+
+test('the map has the shape of the code', () => {
+  const graph = new AtlasGraph(result.atlas);
+  const types = nodes.filter((node) => node.kind === 'type' && node.meta.typeKind !== 'table');
+  for (const expected of ['OrdersController', 'ShopContext', 'Order', 'Customer', 'OrderRequest', 'PricingClient']) {
+    assert.ok(types.some((type) => type.name === expected), `${expected} is missing`);
+  }
+  assert.ok(graph.getOverview().app, 'and the app node exists');
+});

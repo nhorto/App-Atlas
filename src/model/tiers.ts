@@ -47,9 +47,11 @@ export function grammarTier(nodes: readonly AtlasNode[]): TierNote | null {
   };
 }
 
-/** `go` → `Go`. Short enough to be a table when there is ever more than one exception. */
+/** `go` → `Go`. A table now that there is more than one exception to title-casing. */
+const LABELS: Record<string, string> = { go: 'Go', csharp: 'C#' };
+
 function label(id: string): string {
-  return id === 'go' ? 'Go' : id.charAt(0).toUpperCase() + id.slice(1);
+  return LABELS[id] ?? id.charAt(0).toUpperCase() + id.slice(1);
 }
 
 /** "a", "a and b", "a, b and c" — this ends up in a sentence on screen. */
