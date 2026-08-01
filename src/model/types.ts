@@ -350,6 +350,12 @@ export interface StoreMeta {
   client: string;
   /** Tables/collections/buckets touched, where they could be read statically. */
   tables: string[];
+  /**
+   * Catalog rows the code queries — `information_schema.columns`, `sqlite_master`.
+   * Kept apart from `tables` because the database describing itself is not the app's
+   * data model, and reported as what it is: this app inspects its own schema (#86).
+   */
+  catalogTables: string[];
   reads: number;
   writes: number;
   sites: CodeSite[];

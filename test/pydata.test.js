@@ -15,7 +15,7 @@ import assert from 'node:assert/strict';
 import path from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
-import { analyzeProject, AtlasGraph, buildBoundaryView } from '../dist/node/index.js';
+import { analyzeProject, AtlasGraph, buildBoundaryView, catalogSchema } from '../dist/node/index.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 
@@ -113,7 +113,67 @@ test('the direction comes from the statement', { skip }, () => {
   const mysql = store(scripts, 'MySQL');
   assert.equal(mysql.meta.writes, 1, 'the UPDATE');
   assert.ok(mysql.meta.reads >= 2, 'the SELECTs');
-  assert.deepEqual(mysql.meta.tables, ['orders']);
+});
+
+// ---------------------------------------------------------------------------
+// The database's own bookkeeping (#86)
+// ---------------------------------------------------------------------------
+
+test('the schema probe leaves the data model exactly as it found it', { skip }, () => {
+  // The bar the issue set: diff the list, not its length. `schema_probe.py` adds three
+  // catalog queries and one ordinary one, so the app's tables are `orders` plus the
+  // `shipments` that script names — and nothing whatsoever from information_schema.
+  assert.deepEqual(store(scripts, 'MySQL').meta.tables, ['orders', 'shipments']);
+});
+
+test('the catalog rows are kept, apart, so the page can say what happened', { skip }, () => {
+  assert.deepEqual(store(scripts, 'MySQL').meta.catalogTables, [
+    'information_schema.columns',
+    'information_schema.tables',
+    'information_schema.triggers',
+  ]);
+});
+
+test('a catalog read is still a read', { skip }, () => {
+  // The queries are real, they run, and they hit the database. Only the *table* is
+  // disqualified — dropping the read too would understate what the app does.
+  const lines = sites(scripts, 'MySQL');
+  assert.ok(lines.some((s) => s.includes('schema_probe.py') && s.includes('information_schema')));
+});
+
+test('every vendor catalog is recognised, and no ordinary table is', () => {
+  for (const name of [
+    'information_schema.columns',
+    'INFORMATION_SCHEMA.TABLES',
+    'pg_catalog.pg_class',
+    'pg_stat_activity',
+    'sqlite_master',
+    'sqlite_sequence',
+    'mysql.user',
+    'performance_schema.events_statements_summary_by_digest',
+    'sys.tables',
+    'user_tab_columns',
+  ]) {
+    assert.ok(catalogSchema(name), `${name} is the database describing itself`);
+  }
+
+  // The rule earns its keep by what it refuses. `user_sessions` and `user_accounts` are
+  // why Oracle is a list of view names rather than a `USER_` prefix: a prefix rule would
+  // take real tables out of the data model of most apps that have users.
+  for (const name of [
+    'orders',
+    'users',
+    'user_sessions',
+    'user_accounts',
+    'all_hands_meetings',
+    'system_settings',
+    'schema_migrations',
+    'public.information',
+    'postgres_config',
+    'sqlitedb',
+  ]) {
+    assert.equal(catalogSchema(name), null, `${name} is somebody's table`);
+  }
 });
 
 // ---------------------------------------------------------------------------
@@ -165,11 +225,18 @@ test('an f-string gives up its verb but not its table', { skip }, () => {
   assert.ok(!store(app, 'PostgreSQL').meta.tables.includes('limit'));
 });
 
-test('a catalog view keeps its schema, an ordinary table drops it', { skip }, () => {
-  const tables = store(app, 'PostgreSQL').meta.tables;
-  assert.ok(tables.includes('information_schema.columns'), `got ${tables.join(', ')}`);
-  assert.ok(tables.includes('orders'), 'public.orders is just orders');
-  assert.ok(!tables.includes('columns'), 'and the catalog is not mistaken for one of the app’s own');
+test('a catalog view is not part of the data model, and says so (#86)', { skip }, () => {
+  // Superseding the older rule that kept the schema qualifier on the name. Keeping
+  // `information_schema.columns` out of `columns` was right and not enough: it still
+  // sat in the table list beside `orders`, so the page still claimed the app owns it.
+  const postgres = store(app, 'PostgreSQL');
+  assert.ok(!postgres.meta.tables.includes('information_schema.columns'), `got ${postgres.meta.tables.join(', ')}`);
+  assert.ok(!postgres.meta.tables.includes('columns'), 'and it is not mistaken for one of the app’s own either');
+  assert.ok(postgres.meta.tables.includes('orders'), 'public.orders is just orders, and it stays');
+
+  // Kept, not dropped — the read happened, and a repo that queries its own schema is
+  // telling you something true about itself.
+  assert.deepEqual(postgres.meta.catalogTables, ['information_schema.columns']);
 });
 
 test('one table spelled two ways is one table', { skip }, () => {

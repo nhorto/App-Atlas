@@ -174,6 +174,18 @@ export function renderAtlasMarkdown(graph: AtlasGraph, options: MarkdownOptions 
     for (const store of insights.stores) {
       const tables = store.tables.length > 0 ? ` — tables: ${store.tables.join(', ')}` : '';
       out.push(`- **${store.name}** (${store.client}) — ${store.reads} reads, ${store.writes} writes${tables}`);
+      // The catalog rows are kept out of the data model, and saying so is the point:
+      // a repo that reads `information_schema` has schema-dump or verification scripts
+      // in it, which is a real fact about the codebase and a different one from
+      // "this app has a table" (#86).
+      if (store.catalogTables.length > 0) {
+        const n = store.catalogTables.length;
+        out.push(
+          `  - Also queries the database's own catalog (${n} ${plural(n, 'row')}: ` +
+            `${store.catalogTables.slice(0, 4).join(', ')}${n > 4 ? ', …' : ''}) — ` +
+            `this app inspects its own schema. Not counted as part of the data model.`,
+        );
+      }
     }
     for (const service of insights.services) {
       out.push(

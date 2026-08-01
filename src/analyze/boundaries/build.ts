@@ -35,6 +35,7 @@ import {
   makeStoreId,
   makeTypeId,
 } from '../../model/types.js';
+import { catalogSchema } from '../sql.js';
 import { hashParts } from '../../util/hash.js';
 import { isWorker } from '../wrangler.js';
 import { classifyZone } from '../zones.js';
@@ -1231,7 +1232,15 @@ function addWorkerBindings(input: BuildInput, merged: Map<string, MergedStore>):
         readSites: [],
         writeSites: [],
         tableSites: new Map(),
-        meta: { storeKind: shape.storeKind, client: shape.client, tables: [], reads: 0, writes: 0, sites: [site] },
+        meta: {
+          storeKind: shape.storeKind,
+          client: shape.client,
+          tables: [],
+          catalogTables: [],
+          reads: 0,
+          writes: 0,
+          sites: [site],
+        },
       });
     }
   }
@@ -1242,6 +1251,16 @@ function collectStores(input: BuildInput): Map<string, MergedStore> {
 
   const noteTable = (store: MergedStore, table: string | null, site: CodeSite) => {
     if (!table) return;
+    // The database's own catalog is not the app's data model (#86). The read is real
+    // and stays counted — it is the *table* that does not belong beside `estimates`,
+    // so it moves to a list of its own rather than disappearing.
+    const catalog = catalogSchema(table);
+    if (catalog) {
+      if (!store.meta.catalogTables.some((known) => known.toLowerCase() === table.toLowerCase())) {
+        store.meta.catalogTables.push(table);
+      }
+      return;
+    }
     // `session.get(Item, id)` names the model and the migration beside it names the
     // table, so one table arrives spelled two ways. SQL identifiers do not distinguish
     // them either, and counting both turns two tables into four.
@@ -1281,6 +1300,7 @@ function collectStores(input: BuildInput): Map<string, MergedStore> {
         storeKind: finding.storeKind,
         client: finding.client,
         tables: [],
+        catalogTables: [],
         reads: finding.operation === 'read' ? 1 : 0,
         writes: finding.operation === 'write' ? 1 : 0,
         sites: [finding.site],
@@ -1301,7 +1321,10 @@ function collectStores(input: BuildInput): Map<string, MergedStore> {
     }
   }
 
-  for (const store of merged.values()) store.meta.tables.sort();
+  for (const store of merged.values()) {
+    store.meta.tables.sort();
+    store.meta.catalogTables.sort();
+  }
   return merged;
 }
 
@@ -1353,6 +1376,9 @@ function nameTheAnonymousDatabase(merged: Map<string, MergedStore>): void {
     appendAll(target.writeSites, store.writeSites);
     for (const table of store.meta.tables) {
       if (!target.meta.tables.includes(table)) target.meta.tables.push(table);
+    }
+    for (const table of store.meta.catalogTables) {
+      if (!target.meta.catalogTables.includes(table)) target.meta.catalogTables.push(table);
     }
     for (const [table, sites] of store.tableSites) {
       const existing = target.tableSites.get(table);

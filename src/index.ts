@@ -31,6 +31,7 @@ export { buildBoundaryView } from './model/boundary.js';
 export type { BoundaryCard, BoundaryFlow, BoundaryView, BoundaryZone } from './model/boundary.js';
 export { classifyArchetype } from './analyze/archetype.js';
 export { buildSchemaNodes } from './analyze/schema.js';
+export { catalogSchema } from './analyze/sql.js';
 export { classifyZone, dominantZone } from './analyze/zones.js';
 export { findScopes } from './analyze/workspace.js';
 export type { Scope } from './analyze/workspace.js';

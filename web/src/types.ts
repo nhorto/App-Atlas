@@ -114,6 +114,8 @@ export interface StoreMeta {
   storeKind: StoreKind;
   client: string;
   tables: string[];
+  /** Catalog rows the code queries. Optional: an atlas written before #86 has none. */
+  catalogTables?: string[];
   reads: number;
   writes: number;
   sites: CodeSite[];

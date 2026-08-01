@@ -489,6 +489,68 @@ function tableInStatement(sql: string): string | null {
 /** Schemas every database has, where `public.orders` and `orders` are the same table. */
 const DEFAULT_SCHEMAS = new Set(['public', 'dbo', 'main']);
 
+// ---------------------------------------------------------------------------
+// The database's own bookkeeping
+// ---------------------------------------------------------------------------
+
+/** Schemas a database keeps for itself. Set by the vendors, not by any repo. */
+const CATALOG_SCHEMAS = new Set([
+  'information_schema', // ANSI, and honoured by MySQL, Postgres and SQL Server alike
+  'pg_catalog',
+  'pg_toast',
+  'performance_schema', // MySQL
+  'mysql', // MySQL's own grant tables
+  'sys', // SQL Server's catalog, and MySQL's helper views over performance_schema
+  'sysibm', // Db2
+]);
+
+/**
+ * Oracle's dictionary views, spelled out rather than matched by prefix.
+ *
+ * Oracle writes these unqualified, so the only rule available is the shape of the
+ * name — and `ALL_`/`USER_`/`DBA_` as a prefix rule would take `user_sessions` and
+ * `user_accounts` out of the data model of every app that has one. Dropping a real
+ * table is a worse failure than keeping a catalog row, so this is a list.
+ */
+const ORACLE_DICTIONARY = new Set([
+  'all_tables', 'all_tab_columns', 'all_objects', 'all_constraints', 'all_indexes',
+  'all_views', 'all_triggers', 'all_sequences', 'all_users',
+  'user_tables', 'user_tab_columns', 'user_objects', 'user_constraints',
+  'user_indexes', 'user_views', 'user_triggers', 'user_sequences',
+  'dba_tables', 'dba_tab_columns', 'dba_objects', 'dba_constraints', 'dba_indexes',
+  'dba_views', 'dba_users', 'dba_triggers',
+]);
+
+/**
+ * The catalog a table name belongs to, or `null` for an ordinary table.
+ *
+ * A schema-dump script really does read `information_schema.columns`, and reading it
+ * as a database read is correct. Filing it under the app's *data model* is not: it
+ * lands in the same list as `estimates` and `productioncontroljobs`, and a reader
+ * learning the domain from that page comes away believing there is a table called
+ * `information_schema.routines`.
+ *
+ * So the read still counts and the table does not — see `collectStores`, which keeps
+ * these apart rather than dropping them, because "this app inspects its own schema"
+ * is a true and different fact about a codebase.
+ */
+export function catalogSchema(table: string): string | null {
+  const parts = table.split('.').map((part) => unquote(part.trim()));
+  const name = parts[parts.length - 1];
+  if (!name) return null;
+
+  if (parts.length > 1 && CATALOG_SCHEMAS.has(parts[parts.length - 2])) {
+    return parts[parts.length - 2];
+  }
+  // Postgres and SQLite both reserve their prefix for the system, so no app owns one
+  // of these — which matters because `pg_stat_activity` and `sqlite_master` are
+  // almost always written without their schema.
+  if (name.startsWith('pg_')) return 'pg_catalog';
+  if (name.startsWith('sqlite_')) return 'sqlite';
+  if (ORACLE_DICTIONARY.has(name)) return 'oracle dictionary';
+  return null;
+}
+
 /**
  * `public.orders` → `orders`, but `information_schema.columns` keeps its schema.
  *
