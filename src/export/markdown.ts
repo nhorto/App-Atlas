@@ -160,11 +160,7 @@ export function renderAtlasMarkdown(graph: AtlasGraph, options: MarkdownOptions 
   if (others.length > 0) {
     out.push('## Also runs on its own');
     out.push('');
-    for (const node of others) {
-      const meta = node.meta as { endpointKind?: string; route?: string; schedule?: string; sites?: { path: string }[] };
-      const when = meta.schedule ? ` (${meta.schedule})` : '';
-      out.push(`- **${meta.endpointKind}** ${meta.route ?? node.name}${when} — \`${meta.sites?.[0]?.path ?? '—'}\``);
-    }
+    appendOtherDoors(out, others);
     out.push('');
   }
 
@@ -415,6 +411,78 @@ function appendPorts(out: string[], graph: AtlasGraph): void {
  * opposite reading of the one `appendUnimported` needs — "no personal data found" is a
  * claim this method is nowhere near strong enough to make.
  */
+/**
+ * How many sibling scripts in one folder before they become a shape (#88).
+ *
+ * Set well above a handful on purpose. A repo with six commands wants all six listed —
+ * folding there would hide something a reader would rather have seen — and it is
+ * `scripts/verify/` with thirty near-identical entries that costs them the page.
+ */
+const CLI_FOLD_AT = 8;
+
+/** How many of a folded folder's scripts to name, so the group is still checkable. */
+const CLI_SHOWN_WHEN_FOLDED = 3;
+
+interface DoorMeta {
+  endpointKind?: string;
+  route?: string;
+  schedule?: string;
+  sites?: { path: string }[];
+}
+
+/**
+ * Webhooks, crons and command-line entry points, written so a hundred of them still read.
+ *
+ * Two things were wrong with the flat list. A CLI door printed its own path on both
+ * sides of the em-dash — `scripts/_audit/census.py — scripts/_audit/census.py` — because
+ * it had no name and the path stood in for one; that is fixed upstream, and here the
+ * path is simply not repeated when the command already contains it. And a folder of
+ * thirty verification scripts is a shape, not a list: the reader wants "31 scripts under
+ * scripts/verify, run one at a time", not thirty lines between them and the rest of the
+ * page.
+ */
+function appendOtherDoors(out: string[], doors: { name: string; meta: Record<string, unknown> }[]): void {
+  const line = (door: { name: string; meta: Record<string, unknown> }): string => {
+    const meta = door.meta as DoorMeta;
+    const when = meta.schedule ? ` (${meta.schedule})` : '';
+    const label = meta.route ?? door.name;
+    const path = meta.sites?.[0]?.path;
+    // The path once. It is already inside `python scripts/…`, and a row that says the
+    // same thing twice teaches the reader that the row says nothing.
+    const where = path && !label.includes(path) ? ` — \`${path}\`` : '';
+    return `- **${meta.endpointKind}** ${label}${when}${where}`;
+  };
+
+  const cli = doors.filter((door) => (door.meta as DoorMeta).endpointKind === 'cli');
+  const rest = doors.filter((door) => (door.meta as DoorMeta).endpointKind !== 'cli');
+  for (const door of rest) out.push(line(door));
+
+  // Grouped by the folder they sit in, which is the boundary the rest of the page is
+  // already drawn on and the one a reader would use to go and look.
+  const byFolder = new Map<string, typeof cli>();
+  for (const door of cli) {
+    const path = (door.meta as DoorMeta).sites?.[0]?.path ?? '';
+    const folder = path.includes('/') ? path.slice(0, path.lastIndexOf('/')) : '';
+    const list = byFolder.get(folder);
+    if (list) list.push(door);
+    else byFolder.set(folder, [door]);
+  }
+
+  for (const [folder, group] of [...byFolder].sort((a, b) => a[0].localeCompare(b[0]))) {
+    if (group.length < CLI_FOLD_AT) {
+      for (const door of group) out.push(line(door));
+      continue;
+    }
+    out.push(
+      `- **cli** ${group.length} scripts under \`${folder || 'the repo root'}\`, run one at a time — ` +
+        `${group
+          .slice(0, CLI_SHOWN_WHEN_FOLDED)
+          .map((door) => `\`${((door.meta as DoorMeta).sites?.[0]?.path ?? '').split('/').pop()}\``)
+          .join(', ')}, and ${group.length - CLI_SHOWN_WHEN_FOLDED} more`,
+    );
+  }
+}
+
 /** How many retired files to name before the rest become a count. */
 const MAX_RETIRED = 12;
 

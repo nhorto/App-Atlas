@@ -75,6 +75,14 @@ export interface EntryPoint {
   path: string;
   /** `main`, `bin`, `exports`, `scripts.build`, `project.scripts` — where it was found. */
   field: string;
+  /**
+   * The word somebody types to run it, when the manifest gives it one (#88).
+   *
+   * `[project.scripts] estimate = "pkg.cli:main"` and npm's `bin` both name a command;
+   * `main` and `exports` name a file nobody types. Absent means the file has no name of
+   * its own, and the command is the interpreter and the path.
+   */
+  command?: string;
 }
 
 /** One column of one table, as the schema declares it. */
@@ -242,21 +250,25 @@ const ENTRY_FIELDS = ['main', 'module', 'browser', 'types', 'typings', 'source']
  */
 function readEntryPoints(root: string, pkg: Record<string, unknown> | null): EntryPoint[] {
   const out: EntryPoint[] = [];
-  const add = (value: unknown, field: string) => {
+  const add = (value: unknown, field: string, command?: string) => {
     if (typeof value !== 'string' || value === '') return;
     const normalized = value.replace(/^\.\//, '');
-    if (!out.some((entry) => entry.path === normalized && entry.field === field)) {
-      out.push({ path: normalized, field });
+    const existing = out.find((entry) => entry.path === normalized && entry.field === field);
+    if (existing) {
+      existing.command ??= command;
+      return;
     }
+    out.push(command ? { path: normalized, field, command } : { path: normalized, field });
   };
 
   if (pkg) {
     for (const field of ENTRY_FIELDS) add(pkg[field], field);
 
+    // `bin` is the one npm field whose *key* is a word somebody types.
     const bin = pkg.bin;
-    if (typeof bin === 'string') add(bin, 'bin');
+    if (typeof bin === 'string') add(bin, 'bin', typeof pkg.name === 'string' ? pkg.name : undefined);
     else if (bin && typeof bin === 'object') {
-      for (const value of Object.values(bin as Record<string, unknown>)) add(value, 'bin');
+      for (const [name, value] of Object.entries(bin as Record<string, unknown>)) add(value, 'bin', name);
     }
 
     // An `exports` map nests conditions arbitrarily deep — `{".": {"import": {"types":
@@ -296,7 +308,8 @@ function readEntryPoints(root: string, pkg: Record<string, unknown> | null): Ent
       }
       if (!inScripts) continue;
       const target = /=\s*["']([A-Za-z0-9_.]+)\s*:/.exec(line);
-      if (target) add(`${target[1].split('.').join('/')}.py`, 'project.scripts');
+      const named = /^\s*([A-Za-z0-9_.-]+)\s*=/.exec(line);
+      if (target) add(`${target[1].split('.').join('/')}.py`, 'project.scripts', named?.[1]);
     }
   }
 

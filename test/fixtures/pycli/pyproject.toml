@@ -1,0 +1,6 @@
+[project]
+name = "estimating-toolkit"
+version = "1.2.0"
+
+[project.scripts]
+estimate = "toolkit.cli:main"

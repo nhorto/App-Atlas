@@ -80,6 +80,12 @@ const MAX_SAYS = 160;
 /** Whether this file declares itself retired, and on what evidence. */
 export function retirementOf(node: AtlasNode): RetiredInfo | null {
   if (node.kind !== 'file' || !node.path) return null;
+  // A fixture under `test/fixtures/…/parked/` is not somebody's retired lane, it is the
+  // material a test is made of — and this repo's own map is the case that shows it,
+  // since the fixture proving this rule works lives in a folder called `parked`. Test
+  // code is already outside the architecture description and outside "where to look
+  // first", so it has nothing here to lose and only a count to distort.
+  if (node.zone === 'test') return null;
 
   const segment = parkedSegment(node.path);
   if (segment) return { evidence: 'path', says: segment };

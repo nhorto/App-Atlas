@@ -242,6 +242,8 @@ export function buildBoundaryGraph(raw: BuildInput): BoundaryGraph {
     input.findings.filter((f): f is PathGuardFinding => f.type === 'path-guard'),
   );
 
+  nameCommandLineDoors(endpoints, input);
+
   const envEndpoint = collectEnv(input);
   if (envEndpoint) endpoints.set(envEndpoint.id, envEndpoint);
 
@@ -340,6 +342,49 @@ function routerKey(path: string, varName: string): string {
 function byModule(key: string): string {
   const cut = key.indexOf('\0');
   return moduleRouterKey(moduleOf(key.slice(0, cut)), key.slice(cut + 1));
+}
+
+/** How each language starts a file from a shell. */
+const RUNNERS: Record<string, string> = {
+  py: 'python',
+  mjs: 'node',
+  cjs: 'node',
+  js: 'node',
+  ts: 'node',
+  sh: 'sh',
+  rb: 'ruby',
+};
+
+/**
+ * Gives a command-line door the command somebody types (#88).
+ *
+ * An HTTP door reads `POST /api/users` — the address, then the file that answers at it.
+ * A CLI door read `scripts/_audit/census.py — scripts/_audit/census.py`: the same string
+ * twice, once for a name it never had. On the repo that turned this up, 103 of 105 ways
+ * in were that line, and a section that says nothing a hundred times is a section a
+ * reader learns to skip.
+ *
+ * A manifest that names the command wins outright — `[project.scripts] estimate =
+ * "pkg.cli:main"` means the thing you type is `estimate`, and the path is an
+ * implementation detail. Otherwise the command is the interpreter and the path, which
+ * is a fact and is also exactly what a person would type. Nothing is invented: a file
+ * whose extension has no known runner keeps its path and the renderer prints it once.
+ */
+function nameCommandLineDoors(endpoints: Map<string, MergedEndpoint>, input: BuildInput): void {
+  const entries = input.signals.entryPoints ?? [];
+  for (const endpoint of endpoints.values()) {
+    if (endpoint.meta.endpointKind !== 'cli' || endpoint.meta.route) continue;
+    const path = endpoint.meta.sites[0]?.path;
+    if (!path) continue;
+
+    const declared = entries.find((entry) => entry.command && entry.path === path);
+    if (declared?.command) {
+      endpoint.meta.route = declared.command;
+      continue;
+    }
+    const runner = RUNNERS[path.split('.').pop()?.toLowerCase() ?? ''];
+    if (runner) endpoint.meta.route = `${runner} ${path}`;
+  }
 }
 
 function collectEndpoints(input: BuildInput): Map<string, MergedEndpoint> {
