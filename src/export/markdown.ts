@@ -25,6 +25,7 @@ import { grammarTier } from '../model/tiers.js';
 import type { UnimportedView } from '../model/unimported.js';
 import { buildTypeView } from '../model/typeview.js';
 import { findPersonalData } from '../model/personal.js';
+import { isRetired } from '../analyze/retired.js';
 import type { SummarySource } from '../model/types.js';
 
 const MAX_ROUTES = 40;
@@ -215,6 +216,8 @@ export function renderAtlasMarkdown(graph: AtlasGraph, options: MarkdownOptions 
   // answers the same question those do — what is this made of — and because an agent
   // about to change this code needs it before it starts, not after.
   appendUnimported(out, overview.unimported);
+
+  appendRetired(out, graph);
 
   // --- shapes ---
   const types = buildTypeView(graph, MAX_TYPES);
@@ -412,6 +415,45 @@ function appendPorts(out: string[], graph: AtlasGraph): void {
  * opposite reading of the one `appendUnimported` needs — "no personal data found" is a
  * claim this method is nowhere near strong enough to make.
  */
+/** How many retired files to name before the rest become a count. */
+const MAX_RETIRED = 12;
+
+/**
+ * The lanes that are still on disk and say they are finished (#87).
+ *
+ * This section is the price of leaving them out of the prose and out of "where to look
+ * first". Hiding is fine; hiding silently is not — and the reverse failure is real too:
+ * a backstop somebody still runs by hand would vanish from a map that simply dropped
+ * it. So the file is named, the words that disqualified it are quoted, and the reader
+ * decides.
+ */
+function appendRetired(out: string[], graph: AtlasGraph): void {
+  const retired = graph
+    .allNodes()
+    .filter((node) => node.kind === 'file' && isRetired(node))
+    .sort((a, b) => (a.path ?? '').localeCompare(b.path ?? ''));
+  if (retired.length === 0) return;
+
+  out.push('## Code that says it is retired');
+  out.push('');
+  out.push(
+    `${retired.length} ${plural(retired.length, 'file')} ${retired.length === 1 ? 'describes itself' : 'describe themselves'} ` +
+      `as deprecated, archived or parked — by the folder ${retired.length === 1 ? 'it sits' : 'they sit'} in, or by ` +
+      `${retired.length === 1 ? 'its' : 'their'} own opening line. ` +
+      `Still in the map and still on disk; left out of the architecture description and out of what to read first.`,
+  );
+  out.push('');
+  for (const node of retired.slice(0, MAX_RETIRED)) {
+    const info = (node.meta as { retired?: { evidence: string; says: string } }).retired;
+    const because = info?.evidence === 'path' ? `in \`${info.says}/\`` : `says "${oneLine(info?.says ?? '')}"`;
+    out.push(`- \`${node.path}\` — ${because}`);
+  }
+  if (retired.length > MAX_RETIRED) {
+    out.push(`- …and ${retired.length - MAX_RETIRED} more.`);
+  }
+  out.push('');
+}
+
 function appendPersonalData(out: string[], graph: AtlasGraph): void {
   const report = findPersonalData(graph.allNodes(), graph.allEdges());
   // Nothing matched means no section. The heading promises findings, and printing it over

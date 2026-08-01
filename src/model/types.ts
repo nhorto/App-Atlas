@@ -596,6 +596,13 @@ export interface AtlasMeta {
    */
   coverage?: AtlasCoverage;
   /**
+   * How many files describe themselves as retired — by the folder they sit in, or by
+   * their own opening line (#87). They stay in the graph and out of the prose, and
+   * this number is how the page says so instead of quietly shrinking. Absent on
+   * atlases written before this existed, which means nobody looked.
+   */
+  retiredFiles?: number;
+  /**
    * What moved since the previous run. Optional because atlases written before this
    * existed are still readable — and because a missing value means "nobody asked",
    * which is a third thing again from "no baseline" and from "nothing changed".

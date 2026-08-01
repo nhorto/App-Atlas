@@ -33,6 +33,7 @@
  *     fixture is not where anybody's app lives. Two of them made the top ten before this
  *     rule existed.
  */
+import { isRetired } from '../analyze/retired.js';
 import type { AtlasEdge, AtlasNode } from './types.js';
 
 /** How much of a file's score it passes on rather than keeps. The usual 0.85. */
@@ -115,6 +116,10 @@ export function rankFiles(nodes: Iterable<AtlasNode>, edges: Iterable<AtlasEdge>
 
   return ids
     .filter((id) => holdsSomething(files.get(id)!))
+    // "Where to look first" is advice about the app somebody is working on. A file that
+    // opens with "DEPRECATED — do not run as part of the pipeline" is the last place to
+    // send them, and it stays *in* the graph above so score still flows through it (#87).
+    .filter((id) => !isRetired(files.get(id)!))
     // A file that imports nothing pulls nothing together, so by this ranking's own logic
     // it has nothing to say — it holds only the score every node starts with. Without
     // this the tail of a short list fills up with whatever sorts first among the files

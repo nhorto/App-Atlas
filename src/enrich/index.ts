@@ -26,6 +26,7 @@ import type { Atlas, AtlasNode, EndpointMeta, ServiceMeta, StoreMeta } from '../
 import { hashParts } from '../util/hash.js';
 import type { AppFacts, GroupOutline, LabelItem } from './prompts.js';
 import type { Group } from '../model/groups.js';
+import { isParked } from '../analyze/retired.js';
 import { buildGroups } from '../model/groups.js';
 import { knownServiceNames } from '../analyze/boundaries/catalog.js';
 import { fileBatchRequest, groupBatchRequest, moduleBatchRequest, overviewRequest } from './prompts.js';
@@ -539,7 +540,14 @@ function responsibilitiesByPath(atlas: Atlas): Map<string, string[]> {
   return map;
 }
 
-function collectAppFacts(atlas: Atlas, groups: Group[]): AppFacts {
+/**
+ * The facts the overview paragraph is written from.
+ *
+ * Exported so a test can hold the *material* to account rather than the sentence: what
+ * the model is given decides what it can say, and "never build the app's headline flow
+ * out of a folder called parked" is a property of this list (#87).
+ */
+export function collectAppFacts(atlas: Atlas, groups: Group[]): AppFacts {
   const waysIn: string[] = [];
   const services: string[] = [];
   const stores: string[] = [];
@@ -560,11 +568,22 @@ function collectAppFacts(atlas: Atlas, groups: Group[]): AppFacts {
   // Where the top-level folder list used to go. The groups are the same idea carried one
   // step further: they are cut to a size worth describing, and each one says which of the
   // others it feeds, which is the fact a paragraph about architecture is built out of.
-  const outline: GroupOutline[] = groups.slice(0, MAX_GROUPS_IN_OVERVIEW).map((group) => ({
+  // A retired lane is left out of the material entirely (#87). Given `parked/` in the
+  // list, the model did the sensible thing with it and offered "a station-estimates
+  // screen in parked/station-estimates hands its request across to scripts" as one of
+  // the app's two headline flows. The folder is called parked. A paragraph about how
+  // this app works cannot be built out of code that says it does not run, and the
+  // handoffs *into* such a folder go with it, or the sentence names a destination that
+  // is not in the list.
+  const live = groups.filter((group) => !isParked(group.path));
+  const outline: GroupOutline[] = live.slice(0, MAX_GROUPS_IN_OVERVIEW).map((group) => ({
     path: group.path,
     files: group.fileCount,
     zone: group.zone,
-    handsOffTo: group.dependsOn.slice(0, 4).map((link) => link.toPath || 'the repo root'),
+    handsOffTo: group.dependsOn
+      .filter((link) => !isParked(link.toPath))
+      .slice(0, 4)
+      .map((link) => link.toPath || 'the repo root'),
   }));
 
   // The repo's own docstrings are the best evidence there is, and they are free.

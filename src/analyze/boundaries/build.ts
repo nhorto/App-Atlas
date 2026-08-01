@@ -36,6 +36,7 @@ import {
   makeTypeId,
 } from '../../model/types.js';
 import { catalogSchema } from '../sql.js';
+import { isParked } from '../retired.js';
 import { hashParts } from '../../util/hash.js';
 import { isWorker } from '../wrangler.js';
 import { classifyZone } from '../zones.js';
@@ -208,27 +209,6 @@ function pathOf(finding: BoundaryFinding): string {
   if ('site' in finding && finding.site) return finding.site.path;
   if ('path' in finding && typeof finding.path === 'string') return finding.path;
   return '';
-}
-
-/**
- * Directories whose name says the code in them was set aside.
- *
- * Deliberately short, and deliberately not `archive`, `old`, `legacy` or `backup` on
- * their own: a Next.js app can ship `app/api/archive/route.ts`, and dropping a real
- * door because a folder is called `archive` is a far worse error than counting a dead
- * one. What is left is either explicitly parked or wears the underscore that says
- * "not part of the build" — and both are unambiguous enough to act on.
- *
- * powerfab-dashboard reported 111 ways in, among them every retired script in
- * `scripts/categories/_archive/` and `parked/`. A door somebody cannot use is not a
- * way in, and a count that includes them is a count nobody can act on.
- */
-const PARKED_SEGMENT =
-  /^(_archive[d]?|_old|_deprecated|_legacy|_unused|_bak|_backup|_graveyard|_parked|_attic|parked|graveyard|attic|deprecated)$/i;
-
-function isParked(path: string): boolean {
-  if (!path) return false;
-  return path.split('/').some((segment) => PARKED_SEGMENT.test(segment));
 }
 
 export function buildBoundaryGraph(raw: BuildInput): BoundaryGraph {

@@ -32,6 +32,7 @@ import { declaredEntryFor, frameworkOwnerOf } from './owned.js';
 import { buildSchemaNodes, buildSqlSchemaNodes } from './schema.js';
 import type { FileSlice, LanguagePlugin } from './plugin.js';
 import { discoverProject } from './project.js';
+import { markRetiredFiles } from './retired.js';
 import type { ProjectInfo } from './project.js';
 import { genericPlugins } from './generic/index.js';
 import { pythonPlugin } from './py/index.js';
@@ -217,6 +218,13 @@ export async function analyzeProject(rootDir: string, options: AnalyzeOptions = 
     }
   }
 
+  // --- code that says it is retired ---
+  // Before the boundary is built and before anything is ranked or described, because
+  // every one of those answers is about the live app and a file that opens with
+  // "DEPRECATED — do not run as part of the pipeline" is not part of it (#87). Marked
+  // in place: dropping it would hide a backstop somebody still runs by hand.
+  const retiredCount = markRetiredFiles(nodes);
+
   // --- the database schema ---
   // Read before the containment tree is built, because the schema file has to be in
   // the folder tree like any other file for its tables to have somewhere to live.
@@ -356,6 +364,10 @@ export async function analyzeProject(rootDir: string, options: AnalyzeOptions = 
         wholeRepo: (options.repoRoot ? path.resolve(options.repoRoot) : project.root) === project.root,
         unreadFormats: project.unreadFormats,
       },
+      // Counted here so every screen quotes the same number, and stated even when it
+      // is zero-by-absence: a map that quietly leaves code out is the failure this
+      // project exists to avoid (#87).
+      retiredFiles: retiredCount,
       warnings,
     },
     nodes: nodes.sort((a, b) => a.id.localeCompare(b.id)),
