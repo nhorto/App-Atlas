@@ -192,6 +192,15 @@ function describesTheApp(): (finding: BoundaryFinding) => boolean {
     switch (finding.type) {
       case 'service':
       case 'store':
+      // The halves of a two-file answer are filtered here too, or the filter is one a
+      // service can walk around: pair a `url-through` in a fixture with a `url-sink`
+      // beside it and the company comes out the other side, after this ran. Found by
+      // regenerating this repo's own map, where `test/fixtures/updatecheck` turned into
+      // an outside host App Atlas was said to call.
+      case 'url-sink':
+      case 'url-through':
+      case 'wrapper-call':
+      case 'client-export':
         return !isTest(finding.site.path);
       case 'router-build':
       case 'router-mount':

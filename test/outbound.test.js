@@ -72,6 +72,15 @@ test('loopback is not an outside service, even through the helper', () => {
   assert.ok(!hosts.some((host) => host.includes('127.0.0.1') || host === 'localhost'), hosts.join(', '));
 });
 
+test('a two-file answer cannot walk around the test filter', () => {
+  // Found by regenerating App Atlas's own map, where `test/fixtures/updatecheck` came
+  // out as an outside host App Atlas itself was said to call. A `service` finding from
+  // a fixture was already filtered; the two *halves* of this answer — the call site and
+  // the helper holding the fetch — were not, so the company they paired into arrived
+  // after the filter had run. `tests/feed.test.mjs` is that shape, deliberately.
+  assert.ok(!hosts.includes('feeds.example.org'), hosts.join(', '));
+});
+
 test('the app phones home, and the count says so', () => {
   // The sentence the overview used to write was "No outside service showed up anywhere
   // in this". Three is the whole answer for this repo — no more, and no fewer.
