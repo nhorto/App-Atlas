@@ -391,6 +391,10 @@ function detectAuthAliases(input: PythonBoundaryInput, findings: BoundaryFinding
   }
 
   for (const constant of input.file.constants ?? []) {
+    // The extractor collects addresses of both kinds — route prefixes and whole URLs
+    // (#89). A prefix is the one that starts with a slash; `https://updates.example/…`
+    // is somewhere else's address and would only collide with a real one here.
+    if (!constant.value.startsWith('/')) continue;
     findings.push({
       type: 'path-constant',
       name: constant.name,
@@ -627,6 +631,16 @@ function detectOutbound(
   findings: BoundaryFinding[],
   site: (line: number, snippet?: string) => CodeSite,
 ): void {
+  // `FEED = "https://…"` at the top of the file, `requests.get(FEED)` further down —
+  // the same fact written the way people write it (#89). Same file only: Python's
+  // detectors read one file at a time and there is no import graph here to follow a
+  // constant across, so a URL defined in `config.py` and used in `client.py` is still
+  // missed. Said plainly rather than papered over.
+  const constants = new Map<string, string>();
+  for (const constant of input.file.constants ?? []) {
+    if (/^https?:\/\//i.test(constant.value)) constants.set(constant.name, constant.value);
+  }
+
   for (const call of input.file.calls ?? []) {
     const parts = call.callee.split('.');
     const root = parts[0];
@@ -637,7 +651,7 @@ function detectOutbound(
     if (!viaClient && !viaLocal) continue;
     if (!ROUTE_METHODS.has(method) && method !== 'request' && method !== 'send') continue;
 
-    const url = firstUrl(call);
+    const url = firstUrl(call, constants);
     const host = url ? hostOf(url) : null;
     // No literal URL means no destination to name. `s.get(build_url())` tells us an
     // HTTP call happens and nothing whatever about who answers it, and naming the box
@@ -661,14 +675,22 @@ function detectOutbound(
   }
 }
 
-function firstUrl(call: PyCall): string | null {
-  for (const arg of call.args) {
-    const text = strArg(arg);
+function firstUrl(call: PyCall, constants: Map<string, string>): string | null {
+  const resolve = (value: PyValue | undefined): string | null => {
+    const text = strArg(value);
     if (text && /^https?:\/\//i.test(text)) return text;
+    // A bare name, resolved against the constants this file declares. Nothing is
+    // inferred from the name itself — an unknown one gives back null, exactly as
+    // before, which is what keeps `s.get(build_url())` from naming a company.
+    const named = nameArg(value);
+    return named ? (constants.get(named) ?? null) : null;
+  };
+
+  for (const arg of call.args) {
+    const url = resolve(arg);
+    if (url) return url;
   }
-  const kw = call.kwargs.url;
-  const text = strArg(kw);
-  return text && /^https?:\/\//i.test(text) ? text : null;
+  return resolve(call.kwargs.url);
 }
 
 function hostOf(url: string): string | null {

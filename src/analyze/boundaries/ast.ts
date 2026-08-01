@@ -5,7 +5,7 @@
  * string literal in the first argument — so these helpers exist to keep the detectors
  * readable rather than to do anything clever.
  */
-import { Node, SyntaxKind } from 'ts-morph';
+import { Node, SyntaxKind, VariableDeclarationKind } from 'ts-morph';
 import type { CallExpression, ObjectLiteralExpression } from 'ts-morph';
 import type { LocalBinding } from './types.js';
 
@@ -94,6 +94,74 @@ export function literalPrefix(node: Node | undefined): string | null {
 
 export function argAt(call: CallExpression, index: number): Node | undefined {
   return call.getArguments()[index];
+}
+
+/**
+ * How far a name may be followed back to the value behind it. Three covers
+ * `fetch(url)` ← `url = EXPECTED.feedLatest` ← `EXPECTED = { feedLatest: "https://…" }`
+ * with a hop to spare, and past that the chain stops being something a reader could
+ * check by eye.
+ */
+const MAX_CONST_HOPS = 3;
+
+/**
+ * The string constant behind a name (#89).
+ *
+ * `fetch(FEED_URL)` and `fetch(EXPECTED.feedLatest)` state the same fact as
+ * `fetch("https://…")` — the value is fixed, written down, and the compiler can say
+ * what it is. Only `const` is followed: a `let` can hold something else by the time
+ * the call runs, and a URL that was true at the declaration is not evidence about the
+ * call.
+ *
+ * This never guesses from a name. A value it cannot resolve returns `null`, which is
+ * the same silence the caller got before, and the reason #25's rule still holds.
+ */
+export function constantString(node: Node | undefined, depth = 0): string | null {
+  if (!node || depth > MAX_CONST_HOPS) return null;
+
+  const direct = literalPrefix(node);
+  if (direct) return direct;
+
+  if (Node.isAsExpression(node) || Node.isParenthesizedExpression(node)) {
+    return constantString(node.getExpression(), depth + 1);
+  }
+  if (Node.isIdentifier(node)) {
+    return constantString(constantValue(node), depth + 1);
+  }
+  if (Node.isPropertyAccessExpression(node)) {
+    const object = objectBehind(node.getExpression(), depth);
+    return object ? constantString(objectProp(object, node.getName()), depth + 1) : null;
+  }
+  return null;
+}
+
+/**
+ * The initializer of the `const` an identifier refers to, wherever it was declared.
+ *
+ * `getDefinitionNodes` is the compiler's own answer, so an import resolves to the
+ * declaration in the other file rather than to the import specifier — which is the
+ * whole point, since the config object and the call that uses it are rarely in the
+ * same file.
+ */
+function constantValue(id: Node): Node | undefined {
+  if (!Node.isIdentifier(id)) return undefined;
+  for (const declaration of id.getDefinitionNodes()) {
+    if (!Node.isVariableDeclaration(declaration)) continue;
+    if (declaration.getVariableStatement()?.getDeclarationKind() !== VariableDeclarationKind.Const) continue;
+    return declaration.getInitializer();
+  }
+  return undefined;
+}
+
+/** The object literal a name stands for, so `EXPECTED.feedLatest` can be read. */
+function objectBehind(node: Node, depth: number): ObjectLiteralExpression | null {
+  if (Node.isObjectLiteralExpression(node)) return node;
+  if (Node.isAsExpression(node) || Node.isParenthesizedExpression(node)) {
+    return objectBehind(node.getExpression(), depth);
+  }
+  if (depth >= MAX_CONST_HOPS) return null;
+  const value = Node.isIdentifier(node) ? constantValue(node) : undefined;
+  return value ? objectBehind(value, depth + 1) : null;
 }
 
 /** The initializer of one property of an object literal, by name. */

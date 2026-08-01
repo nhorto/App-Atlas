@@ -41,7 +41,7 @@ import { isWorker } from '../wrangler.js';
 import { classifyZone } from '../zones.js';
 import { isCatchAllMatcher, matcherMatches } from './auth.js';
 import { composeRoutePrefixes, moduleOf, mountGraph, routerKey as moduleRouterKey } from './mounts.js';
-import { guardThroughHops, reachableGuards, servicesThroughWrappers } from './reach.js';
+import { guardThroughHops, reachableGuards, servicesThroughUrlHelpers, servicesThroughWrappers } from './reach.js';
 import type { ReachedGuard } from './reach.js';
 import type {
   AuthAliasFinding,
@@ -244,7 +244,7 @@ export function buildBoundaryGraph(raw: BuildInput): BoundaryGraph {
   // on the same box as the direct ones rather than a second one beside it.
   const input: BuildInput = {
     ...raw,
-    findings: [...shipped, ...servicesThroughWrappers(shipped)],
+    findings: [...shipped, ...servicesThroughWrappers(shipped), ...servicesThroughUrlHelpers(shipped)],
   };
 
   const endpoints = collectEndpoints(input);

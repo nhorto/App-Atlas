@@ -20,13 +20,15 @@
  * the thing a reader needs in order to check our work.
  */
 import type { AtlasEdge, GuardInfo } from '../../model/types.js';
-import { serviceForPackage } from './catalog.js';
-import { sendsData } from './outbound.js';
+import { isInternalHost, serviceForHost, serviceForPackage } from './catalog.js';
+import { hostOf, sendsData } from './outbound.js';
 import type {
   BoundaryFinding,
   ClientExportFinding,
   GuardFinding,
   ServiceFinding,
+  UrlSinkFinding,
+  UrlThroughFinding,
   WrapperCallFinding,
 } from './types.js';
 
@@ -158,6 +160,56 @@ export function servicesThroughWrappers(findings: BoundaryFinding[]): ServiceFin
       host: null,
       external: true,
       writes: sendsData(call.dotted, service.category),
+      site: call.site,
+    });
+  }
+  return out;
+}
+
+/**
+ * `fetchFeedVersion(EXPECTED.feedLatest)` in one file, `fetch(url)` in another (#89).
+ *
+ * The detector at the call site could resolve the address and could not know whether
+ * anything sends it; the detector in the helper saw the request go out and could not
+ * know where to. Pairing them is what separates an app that phones home from one that
+ * writes a URL into its licence notices — the second has no `url-sink` on the other
+ * end, so it stays silent, which is the promise #25 made.
+ *
+ * The host is reported and nothing more. An unrecognised domain is not guessed into a
+ * brand: "an outside host we could not identify" is the honest line, and it is a great
+ * deal more useful than "no outside service".
+ */
+export function servicesThroughUrlHelpers(findings: BoundaryFinding[]): ServiceFinding[] {
+  const sinks = findings.filter((f): f is UrlSinkFinding => f.type === 'url-sink');
+  if (sinks.length === 0) return [];
+  const calls = findings.filter((f): f is UrlThroughFinding => f.type === 'url-through');
+  if (calls.length === 0) return [];
+
+  const out: ServiceFinding[] = [];
+  for (const call of calls) {
+    const wanted = resolveSpecifier(call.module, call.site.path);
+    if (!wanted) continue;
+
+    const match = sinks.find(
+      (sink) =>
+        sink.exportName === call.exportName &&
+        sink.paramIndex === call.argIndex &&
+        pathsAgree(sink.site.path, wanted),
+    );
+    if (!match) continue;
+
+    const host = hostOf(call.url);
+    if (!host || isInternalHost(host)) continue;
+
+    const known = serviceForHost(host);
+    out.push({
+      type: 'service',
+      name: known?.name ?? host,
+      category: known?.category ?? 'other',
+      package: null,
+      host,
+      external: true,
+      writes: match.writes,
       site: call.site,
     });
   }
