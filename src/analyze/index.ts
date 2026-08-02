@@ -76,7 +76,7 @@ import { dominantZone } from './zones.js';
  * and `PROMPT_VERSION` does not move either, because the question asked of the model is
  * unchanged — only what we do with the answer afterwards.
  */
-export const TOOL_VERSION = '0.14.0';
+export const TOOL_VERSION = '0.15.0';
 
 export interface AnalyzeOptions {
   maxFiles?: number;

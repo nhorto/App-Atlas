@@ -112,12 +112,91 @@ test('a group prefix composes, and a chained RequireAuthorization locks', () => 
 
 test('the door count is the whole list and nothing else', () => {
   assert.deepEqual(doors.map((door) => door.name), [
+    'GET /api/kiosk/ping',
+    'GET /api/kiosk/today',
     'GET /api/v1/orders/{id:int}',
     'GET /api/v1/orders/public-status',
     'GET /health',
     'POST /admin/reindex',
+    'POST /api/kiosk/shift/end',
+    'POST /api/kiosk/shift/start',
     'POST /api/v1/orders',
   ]);
+});
+
+// ---------------------------------------------------------------------------
+// A lock this app wrote itself
+// ---------------------------------------------------------------------------
+
+test('a filter is a check because of the 401 it writes, not its name', () => {
+  // Found on a real .NET connector, which reported **48 of 48 routes unprotected**
+  // because every one of its locks is an in-house endpoint filter rather than
+  // `[Authorize]` or `.RequireAuthorization()`. The Go tier has judged middleware this
+  // way from the start; this is the same rule in C#.
+  assert.deepEqual(guardsOf('GET /api/kiosk/today'), ['.RequireDevice()']);
+});
+
+test('a filter that writes no 401 is not a check, whatever it is called', () => {
+  // `.RequireTelemetry()` is chained onto its route exactly as `.RequireDevice()` is,
+  // and shares the word the name-based rule would have matched on. It writes a timing
+  // line and nothing else, so the route stays open — which is the true answer.
+  assert.deepEqual(guardsOf('GET /api/kiosk/ping'), []);
+});
+
+test('a filter on the group covers every route registered on it', () => {
+  // `var kiosk = app.MapGroup("/api/kiosk/shift").RequireDevice();` — one line, and
+  // neither route below it mentions a lock anywhere near itself. The chained call also
+  // binds the name to the *outermost* call, which is what used to lose the prefix too.
+  assert.deepEqual(guardsOf('POST /api/kiosk/shift/start'), ['.RequireDevice()']);
+  assert.deepEqual(guardsOf('POST /api/kiosk/shift/end'), ['.RequireDevice()']);
+});
+
+test('a hop-found lock is likely, never certain', () => {
+  // The route names the filter and the filter answers 401; both halves are written
+  // down. What is not proven is that every path through it rejects.
+  const guard = doors.find((d) => d.name === 'GET /api/kiosk/today').meta.guards[0];
+  assert.equal(guard.confidence, 'likely');
+  assert.equal(guard.provider, 'custom');
+});
+
+// ---------------------------------------------------------------------------
+// SQL, wherever it was written
+// ---------------------------------------------------------------------------
+
+test('raw ADO.NET is read, including through a helper this repo wrote', () => {
+  // `cmd.CommandText = "SELECT … FROM punches"` is assigned, not passed, and
+  // `connection.Sql("…")` is a four-line extension method with a name no table could
+  // list. The statement is the evidence in both cases.
+  const sqlite = stores.find((store) => store.name === 'SQLite');
+  assert.ok(sqlite, stores.map((s) => `${s.name} (${s.meta.client})`).join(', '));
+  assert.ok(sqlite.meta.tables.includes('punches'), sqlite.meta.tables.join(', '));
+});
+
+test('a comment inside a statement does not name a table', () => {
+  // The upsert explains itself: "-- Kept rather than cleared when absent: these come
+  // from the shop's own database". `from` is looked for before `into`, so this used to
+  // put a table called `the` in the data model — in every language, not just this one.
+  const tables = stores.flatMap((store) => store.meta.tables);
+  assert.ok(!tables.includes('the'), tables.join(', '));
+  assert.ok(tables.includes('employees'), 'and the real table is still found');
+});
+
+test('an interpolated column list does not cost the table', () => {
+  // `$"SELECT {columns} FROM job_stations WHERE …"` — the hole is in the column list and
+  // the table is written down plainly. Dropping it whenever a string is interpolated
+  // would lose most of the queries in a real repo.
+  const sqlite = stores.find((store) => store.name === 'SQLite');
+  assert.ok(sqlite.meta.tables.includes('job_stations'), sqlite.meta.tables.join(', '));
+});
+
+test('prose that opens with a SQL keyword is not a query', () => {
+  // "Update the settings for this shop before syncing again." Scanning every string for
+  // SQL is what makes the helper above readable, and it is also how a table called
+  // `the` gets into somebody's data model.
+  const tables = stores.flatMap((store) => store.meta.tables);
+  for (const invented of ['the', 'settings']) {
+    assert.ok(!tables.includes(invented), `${invented} came out of an English sentence`);
+  }
 });
 
 // ---------------------------------------------------------------------------
@@ -131,6 +210,7 @@ test('a DbContext declares the tables, whether or not code has touched them', ()
 
 test('Dapper names its table out of the SQL', () => {
   const dapper = stores.find((store) => store.meta.client === 'Dapper');
+  assert.ok(dapper, stores.map((s) => s.meta.client).join(', '));
   assert.deepEqual(dapper.meta.tables, ['ledger_entries']);
   assert.equal(dapper.meta.reads, 1);
 });

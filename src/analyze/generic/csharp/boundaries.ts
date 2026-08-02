@@ -19,7 +19,7 @@
 import type { CodeSite, GuardInfo } from '../../../model/types.js';
 import { isInternalHost, serviceForHost } from '../../boundaries/catalog.js';
 import type { BoundaryFinding } from '../../boundaries/types.js';
-import { readSqlStatement } from '../../sql.js';
+import { isSqlStatement, readSqlStatement } from '../../sql.js';
 import type { BoundaryInput } from '../languages.js';
 import type { GCall, GDef, GValue, GenericFile } from '../ir.js';
 
@@ -65,6 +65,40 @@ const REQUIRE_AUTH = 'RequireAuthorization';
 const ALLOW_ANONYMOUS_CALL = 'AllowAnonymous';
 
 /**
+ * The two statuses that mean "not you".
+ *
+ * A filter is a check because of what it writes, not what it is called —  the rule the
+ * Go tier is built on, and the one that matters most here. `[Authorize]` and
+ * `.RequireAuthorization()` are ASP.NET's built-ins, and a great many real .NET services
+ * never use either: they write their own endpoint filter, chain it onto the routes it
+ * covers, and return a 401 from inside it. Reading only the built-ins reported a
+ * connector with a device-token scheme and a supervisor-session scheme as **48 of 48
+ * routes unprotected**, which is the cry-wolf failure that teaches a reader to stop
+ * believing the page.
+ */
+const REJECTION_STATUS = /(^|\.)Status(401Unauthorized|403Forbidden)$/;
+
+/** `Results.Unauthorized()`, `Results.Forbid()` — the same answer, spelled shorter. */
+const REJECTION_CALL = /(^|\.)(Unauthorized|Forbid)$/;
+
+/** A number handed to something that sets a status: `StatusCode(401)`. */
+const REJECTION_CODE = new Set(['401', '403']);
+
+/**
+ * Chained calls that are never a check, so a route's filter list stays worth reading.
+ *
+ * Every one of these is ASP.NET's own route metadata — naming, OpenAPI, caching, CORS.
+ * They cost nothing to carry, but a reader who is shown them among the locks has to
+ * work out which is which.
+ */
+const NOT_A_FILTER = new Set([
+  'WithName', 'WithTags', 'WithSummary', 'WithDescription', 'WithOpenApi', 'WithMetadata',
+  'Produces', 'ProducesProblem', 'ProducesValidationProblem', 'Accepts', 'ExcludeFromDescription',
+  'DisableAntiforgery', 'CacheOutput', 'RequireCors', 'RequireHost', 'WithDisplayName',
+  'AddEndpointFilter', 'MapGroup', 'WithGroupName', 'ShortCircuit', 'WithOrder',
+]);
+
+/**
  * Calls that only ever mean Entity Framework, whatever they are written on.
  *
  * The async ones are EF's own extension methods — `ToListAsync` does not exist on an
@@ -96,6 +130,26 @@ const LINQ_READS = new Set([
 ]);
 
 const LINQ_WRITES = new Set(['Add', 'AddRange', 'Update', 'UpdateRange', 'Remove', 'RemoveRange']);
+
+/**
+ * The ADO.NET drivers, and the engine each one is a driver for.
+ *
+ * Raw ADO.NET is the most common data access in .NET after Entity Framework, and it
+ * hides its query where nothing else does: `cmd.CommandText = "SELECT …"` on one line,
+ * `ExecuteReaderAsync()` with no arguments on another. Read only through EF and Dapper,
+ * a connector whose entire storage layer is `Microsoft.Data.Sqlite` reports a database
+ * it never names and tables it never found.
+ */
+const ADO_DRIVERS: Record<string, string> = {
+  'Microsoft.Data.Sqlite': 'SQLite',
+  'System.Data.SQLite': 'SQLite',
+  MySqlConnector: 'MySQL',
+  'MySql.Data': 'MySQL',
+  Npgsql: 'PostgreSQL',
+  'Microsoft.Data.SqlClient': 'SQL Server',
+  'System.Data.SqlClient': 'SQL Server',
+  'Oracle.ManagedDataAccess': 'Oracle',
+};
 
 /** Dapper's whole surface, near enough: it takes SQL and gives back rows. */
 const DAPPER_CALLS = new Set([
@@ -147,6 +201,7 @@ export function detectCSharpBoundaries(input: BoundaryInput): BoundaryFinding[] 
   if (isAspNet(input)) {
     detectControllers(input, findings, at);
     detectMinimalApis(input, findings, at);
+    detectCheckers(input, findings);
   }
   detectStores(input, findings, at);
   detectOutbound(input, findings, at);
@@ -356,6 +411,7 @@ function detectMinimalApis(
 ): void {
   const { file } = input;
   const groups = groupPrefixes(file);
+  const groupChains = groupFilters(file);
 
   for (const call of file.calls) {
     const method = bareMethod(call);
@@ -367,6 +423,7 @@ function detectMinimalApis(
       if (!HUB_MAPS.has(method)) continue;
       const path = call.args.find((arg) => arg.t === 'str');
       if (!path || path.t !== 'str') continue;
+      const hub = chainedOnto(file, call);
       findings.push({
         type: 'endpoint',
         endpointKind: 'http-route',
@@ -376,7 +433,8 @@ function detectMinimalApis(
         route: normalizeRoute(path.v),
         framework: 'ASP.NET Core',
         writes: false,
-        guards: guardsForChain(input, call, findings),
+        guards: hub.guards,
+        paramTypes: hub.filters,
         site: at(call, `${call.callee}("${path.v}")`),
         handlerId: input.nodeIdForScope(call.scope),
       });
@@ -387,6 +445,10 @@ function detectMinimalApis(
     if (!first || first.t !== 'str') continue;
 
     const route = joinRoute(groups.get(call.receiver ?? '') ?? '', first.v.replace(/^\//, ''));
+    // A filter chained onto the group covers every route registered on it — written on
+    // another statement, in this same file, which is where the evidence has to be.
+    const chain = chainedOnto(file, call);
+    const inherited = groupChains.get(call.receiver ?? '');
     findings.push({
       type: 'endpoint',
       endpointKind: 'http-route',
@@ -396,7 +458,8 @@ function detectMinimalApis(
       route,
       framework: 'ASP.NET Core',
       writes: WRITE_METHODS.has(verb),
-      guards: guardsForChain(input, call, findings),
+      guards: [...chain.guards, ...(inherited?.guards ?? [])],
+      paramTypes: [...chain.filters, ...(inherited?.filters ?? [])],
       site: at(call, `${call.callee}("${first.v}")`),
       handlerId: input.nodeIdForScope(call.scope),
     });
@@ -423,7 +486,10 @@ function groupPrefixes(file: GenericFile): Map<string, string> {
     if (bareMethod(call) !== 'MapGroup') continue;
     const arg = call.args.find((value) => value.t === 'str');
     if (!arg || arg.t !== 'str') continue;
-    const bound = file.bindings.find((binding) => binding.callee.endsWith('MapGroup') && binding.line === call.line);
+    // `includes`, not `endsWith`: `app.MapGroup("/x").RequireDevice()` binds the name to
+    // the *outermost* call in the chain, and matching only the end loses the group
+    // entirely — its prefix and its filter both, on the one line that declared them.
+    const bound = file.bindings.find((binding) => binding.callee.includes('MapGroup') && binding.line === call.line);
     if (!bound) continue;
     direct.set(bound.name, { prefix: arg.v.replace(/^\//, ''), parent: call.receiver });
   }
@@ -446,34 +512,127 @@ function groupPrefixes(file: GenericFile): Map<string, string> {
 }
 
 /**
- * Whether anything chained onto this registration locks it.
+ * The filters chained onto each group, which every route registered on it inherits.
  *
- * `.RequireAuthorization()` and `.AllowAnonymous()` both arrive as calls whose range
- * contains the registration's, because that is what chaining looks like in a parse tree.
- * A group's `.RequireAuthorization()` covers routes registered on it and is deliberately
- * *not* read here — it is written on a different statement, and claiming it would mean
- * asserting a lock this file cannot see applied.
+ * `var admin = app.MapGroup("/api/admin").RequireSupervisor();` locks a dozen routes in
+ * one line, and none of those routes says so anywhere near itself. Read here because the
+ * group and its routes are in the same file — the evidence is on screen together, which
+ * is the bar for claiming a lock rather than guessing one.
  */
-function guardsForChain(input: BoundaryInput, call: GCall, _findings: BoundaryFinding[]): GuardInfo[] {
-  const { file } = input;
-  let locked: GCall | null = null;
+function groupFilters(file: GenericFile): Map<string, Chain> {
+  const out = new Map<string, Chain>();
+  for (const call of file.calls) {
+    if (bareMethod(call) !== 'MapGroup') continue;
+    // `includes`, not `endsWith`: `app.MapGroup("/x").RequireDevice()` binds the name to
+    // the *outermost* call in the chain, and matching only the end loses the group
+    // entirely — its prefix and its filter both, on the one line that declared them.
+    const bound = file.bindings.find((binding) => binding.callee.includes('MapGroup') && binding.line === call.line);
+    if (!bound) continue;
+    const chain = chainedOnto(file, call);
+    if (chain.guards.length > 0 || chain.filters.length > 0) out.set(bound.name, chain);
+  }
+  return out;
+}
+
+/** What was chained onto a route registration: the built-in lock, and everything else. */
+interface Chain {
+  guards: GuardInfo[];
+  /**
+   * Names of filters this file cannot resolve — `RequireDevice`, `RequireSupervisor`.
+   * Carried on the door for `build.ts` to match against the `auth-checker` findings,
+   * which is how a filter defined in `Auth.cs` reaches a route declared three files away.
+   */
+  filters: string[];
+}
+
+/**
+ * What is chained onto this registration, and what it means.
+ *
+ * `.RequireAuthorization()` and `.AllowAnonymous()` arrive as calls whose character range
+ * contains the registration's, because that is what chaining looks like in a parse tree.
+ * So does everything else in the chain — and the rest is the interesting part, because a
+ * .NET service that rolls its own auth writes `.RequireDevice()` there instead, and its
+ * body is in another file.
+ *
+ * Nothing here decides that `RequireDevice` is a lock. This only records that the route
+ * has it; whether it is a check is settled by whether some file declares a method of that
+ * name that answers 401, which is a fact about that method rather than about its name.
+ */
+function chainedOnto(file: GenericFile, call: GCall): Chain {
+  const out: Chain = { guards: [], filters: [] };
+
   for (const other of file.calls) {
     if (other === call) continue;
     if (other.startIndex > call.startIndex || other.endIndex < call.endIndex) continue;
-    if (bareMethod(other) === ALLOW_ANONYMOUS_CALL) return [];
-    if (bareMethod(other) === REQUIRE_AUTH) locked = other;
+
+    const method = bareMethod(other);
+    // An explicit opt-out beats everything chained beside it, exactly as the attribute
+    // does on a controller.
+    if (method === ALLOW_ANONYMOUS_CALL) return { guards: [], filters: [] };
+    if (method === REQUIRE_AUTH) {
+      out.guards.push({
+        name: `.${REQUIRE_AUTH}()`,
+        how: 'middleware',
+        provider: 'ASP.NET Core',
+        path: file.path,
+        line: other.line,
+        confidence: 'certain',
+      });
+      continue;
+    }
+    if (!method || NOT_A_FILTER.has(method) || MAP_METHODS[method] || HUB_MAPS.has(method)) continue;
+    if (!out.filters.includes(method)) out.filters.push(method);
   }
-  if (!locked) return [];
-  return [
-    {
-      name: `.${REQUIRE_AUTH}()`,
-      how: 'middleware',
-      provider: 'ASP.NET Core',
-      path: file.path,
-      line: locked.line,
-      confidence: 'certain',
-    },
-  ];
+
+  return out;
+}
+
+/**
+ * Every method in this file that turns a caller away with a 401 or a 403.
+ *
+ * The Go tier's rule, in C#: `r.Use(Logger)` and `r.Use(RequireAuth)` are the same line
+ * of code, and only one of them ever puts one of those two statuses on the wire. What is
+ * read here is the body — the status constant it names, or the `Results.Unauthorized()`
+ * it calls — so a filter called `Gatekeeper` counts and one called `RequireTelemetry`
+ * does not.
+ *
+ * Emitted for every such method, and it costs nothing when nobody chains it: the merge
+ * layer only ever looks one up by a name a *route* carried. A login handler that answers
+ * 401 to a bad password is named here and matches nothing, which is the right outcome.
+ */
+function detectCheckers(input: BoundaryInput, findings: BoundaryFinding[]): void {
+  const { file } = input;
+
+  for (const def of file.defs) {
+    if (def.kind !== 'function') continue;
+
+    const names = [...def.uses, ...def.qualifiedUses];
+    const rejects =
+      names.some((name) => REJECTION_STATUS.test(name)) ||
+      names.some((name) => REJECTION_CALL.test(name)) ||
+      file.calls.some(
+        (call) =>
+          call.scope === (def.owner ? `${def.owner}.${def.name}` : def.name) &&
+          call.args.some((arg) => arg.t === 'num' && REJECTION_CODE.has(arg.v)),
+      );
+    if (!rejects) continue;
+
+    findings.push({
+      type: 'auth-checker',
+      name: def.name,
+      guard: {
+        name: `.${def.name}()`,
+        how: 'middleware',
+        provider: 'custom',
+        path: file.path,
+        line: def.line,
+        // The route names the filter and the filter answers 401. Both halves are written
+        // down; what is not proven is that every path through it rejects, which is the
+        // same thing `likely` means everywhere else in this codebase.
+        confidence: 'likely',
+      },
+    });
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -527,28 +686,53 @@ function detectStores(
     file.imports.some((imp) => imp.module === 'Dapper') ||
     (input.signals.dotnetPackages && [...input.signals.dotnetPackages].some((id) => id === 'Dapper' || id.startsWith('Dapper.')));
 
+  // --- a SQL statement, wherever it was written ----------------------------
+  // The statement is the evidence, which is the rule the Python detector already runs
+  // on and the only one that survives contact with real .NET. This repo's entire
+  // storage layer goes through `connection.Sql("SELECT …")` — a four-line extension
+  // method somebody wrote — and a rule that only knows Dapper's method names and
+  // `CommandText` finds none of it. What a query is written *through* is that repo's
+  // business; that a `SELECT` ran is not.
+  const engine = adoEngine(input);
+  const sqlFrom = (text: string, line: number, scope: string | null, snippet: string, method: string) => {
+    const [sql] = holesRemoved(text);
+    // The shape test, not the first word. Without it, "Update the settings for this
+    // shop" is a write against a table called `the`.
+    if (!isSqlStatement(sql)) return;
+    const statement = readSqlStatement(sql);
+    if (!statement) return;
+    const dapper = hasDapper && DAPPER_CALLS.has(method);
+    findings.push({
+      type: 'store',
+      key: `${dapper ? 'dapper' : engine ? 'ado' : 'sql'}${engine ? `-${engine.toLowerCase()}` : ''}`,
+      name: engine ?? 'Database',
+      client: dapper ? 'Dapper' : engine ? 'ADO.NET' : 'SQL',
+      storeKind: 'sql',
+      table: statement.table,
+      operation: statement.operation,
+      // No driver imported anywhere means the statement proves a database and names
+      // nothing. `build.ts` folds a generic store into the named one when the project
+      // has exactly one, and leaves it standing alone when it does not.
+      ...(dapper || engine ? {} : { generic: true }),
+      site: { path: file.path, line, nodeId: input.nodeIdForScope(scope), snippet },
+    });
+  };
+
+  for (const binding of file.bindings) {
+    if (!/(^|\.)CommandText$/.test(binding.name) || !binding.arg) continue;
+    sqlFrom(binding.arg, binding.line, binding.scope, `CommandText = "${oneLine(binding.arg)}"`, '');
+  }
+
+  for (const call of file.calls) {
+    for (const arg of call.args) {
+      if (arg.t !== 'str') continue;
+      sqlFrom(arg.v, call.line, call.scope, `${call.callee}("${oneLine(arg.v)}")`, bareMethod(call));
+      break;
+    }
+  }
+
   for (const call of file.calls) {
     const method = bareMethod(call);
-
-    // --- Dapper: the table is in the SQL, so read the SQL -------------------
-    if (hasDapper && DAPPER_CALLS.has(method)) {
-      const sql = call.args.find((arg) => arg.t === 'str');
-      const statement = sql && sql.t === 'str' ? readSqlStatement(sql.v) : null;
-      if (statement) {
-        findings.push({
-          type: 'store',
-          key: 'dapper',
-          name: 'Database',
-          client: 'Dapper',
-          storeKind: 'sql',
-          table: statement.table,
-          operation: statement.operation,
-          site: at(call, `${call.callee}("${sql && sql.t === 'str' ? sql.v.slice(0, 60) : ''}")`),
-        });
-      }
-      continue;
-    }
-
     if (!hasEf) continue;
 
     // --- EF Core: the receiver names the table ------------------------------
@@ -592,6 +776,50 @@ function detectStores(
       site: at(call, `${call.callee}(…)`),
     });
   }
+}
+
+/**
+ * An interpolated string with its holes closed up, and whether it is still whole.
+ *
+ * `$"SELECT {Columns} FROM punches WHERE id = $id"` names a table a reader can go and
+ * find, and losing it because the *column list* was interpolated would cost most of the
+ * queries in a real repo. `$"SELECT * FROM {table}"` names nothing, and reading it
+ * naively answers `WHERE` with a straight face — the failure the Python detector
+ * documents.
+ *
+ * Both are handled by putting something in the hole that cannot be mistaken for an
+ * identifier. Then the ordinary reader gets the table when the table was written down,
+ * and gets nothing when it was not.
+ */
+function holesRemoved(text: string): [string, boolean] {
+  if (!text.includes('{')) return [text, true];
+  return [text.replace(/\{[^{}]*\}/g, ' ? '), true];
+}
+
+/** One line of a query, short enough to sit in a snippet. */
+function oneLine(text: string): string {
+  return text.replace(/\s+/g, ' ').trim().slice(0, 70);
+}
+
+/**
+ * Which engine this project's ADO.NET calls reach, or null when it has no driver.
+ *
+ * The file's own `using` first, because a repo can talk to two databases and the file
+ * that talks to one of them says which. Falling back to the project's references keeps
+ * a file working when the driver arrived through a helper.
+ */
+function adoEngine(input: BoundaryInput): string | null {
+  for (const imported of input.file.imports) {
+    for (const [driver, engine] of Object.entries(ADO_DRIVERS)) {
+      if (imported.module === driver || imported.module.startsWith(`${driver}.`)) return engine;
+    }
+  }
+  for (const id of input.signals.dotnetPackages ?? []) {
+    for (const [driver, engine] of Object.entries(ADO_DRIVERS)) {
+      if (id === driver || id.startsWith(`${driver}.`)) return engine;
+    }
+  }
+  return null;
 }
 
 /**

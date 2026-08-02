@@ -136,6 +136,14 @@
   name: (identifier) @bind.name
   (_) @bind.value) @bind
 
+; An assignment is a binding too, and in .NET it is where the SQL lives: raw ADO.NET
+; writes `cmd.CommandText = "SELECT … FROM punches"` and then calls `ExecuteReaderAsync()`
+; with no arguments at all. Read only as a declaration, the query is invisible and the
+; most common data access in .NET after EF goes unreported.
+(assignment_expression
+  left: (_) @bind.name
+  right: (_) @bind.value) @bind
+
 ; --- string constants ------------------------------------------------------
 ; Only so that a route prefix written as a name can be turned back into the address it
 ; stands for.

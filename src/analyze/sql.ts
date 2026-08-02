@@ -461,12 +461,63 @@ export interface SqlStatement {
  * evidence for it.
  */
 export function readSqlStatement(sql: string, complete = true): SqlStatement | null {
-  const text = sql.trim();
+  const text = withoutComments(sql).trim();
   const verb = /^\(?\s*(select|insert|update|delete|replace|with|create|drop|alter|truncate)\b/i.exec(text);
   if (!verb) return null;
   const kind = verb[1].toLowerCase();
   const reads = kind === 'select' || kind === 'with';
   return { operation: reads ? 'read' : 'write', table: complete ? tableInStatement(text) : null };
+}
+
+/**
+ * Whether a string is convincingly a SQL statement, rather than a sentence that opens
+ * with a word SQL also uses.
+ *
+ * `readSqlStatement` is deliberately cheap because its callers gate it on something
+ * else first — a `cur.execute(...)`, a Dapper method, a `pool.query(...)`. A caller that
+ * has no such gate needs this one instead: scanning every string argument in a .NET repo
+ * for SQL found `"Update the settings for this shop"`, read `update … the` as a write,
+ * and put a table called **the** in somebody's data model.
+ *
+ * The test is a shape rather than a word. Every statement that names a table pairs its
+ * verb with a second keyword — `SELECT … FROM`, `INSERT INTO`, `UPDATE … SET`,
+ * `DELETE FROM` — and English prose does not.
+ */
+const SQL_SHAPES = [
+  /\bselect\b[\s\S]*\bfrom\b/i,
+  /\binsert\s+into\b/i,
+  /\breplace\s+into\b/i,
+  /\bupdate\b[\s\S]*\bset\b/i,
+  /\bdelete\s+from\b/i,
+  /\b(create|alter|drop)\s+(temp\s+|temporary\s+|unique\s+)?(table|index|view|trigger)\b/i,
+  /\btruncate\s+table\b/i,
+  /\bwith\b[\s\S]*\bas\s*\(/i,
+];
+
+export function isSqlStatement(text: string): boolean {
+  // Long enough to be a statement. `"SELECT"` on its own is a word in a UI string far
+  // more often than it is a query somebody meant to run.
+  if (text.length < 12) return false;
+  return SQL_SHAPES.some((shape) => shape.test(text));
+}
+
+/**
+ * A statement with its own comments taken out.
+ *
+ * People explain their SQL inside their SQL, and the explanation is English. A real
+ * upsert in a .NET connector reads
+ *
+ *     INSERT INTO employees (…) VALUES (…)
+ *     ON CONFLICT(user_id) DO UPDATE SET
+ *         -- Kept rather than cleared when absent: these two come from the
+ *         -- shop's database, and a sync that ran while it was unreachable…
+ *
+ * and `from` is looked for before `into`, so the table came out as **the**. Every
+ * language that reads SQL went through this function, so every one of them could name a
+ * table out of somebody's prose.
+ */
+function withoutComments(sql: string): string {
+  return sql.replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/--[^\n\r]*/g, ' ');
 }
 
 /**
