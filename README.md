@@ -461,6 +461,17 @@ somebody's schema.
 style guide says public members are PascalCase, so the convention would even be right
 most of the time — and it would be a convention presented as a fact.
 
+**Desktop apps get their screens.** A WinUI or WPF window is instantiated by its markup
+and by nothing else, so App Atlas reads the `.xaml` beside the code: `x:Class` is the
+class the markup completes, a `Window` or a `Page` is a screen somebody opens, and
+`Click="OnRefresh"` is a method the framework calls that nothing in the code ever
+mentions. Without them a desktop app looks like a library with no way in — which is what
+`<OutputType>WinExe</OutputType>` also settles, for a console app with no markup at all.
+
+**What links two C# files** is a `using` plus a type this file actually names. Nothing in
+C# names a file, so the pair is the evidence, and the link is marked `likely` because a
+name matched a name.
+
 The grammar is a WebAssembly file this repo ships, from [tree-sitter-c-sharp][ts-cs] and
 checked against a recorded hash. No .NET SDK is involved and none is needed. The same
 trade Go makes applies here and is stated in the same places: a grammar, no resolution,

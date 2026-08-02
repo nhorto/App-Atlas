@@ -55,6 +55,8 @@ export interface ProjectInfo {
    * `ViewFileTreeStore.ts` is imported by two `.vue` files and by nothing else.
    */
   unreadFormats: { ext: string; count: number }[];
+  /** Repo-relative paths of markup files `markup.ts` will read. */
+  markupFiles: string[];
   warnings: string[];
 }
 
@@ -83,15 +85,21 @@ export const SOURCE_GLOB = '**/*.{ts,tsx,mts,cts,js,jsx,mjs,cjs,py,pyi,ipynb,go,
  * missing. Deliberately not `.mdx`, which is prose that occasionally imports a component
  * rather than code that always does.
  *
- * `.xaml` and `.razor` are here for the same reason and matter more than they look. A
- * WinUI or WPF window is *instantiated by its markup* and by nothing else — the C# half
- * is a partial class the markup names — so on a desktop app the import graph is missing
- * precisely the edges that would show its screens being used. Measured on a real
- * 203-file WinUI app, "78 files are imported by nothing else" was that gap and not a
- * finding, which is the answer `unimported.ts` refuses to give when it knows it is
- * looking through a hole.
+ * `.razor` and `.cshtml` are here for the same reason and matter more than they look. A
+ * Razor component declares its own route with `@page` and names the services it injects,
+ * so a Blazor app's whole URL surface and half its links live in files nothing here
+ * opens. `.xaml` used to be on this list and has come off it — see `MARKUP_GLOB`.
  */
-const UNREAD_FORMAT_GLOB = '**/*.{vue,svelte,astro,xaml,razor,cshtml}';
+const UNREAD_FORMAT_GLOB = '**/*.{vue,svelte,astro,razor,cshtml}';
+
+/**
+ * Markup that App Atlas reads (#103).
+ *
+ * Not a source file — no analyzer parses it, and it has no functions of its own — but
+ * not an unread one either: `markup.ts` takes the four attributes worth having out of
+ * it. Kept apart from `SOURCE_GLOB` so no language plugin ever tries to claim one.
+ */
+const MARKUP_GLOB = '**/*.xaml';
 
 export const DEFAULT_IGNORES = [
   '**/node_modules/**',
@@ -202,6 +210,17 @@ export async function discoverProject(rootInput: string, options: DiscoverOption
   });
   const unreadFormats = countByExtension(applyGitignore(root, components.map(toPosix)));
 
+  const markup = await fg(MARKUP_GLOB, {
+    cwd: root,
+    absolute: false,
+    dot: false,
+    onlyFiles: true,
+    followSymbolicLinks: false,
+    suppressErrors: true,
+    ignore: [...DEFAULT_IGNORES, ...(options.extraIgnores ?? [])],
+  });
+  const markupFiles = applyGitignore(root, markup.map(toPosix)).sort();
+
   let relPaths = filtered;
   if (relPaths.length > options.maxFiles) {
     warnings.push(
@@ -227,6 +246,7 @@ export async function discoverProject(rootInput: string, options: DiscoverOption
     workspaces,
     ignored: options.extraIgnores ?? [],
     unreadFormats,
+    markupFiles,
     warnings,
   };
 }

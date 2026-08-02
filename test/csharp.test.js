@@ -246,6 +246,49 @@ test('an unrecognised host is named, never guessed into a brand', () => {
 });
 
 // ---------------------------------------------------------------------------
+// What links two C# files (#96)
+// ---------------------------------------------------------------------------
+
+test('a using plus a name this file actually mentions is a link', () => {
+  // Nothing in a C# file names a file. A `using` names a namespace, so the link is the
+  // pair of facts: the namespace was imported, and a type it declares is used here.
+  // Without this a 203-file app had zero import edges and no answer at all to "where do
+  // I start reading".
+  const links = result.atlas.edges
+    .filter((edge) => edge.kind === 'imports')
+    .map((edge) => `${edge.fromId.replace('file:', '')} -> ${edge.toId.replace('file:', '')}`)
+    .sort();
+  assert.deepEqual(links, [
+    'src/Shop.Api/Controllers/OrdersController.cs -> src/Shop.Api/Data/ShopContext.cs',
+    'src/Shop.Api/Program.cs -> src/Shop.Api/Auth.cs',
+    'src/Shop.Api/Program.cs -> src/Shop.Api/Data/ShopContext.cs',
+  ]);
+});
+
+test('a using does not link to everything in the namespace', () => {
+  // `Shop.Api.Services` holds `PricingClient` and `Reporting`, and no file that imports
+  // that namespace names either of them. Linking to a namespace's whole contents would
+  // turn one line into an arrow per file and call every one a dependency.
+  const targets = result.atlas.edges.filter((edge) => edge.kind === 'imports').map((edge) => edge.toId);
+  for (const unused of ['PricingClient.cs', 'Reporting.cs']) {
+    assert.ok(!targets.some((id) => id.endsWith(unused)), `${unused} is imported by nothing that names it`);
+  }
+});
+
+test('a namespace link is likely, because a name matched a name', () => {
+  // A Go import path resolves to a folder and is `certain`. This is a namespace and a
+  // name, which is the same grade of evidence as everything else in this tier.
+  for (const edge of result.atlas.edges.filter((e) => e.kind === 'imports')) {
+    assert.equal(edge.confidence, 'likely');
+  }
+});
+
+test('where to look first has something to say', () => {
+  const start = new AtlasGraph(result.atlas).getOverview().whereToLookFirst;
+  assert.ok(start.length > 0, 'a C# project with links in it can be ranked');
+});
+
+// ---------------------------------------------------------------------------
 // Visibility, which C# writes as a keyword
 // ---------------------------------------------------------------------------
 

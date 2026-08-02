@@ -129,6 +129,10 @@ export const csharpDialect: Dialect = {
   extensions: ['.cs'],
   skip: GENERATED,
 
+  // A namespace, not a folder. `Glance.App.Dashboard` may be spread over three
+  // directories and a directory may hold two namespaces; the file says which it is in.
+  scope: 'namespace',
+
   /**
    * Never called for anything that matters — `finish` replaces every answer below with
    * the keyword the file actually wrote. It stays honest rather than optimistic for the

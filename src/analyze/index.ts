@@ -33,6 +33,7 @@ import { buildSchemaNodes, buildSqlSchemaNodes } from './schema.js';
 import type { FileSlice, LanguagePlugin } from './plugin.js';
 import { discoverProject } from './project.js';
 import { markRetiredFiles } from './retired.js';
+import { buildMarkupNodes, readMarkupFiles } from './markup.js';
 import type { ProjectInfo } from './project.js';
 import { genericPlugins } from './generic/index.js';
 import { pythonPlugin } from './py/index.js';
@@ -76,7 +77,7 @@ import { dominantZone } from './zones.js';
  * and `PROMPT_VERSION` does not move either, because the question asked of the model is
  * unchanged — only what we do with the answer afterwards.
  */
-export const TOOL_VERSION = '0.16.0';
+export const TOOL_VERSION = '0.17.0';
 
 export interface AnalyzeOptions {
   maxFiles?: number;
@@ -235,6 +236,15 @@ export async function analyzeProject(rootDir: string, options: AnalyzeOptions = 
   appendAll(nodes, sqlSchema.nodes);
   appendAll(edges, sqlSchema.edges);
 
+  // --- the markup a desktop app is made of ---
+  // After the language plugins, because every edge it draws points at something they
+  // declared — the `partial class` half of a window, and the methods its buttons call
+  // (#103). Before the boundary is built, because a screen is a door.
+  const markup = buildMarkupNodes(readMarkupFiles(project.root, project.markupFiles), nodes);
+  appendAll(nodes, markup.nodes);
+  appendAll(edges, markup.edges);
+  appendAll(findings, markup.findings);
+
   // --- boundaries ---
   // Merged once across every language, so a Python route and a TypeScript route land
   // in the same list rather than two parallel ones.
@@ -270,6 +280,7 @@ export async function analyzeProject(rootDir: string, options: AnalyzeOptions = 
   const treeFiles = project.files.map((f) => ({ relPath: f.relPath, zone: f.zone as Zone }));
   if (schema.filePath) treeFiles.push({ relPath: schema.filePath, zone: 'data' });
   for (const relPath of sqlSchema.filePaths) treeFiles.push({ relPath, zone: 'data' });
+  for (const relPath of markup.filePaths) treeFiles.push({ relPath, zone: 'ui' });
   const { modules, parentForFile } = buildModuleTree(treeFiles, appId);
   appendAll(nodes, modules);
 

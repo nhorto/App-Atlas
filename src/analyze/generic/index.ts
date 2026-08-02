@@ -59,6 +59,8 @@ export async function analyzeGeneric(language: GenericLanguage, ctx: PluginConte
   const stale: SourceFileRef[] = [];
   let reused = 0;
   const declarations = new Map<string, Map<string, Declaration>>();
+  /** Repo-relative path → the namespace that file declares. Every file, cached or not. */
+  const namespaceOf = new Map<string, string>();
   for (const ref of files) {
     const slice = ctx.reuse?.get(ref.relPath);
     if (!slice) {
@@ -69,6 +71,11 @@ export async function analyzeGeneric(language: GenericLanguage, ctx: PluginConte
     for (const edge of slice.edges) edges.set(edge.id, edge);
     appendAll(boundaries, slice.boundaries);
     declarations.set(ref.relPath, declaredIn(slice.nodes));
+    // Recovered from the file node rather than from the IR, because on this path the
+    // file was never parsed. Written there by `buildNodes` for exactly this reason.
+    const cached = slice.nodes.find((node) => node.kind === 'file');
+    const namespace = cached?.meta?.namespace;
+    if (typeof namespace === 'string') namespaceOf.set(ref.relPath, namespace);
     reused++;
   }
 
@@ -101,7 +108,9 @@ export async function analyzeGeneric(language: GenericLanguage, ctx: PluginConte
   for (const ref of stale) {
     const text = readText(ref.absPath);
     texts.set(ref.relPath, text);
-    parsed.set(ref.relPath, await extractFile(dialect, ref.relPath, text));
+    const read = await extractFile(dialect, ref.relPath, text);
+    parsed.set(ref.relPath, read);
+    if (read.namespace) namespaceOf.set(ref.relPath, read.namespace);
     ctx.onProgress?.(`Reading ${dialect.displayName}`, ++done, stale.length);
   }
   timings.extract = Date.now() - t1;
@@ -129,13 +138,20 @@ export async function analyzeGeneric(language: GenericLanguage, ctx: PluginConte
   // Built from every file of this language in the project, not only the ones just read,
   // so an edited file can still point at an untouched one.
   const index = buildPackageIndex(files.map((f) => f.relPath));
+  const byNamespace = new Map<string, string[]>();
+  for (const [relPath, namespace] of namespaceOf) {
+    const list = byNamespace.get(namespace);
+    if (list) list.push(relPath);
+    else byNamespace.set(namespace, [relPath]);
+  }
+  const scope: NameScope = { kind: dialect.scope ?? 'directory', byNamespace, namespaceOf };
 
   const t3 = Date.now();
   for (const ref of stale) {
     const file = parsed.get(ref.relPath);
     const bucket = buckets.get(ref.relPath);
     if (!file?.ok || !bucket) continue;
-    linkFile(ref, file, index, declarations, bucket.edges, project.signals.goModule);
+    linkFile(ref, file, index, declarations, bucket.edges, project.signals.goModule, scope);
 
     if (options.detectBoundaries && language.boundaries) {
       const fileId = makeFileId(ref.relPath);
@@ -435,6 +451,28 @@ export function resolveImport(index: PackageIndex, module: string, ownModule: st
   return null;
 }
 
+/** How a language decides which declarations one file can see without qualification. */
+export interface NameScope {
+  kind: 'directory' | 'namespace';
+  /** namespace → the files declaring it. Empty for a directory-scoped language. */
+  byNamespace: Map<string, string[]>;
+  namespaceOf: Map<string, string>;
+}
+
+/**
+ * Every namespace whose names a file sees without writing them out.
+ *
+ * Its own, and every namespace enclosing it. C# resolves a bare name by walking outward
+ * — a file in `Glance.App.Dashboard` reaches a type in `Glance.App` with nothing written
+ * down at all — and that is a rule of the language rather than a guess about the code.
+ */
+function enclosingNamespaces(namespace: string): string[] {
+  const parts = namespace.split('.');
+  const out: string[] = [];
+  for (let take = parts.length; take > 0; take--) out.push(parts.slice(0, take).join('.'));
+  return out;
+}
+
 function linkFile(
   ref: SourceFileRef,
   file: GenericFile,
@@ -442,24 +480,58 @@ function linkFile(
   declarations: Map<string, Map<string, Declaration>>,
   edges: Map<string, AtlasEdge>,
   ownModule: string | null,
+  scope: NameScope,
 ): void {
   const fileId = makeFileId(ref.relPath);
   const here = ref.relPath.includes('/') ? ref.relPath.slice(0, ref.relPath.lastIndexOf('/')) : '';
+  const byNamespace = scope.kind === 'namespace';
 
-  /** Local package name → the directory it stands for. */
+  /** The files a group name stands for — a directory's contents, or a namespace's. */
+  const filesOf = (group: string): string[] =>
+    byNamespace ? (scope.byNamespace.get(group) ?? []) : (index.byDir.get(group) ?? []);
+
+  /**
+   * Names this file mentions anywhere, so an import can link to what it actually reached.
+   *
+   * A `using` names a namespace and a namespace can hold forty files. Linking to all
+   * forty would turn one line into forty arrows and call every one of them a dependency;
+   * linking to the ones declaring a type this file names is both smaller and truer, and
+   * it is built from facts the reference pass already computed (#96).
+   */
+  const mentioned = new Set<string>(file.uses);
+  for (const def of file.defs) {
+    for (const name of def.uses) mentioned.add(name);
+    for (const dotted of [...def.qualifiedUses, ...file.qualifiedUses]) {
+      for (const part of dotted.split('.')) mentioned.add(part);
+    }
+  }
+
+  /** Local package name → the group it stands for. */
   const packageDirs = new Map<string, string>();
   for (const imp of file.imports) {
-    const dir = resolveImport(index, imp.module, ownModule);
-    if (dir === null) continue;
-    packageDirs.set(imp.local, dir);
-    for (const target of index.byDir.get(dir) ?? []) {
+    const group = byNamespace
+      ? scope.byNamespace.has(imp.module)
+        ? imp.module
+        : null
+      : resolveImport(index, imp.module, ownModule);
+    if (group === null) continue;
+    packageDirs.set(imp.local, group);
+    for (const target of filesOf(group)) {
       if (target === ref.relPath) continue;
+      // Directory scope keeps every file in the package: an import path names the
+      // folder, so the whole folder is what was imported. A namespace is not a unit
+      // anybody imports, so the edge has to earn itself one file at a time.
+      if (byNamespace && ![...(declarations.get(target)?.keys() ?? [])].some((name) => mentioned.has(name))) {
+        continue;
+      }
       addEdge(edges, {
         kind: 'imports',
         fromId: fileId,
         toId: makeFileId(target),
         weight: 1,
-        confidence: 'certain',
+        // A resolved path is a fact; a namespace plus a name that matched a name is the
+        // same grade of evidence as everything else in this tier.
+        confidence: byNamespace ? 'likely' : 'certain',
         meta: { symbols: [imp.module] },
       });
     }
@@ -467,14 +539,17 @@ function linkFile(
 
   /** Every declaration visible without qualification: this file's package. */
   const inPackage = new Map<string, Declaration>();
-  for (const sibling of index.byDir.get(here) ?? []) {
-    for (const [name, decl] of declarations.get(sibling) ?? []) {
-      if (!inPackage.has(name)) inPackage.set(name, decl);
+  const visible = byNamespace ? enclosingNamespaces(scope.namespaceOf.get(ref.relPath) ?? '') : [here];
+  for (const group of visible) {
+    for (const sibling of filesOf(group)) {
+      for (const [name, decl] of declarations.get(sibling) ?? []) {
+        if (!inPackage.has(name)) inPackage.set(name, decl);
+      }
     }
   }
 
-  const declarationsIn = (dir: string, name: string): Declaration | null => {
-    for (const file of index.byDir.get(dir) ?? []) {
+  const declarationsIn = (group: string, name: string): Declaration | null => {
+    for (const file of filesOf(group)) {
       const found = declarations.get(file)?.get(name);
       if (found) return found;
     }
