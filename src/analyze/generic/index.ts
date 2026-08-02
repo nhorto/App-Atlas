@@ -240,7 +240,7 @@ function buildNodes(ref: SourceFileRef, file: GenericFile, text: string, ownModu
     if (def.kind !== 'type') continue;
     const id = unique(makeTypeId(ref.relPath, def.name), used);
     typeIds.set(def.name, id);
-    nodes.push(typeNode(id, fileId, ref, def));
+    nodes.push(typeNode(id, fileId, ref, def, file.language));
     typeCount++;
     if (def.exported) exported.push(def.name);
   }
@@ -250,7 +250,7 @@ function buildNodes(ref: SourceFileRef, file: GenericFile, text: string, ownModu
     const qualified = def.owner ? `${def.owner}.${def.name}` : def.name;
     const id = unique(makeFunctionId(ref.relPath, qualified), used);
     const parentId = (def.owner && typeIds.get(def.owner)) || fileId;
-    nodes.push(functionNode(id, parentId, ref, def));
+    nodes.push(functionNode(id, parentId, ref, def, file.language));
     functionCount++;
     if (def.exported && !def.owner) exported.push(def.name);
   }
@@ -261,7 +261,7 @@ function buildNodes(ref: SourceFileRef, file: GenericFile, text: string, ownModu
   return nodes;
 }
 
-function functionNode(id: string, parentId: string, ref: SourceFileRef, def: GDef): AtlasNode {
+function functionNode(id: string, parentId: string, ref: SourceFileRef, def: GDef, language: string): AtlasNode {
   const params: ParamInfo[] = def.params.map((p) => ({
     name: p.name,
     type: p.type || 'any',
@@ -278,7 +278,7 @@ function functionNode(id: string, parentId: string, ref: SourceFileRef, def: GDe
     name: def.name,
     label: null,
     parentId,
-    language: 'go',
+    language,
     path: ref.relPath,
     startLine: def.line,
     endLine: def.endLine,
@@ -304,7 +304,7 @@ function functionNode(id: string, parentId: string, ref: SourceFileRef, def: GDe
   };
 }
 
-function typeNode(id: string, fileId: string, ref: SourceFileRef, def: GDef): AtlasNode {
+function typeNode(id: string, fileId: string, ref: SourceFileRef, def: GDef, language: string): AtlasNode {
   const fields: FieldInfo[] = def.fields.map((f) => ({ name: f.name, type: f.type || 'any', optional: false }));
   const doc = firstSentence(def.doc);
 
@@ -314,7 +314,7 @@ function typeNode(id: string, fileId: string, ref: SourceFileRef, def: GDef): At
     name: def.name,
     label: null,
     parentId: fileId,
-    language: 'go',
+    language,
     path: ref.relPath,
     startLine: def.line,
     endLine: def.endLine,
