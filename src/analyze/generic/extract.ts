@@ -349,7 +349,17 @@ function argsOf(list: Node | undefined, dialect: Dialect): GValue[] {
  * docstring from a note about the code twenty lines up.
  */
 function attachDocs(file: GenericFile, dialect: Dialect, root: Node): void {
-  const comments = root.namedChildren.filter((n): n is Node => Boolean(n) && n.type === dialect.comment);
+  // Every comment in the file, not only the ones at the top level.
+  //
+  // Go declares everything at the top level, so the cheaper walk was right for as long
+  // as Go was the only language here. C# puts every method and property *inside* a class
+  // body, and its `/// <summary>` with them — which read top-level-only meant 0 of 1161
+  // functions in a real 209-file desktop app had a description, in a repo where 151
+  // files are documented.
+  //
+  // Collecting more comments cannot attach a wrong one: a doc is still only the block
+  // whose last line sits immediately above the declaration.
+  const comments = root.descendantsOfType(dialect.comment);
   if (comments.length === 0 && file.defs.length === 0) return;
 
   const byEndLine = new Map<number, Node>();

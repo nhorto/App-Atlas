@@ -1,0 +1,5 @@
+<Window x:Class="Glance.App.DashboardWindow">
+  <!-- The markup instantiates the class below. Nothing in C# ever imports it, which is
+       why an import graph without this file in view cannot say what is unused. -->
+  <Grid />
+</Window>

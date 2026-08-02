@@ -158,6 +158,13 @@ export interface ProjectSignals {
   /** `Microsoft.NET.Sdk.Web` and friends — how a .NET project says what kind it is. */
   dotnetSdks: Set<string>;
   /**
+   * `<OutputType>` values across the repo's project files — `Exe`, `WinExe`, `Library`.
+   *
+   * The .NET equivalent of a `bin` entry in package.json: a line somebody wrote saying
+   * this project is a thing you run rather than a thing you reference.
+   */
+  dotnetOutputTypes: Set<string>;
+  /**
    * Whether the project declares itself something other code installs and imports —
    * a `setup.py`, a `[project]` table, a `package.json` with an entry point.
    *
@@ -551,9 +558,14 @@ function readGoModule(root: string): { goModules: Set<string>; goModule: string 
  * is read too: central package management moves every version, and often every id, out
  * of the project files entirely.
  */
-function readDotnetProjects(root: string): { dotnetPackages: Set<string>; dotnetSdks: Set<string> } {
+function readDotnetProjects(root: string): {
+  dotnetPackages: Set<string>;
+  dotnetSdks: Set<string>;
+  dotnetOutputTypes: Set<string>;
+} {
   const packages = new Set<string>();
   const sdks = new Set<string>();
+  const outputTypes = new Set<string>();
 
   const files: string[] = [];
   const scan = (dir: string, depth: number) => {
@@ -585,9 +597,12 @@ function readDotnetProjects(root: string): { dotnetPackages: Set<string>; dotnet
       // `Sdk="Microsoft.NET.Sdk.Web"`, and occasionally a version after a slash.
       for (const sdk of match[1].split(';')) sdks.add(sdk.split('/')[0].trim());
     }
+    for (const match of text.matchAll(/<OutputType>\s*([^<\s]+)\s*<\/OutputType>/gi)) {
+      outputTypes.add(match[1].trim());
+    }
   }
 
-  return { dotnetPackages: packages, dotnetSdks: sdks };
+  return { dotnetPackages: packages, dotnetSdks: sdks, dotnetOutputTypes: outputTypes };
 }
 
 /** PyPI treats `-`, `_` and `.` as the same character, and so does everyone else. */

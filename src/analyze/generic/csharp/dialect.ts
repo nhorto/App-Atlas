@@ -181,6 +181,36 @@ export const csharpDialect: Dialect = {
   },
 
   /**
+   * Strips the comment markers, and then the XML.
+   *
+   * C# documents itself in markup — `/// <summary>Renders the chart.</summary>` — and
+   * the tags are furniture, not words. Left in, the first thing a reader sees on a card
+   * is `<summary>`, which is the source rather than the answer, and the same sentence
+   * reaches `ATLAS.md` and every prompt built from it.
+   *
+   * `<c>` and `<see cref="X"/>` name a thing and are unwrapped to that name; everything
+   * else is dropped and its content kept. A stray `<` in prose is left alone, because a
+   * doc comment that says "if x < y" is not markup and should not lose half its sentence.
+   */
+  uncomment(text) {
+    const withoutMarkers = text
+      .replace(/^\s*\/\/\/?/, '')
+      .replace(/^\s*\/\*+/, '')
+      .replace(/\*+\/\s*$/, '')
+      .replace(/^\s*\*\s?/, '');
+    return withoutMarkers
+      // `<see cref="Foo.Bar"/>` and `<paramref name="x"/>` mean the name they carry.
+      .replace(/<(?:see|seealso)\b[^>]*?(?:cref|href)\s*=\s*"([^"]*)"[^>]*\/?>/gi, (_, ref: string) =>
+        String(ref).replace(/^[A-Z]:/, ''),
+      )
+      .replace(/<(?:paramref|typeparamref)\b[^>]*?name\s*=\s*"([^"]*)"[^>]*\/?>/gi, '$1')
+      // Every other doc tag is structure. Drop the tag, keep what it wrapped.
+      .replace(/<\/?(?:summary|remarks|para|c|code|b|i|list|item|term|description|value|returns|example|exception|typeparam|param|inheritdoc|br)\b[^>]*>/gi, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+  },
+
+  /**
    * Reads the visibility keyword off every declaration and corrects what the query
    * recorded.
    *
@@ -190,6 +220,19 @@ export const csharpDialect: Dialect = {
    * name and a type rather than as a range.
    */
   finish(file: GenericFile, root: Node): void {
+    // A C# file has no header comment, because C# has no such convention: the `///`
+    // block goes on the *type*, and the file is named after it. One public type per file
+    // is how the language is written and how every .NET style guide says to write it, so
+    // for a file that declares exactly one type, that type's description is the file's.
+    //
+    // Without this a 209-file desktop app with 151 documented files reported **0%**
+    // documented, and offered to teach the agent to write the docs it had already
+    // written.
+    if (!file.doc) {
+      const types = file.defs.filter((def) => def.kind === 'type');
+      if (types.length === 1 && types[0]?.doc) file.doc = types[0].doc;
+    }
+
     const declarations = declarationsByStart(root);
 
     for (const def of file.defs) {

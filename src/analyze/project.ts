@@ -82,8 +82,16 @@ export const SOURCE_GLOB = '**/*.{ts,tsx,mts,cts,js,jsx,mjs,cjs,py,pyi,ipynb,go,
  * parse one. Counted so that anything reading the import graph knows how much of it is
  * missing. Deliberately not `.mdx`, which is prose that occasionally imports a component
  * rather than code that always does.
+ *
+ * `.xaml` and `.razor` are here for the same reason and matter more than they look. A
+ * WinUI or WPF window is *instantiated by its markup* and by nothing else — the C# half
+ * is a partial class the markup names — so on a desktop app the import graph is missing
+ * precisely the edges that would show its screens being used. Measured on a real
+ * 203-file WinUI app, "78 files are imported by nothing else" was that gap and not a
+ * finding, which is the answer `unimported.ts` refuses to give when it knows it is
+ * looking through a hole.
  */
-const UNREAD_FORMAT_GLOB = '**/*.{vue,svelte,astro}';
+const UNREAD_FORMAT_GLOB = '**/*.{vue,svelte,astro,xaml,razor,cshtml}';
 
 export const DEFAULT_IGNORES = [
   '**/node_modules/**',
