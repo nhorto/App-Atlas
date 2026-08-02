@@ -461,12 +461,63 @@ export interface SqlStatement {
  * evidence for it.
  */
 export function readSqlStatement(sql: string, complete = true): SqlStatement | null {
-  const text = sql.trim();
+  const text = withoutComments(sql).trim();
   const verb = /^\(?\s*(select|insert|update|delete|replace|with|create|drop|alter|truncate)\b/i.exec(text);
   if (!verb) return null;
   const kind = verb[1].toLowerCase();
   const reads = kind === 'select' || kind === 'with';
   return { operation: reads ? 'read' : 'write', table: complete ? tableInStatement(text) : null };
+}
+
+/**
+ * Whether a string is convincingly a SQL statement, rather than a sentence that opens
+ * with a word SQL also uses.
+ *
+ * `readSqlStatement` is deliberately cheap because its callers gate it on something
+ * else first — a `cur.execute(...)`, a Dapper method, a `pool.query(...)`. A caller that
+ * has no such gate needs this one instead: scanning every string argument in a .NET repo
+ * for SQL found `"Update the settings for this shop"`, read `update … the` as a write,
+ * and put a table called **the** in somebody's data model.
+ *
+ * The test is a shape rather than a word. Every statement that names a table pairs its
+ * verb with a second keyword — `SELECT … FROM`, `INSERT INTO`, `UPDATE … SET`,
+ * `DELETE FROM` — and English prose does not.
+ */
+const SQL_SHAPES = [
+  /\bselect\b[\s\S]*\bfrom\b/i,
+  /\binsert\s+into\b/i,
+  /\breplace\s+into\b/i,
+  /\bupdate\b[\s\S]*\bset\b/i,
+  /\bdelete\s+from\b/i,
+  /\b(create|alter|drop)\s+(temp\s+|temporary\s+|unique\s+)?(table|index|view|trigger)\b/i,
+  /\btruncate\s+table\b/i,
+  /\bwith\b[\s\S]*\bas\s*\(/i,
+];
+
+export function isSqlStatement(text: string): boolean {
+  // Long enough to be a statement. `"SELECT"` on its own is a word in a UI string far
+  // more often than it is a query somebody meant to run.
+  if (text.length < 12) return false;
+  return SQL_SHAPES.some((shape) => shape.test(text));
+}
+
+/**
+ * A statement with its own comments taken out.
+ *
+ * People explain their SQL inside their SQL, and the explanation is English. A real
+ * upsert in a .NET connector reads
+ *
+ *     INSERT INTO employees (…) VALUES (…)
+ *     ON CONFLICT(user_id) DO UPDATE SET
+ *         -- Kept rather than cleared when absent: these two come from the
+ *         -- shop's database, and a sync that ran while it was unreachable…
+ *
+ * and `from` is looked for before `into`, so the table came out as **the**. Every
+ * language that reads SQL went through this function, so every one of them could name a
+ * table out of somebody's prose.
+ */
+function withoutComments(sql: string): string {
+  return sql.replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/--[^\n\r]*/g, ' ');
 }
 
 /**
@@ -488,6 +539,68 @@ function tableInStatement(sql: string): string | null {
 
 /** Schemas every database has, where `public.orders` and `orders` are the same table. */
 const DEFAULT_SCHEMAS = new Set(['public', 'dbo', 'main']);
+
+// ---------------------------------------------------------------------------
+// The database's own bookkeeping
+// ---------------------------------------------------------------------------
+
+/** Schemas a database keeps for itself. Set by the vendors, not by any repo. */
+const CATALOG_SCHEMAS = new Set([
+  'information_schema', // ANSI, and honoured by MySQL, Postgres and SQL Server alike
+  'pg_catalog',
+  'pg_toast',
+  'performance_schema', // MySQL
+  'mysql', // MySQL's own grant tables
+  'sys', // SQL Server's catalog, and MySQL's helper views over performance_schema
+  'sysibm', // Db2
+]);
+
+/**
+ * Oracle's dictionary views, spelled out rather than matched by prefix.
+ *
+ * Oracle writes these unqualified, so the only rule available is the shape of the
+ * name — and `ALL_`/`USER_`/`DBA_` as a prefix rule would take `user_sessions` and
+ * `user_accounts` out of the data model of every app that has one. Dropping a real
+ * table is a worse failure than keeping a catalog row, so this is a list.
+ */
+const ORACLE_DICTIONARY = new Set([
+  'all_tables', 'all_tab_columns', 'all_objects', 'all_constraints', 'all_indexes',
+  'all_views', 'all_triggers', 'all_sequences', 'all_users',
+  'user_tables', 'user_tab_columns', 'user_objects', 'user_constraints',
+  'user_indexes', 'user_views', 'user_triggers', 'user_sequences',
+  'dba_tables', 'dba_tab_columns', 'dba_objects', 'dba_constraints', 'dba_indexes',
+  'dba_views', 'dba_users', 'dba_triggers',
+]);
+
+/**
+ * The catalog a table name belongs to, or `null` for an ordinary table.
+ *
+ * A schema-dump script really does read `information_schema.columns`, and reading it
+ * as a database read is correct. Filing it under the app's *data model* is not: it
+ * lands in the same list as `estimates` and `productioncontroljobs`, and a reader
+ * learning the domain from that page comes away believing there is a table called
+ * `information_schema.routines`.
+ *
+ * So the read still counts and the table does not — see `collectStores`, which keeps
+ * these apart rather than dropping them, because "this app inspects its own schema"
+ * is a true and different fact about a codebase.
+ */
+export function catalogSchema(table: string): string | null {
+  const parts = table.split('.').map((part) => unquote(part.trim()));
+  const name = parts[parts.length - 1];
+  if (!name) return null;
+
+  if (parts.length > 1 && CATALOG_SCHEMAS.has(parts[parts.length - 2])) {
+    return parts[parts.length - 2];
+  }
+  // Postgres and SQLite both reserve their prefix for the system, so no app owns one
+  // of these — which matters because `pg_stat_activity` and `sqlite_master` are
+  // almost always written without their schema.
+  if (name.startsWith('pg_')) return 'pg_catalog';
+  if (name.startsWith('sqlite_')) return 'sqlite';
+  if (ORACLE_DICTIONARY.has(name)) return 'oracle dictionary';
+  return null;
+}
 
 /**
  * `public.orders` → `orders`, but `information_schema.columns` keeps its schema.

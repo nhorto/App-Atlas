@@ -350,6 +350,12 @@ export interface StoreMeta {
   client: string;
   /** Tables/collections/buckets touched, where they could be read statically. */
   tables: string[];
+  /**
+   * Catalog rows the code queries — `information_schema.columns`, `sqlite_master`.
+   * Kept apart from `tables` because the database describing itself is not the app's
+   * data model, and reported as what it is: this app inspects its own schema (#86).
+   */
+  catalogTables: string[];
   reads: number;
   writes: number;
   sites: CodeSite[];
@@ -589,6 +595,13 @@ export interface AtlasMeta {
    * unknown rather than assuming the happy answer.
    */
   coverage?: AtlasCoverage;
+  /**
+   * How many files describe themselves as retired — by the folder they sit in, or by
+   * their own opening line (#87). They stay in the graph and out of the prose, and
+   * this number is how the page says so instead of quietly shrinking. Absent on
+   * atlases written before this existed, which means nobody looked.
+   */
+  retiredFiles?: number;
   /**
    * What moved since the previous run. Optional because atlases written before this
    * existed are still readable — and because a missing value means "nobody asked",

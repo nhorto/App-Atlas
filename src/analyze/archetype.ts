@@ -111,9 +111,18 @@ export function classifyArchetype({ project, nodes }: ArchetypeInput): Archetype
 
   // Otherwise: does this run, or does it get imported? A designed command line settles
   // it outright.
-  if (doors.declaredCli > 0 || bin.length > 0) {
+  // `<OutputType>WinExe</OutputType>` is .NET's `bin` field: a line somebody wrote
+  // saying this project builds a thing you run rather than a thing you reference.
+  //
+  // Without it, a 209-file WinUI desktop app came out as "Code other code imports" and
+  // was handed a public API of 154 of its own window classes — because it exports names
+  // and answers no URL, which is every desktop application ever written.
+  const executables = [...(project.signals.dotnetOutputTypes ?? [])].filter((type) => /^(Win)?Exe$/i.test(type));
+
+  if (doors.declaredCli > 0 || bin.length > 0 || executables.length > 0) {
     if (doors.declaredCli > 0) because.push(plural(doors.declaredCli, 'command-line entry point'));
     if (bin.length > 0) because.push(`${plural(bin.length, 'command')} in package.json`);
+    if (executables.length > 0) because.push('a .NET project that builds an executable');
     if (doors.scheduled > 0) because.push(plural(doors.scheduled, 'scheduled job'));
     because.push('nothing answers a URL');
     return verdict('pipeline', 'Something you run', because);

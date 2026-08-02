@@ -21,6 +21,15 @@ export const GRAMMARS = [
     license: 'MIT',
     sha256: '9504573f352b20be7f2f1911754d710622aedc15afff16d5ed8fb5645681aee7',
   },
+  {
+    id: 'csharp',
+    package: 'tree-sitter-c-sharp',
+    version: '0.23.5',
+    /** The grammar spells it with an underscore; the file we keep is named for our id. */
+    entry: 'tree-sitter-c_sharp.wasm',
+    license: 'MIT',
+    sha256: '6f69e1cae44e1c32c1eccc170dc5a9778fb94ff716f71113fe1f8c4299aa2f40',
+  },
 ];
 
 /** Where a fetched grammar lands, repo-relative. */

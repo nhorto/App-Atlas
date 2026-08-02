@@ -67,7 +67,12 @@ change, however useful the feature sounds.
      [`extract.ts`](src/analyze/generic/extract.ts); most of it can be cribbed from the
      grammar's own upstream highlight queries.
   3. A dialect the size of [`go/dialect.ts`](src/analyze/generic/go/dialect.ts) — what
-     "exported" means, which node types are strings, how a comment is written.
+     "exported" means, which node types are strings, how a comment is written. When a
+     fact about the language cannot be expressed as a capture at all, the dialect's
+     `finish` hook runs over the parsed file last and can correct it:
+     [`csharp/dialect.ts`](src/analyze/generic/csharp/dialect.ts) uses it to read
+     `public` off the declaration, because C# writes visibility as a keyword and the
+     capture vocabulary has no name for one.
   4. A row in [`languages.ts`](src/analyze/generic/languages.ts).
 
   That is enough for files, functions, types, imports, doc comments and reference

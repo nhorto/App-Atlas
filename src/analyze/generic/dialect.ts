@@ -47,8 +47,31 @@ export interface Dialect {
   qualified: Set<string>;
   /** Node types for a function written inline. */
   functions: Set<string>;
+  /**
+   * Node types for "this expression is a call".
+   *
+   * Go and JavaScript both spell it with the word `call` in it, which is why this was
+   * once a substring test in `extract.ts`. C# spells it `invocation_expression` — the
+   * same idea, no shared letters — and a binding whose right-hand side is a call it
+   * cannot recognise comes out with an empty callee, which is how `var admin =
+   * app.MapGroup("/admin")` stopped being a group and every route under it lost its
+   * prefix.
+   */
+  calls: Set<string>;
   /** Node type for a comment. */
   comment: string;
+
+  /**
+   * What groups declarations into one namespace a file can see without qualification.
+   *
+   * `directory` is Go's answer and the default: a package *is* a folder, an import path
+   * *is* a folder, and everything the linker needs is on disk. C# is the other kind. A
+   * `using` names a namespace, a namespace spans any number of folders, and nothing in
+   * a C# file names a file — so a directory-based linker resolves nothing at all
+   * between two C# files, which is what left a 203-file app with zero import edges and
+   * an empty "where to look first" (#96).
+   */
+  scope?: 'directory' | 'namespace';
 
   /** Turns a string literal node's text into the string it denotes. */
   unquote(text: string): string;
@@ -82,6 +105,7 @@ export const DEFAULTS = {
   identifiers: new Set(['identifier', 'type_identifier', 'field_identifier']),
   qualified: new Set(['selector_expression', 'qualified_type', 'attribute']),
   functions: new Set(['func_literal', 'function_literal', 'lambda', 'closure', 'arrow_function']),
+  calls: new Set(['call_expression', 'call', 'invocation_expression', 'method_invocation']),
   comment: 'comment',
 
   /** Drops one layer of quotes or backticks, and nothing else. */

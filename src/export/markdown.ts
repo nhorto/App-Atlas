@@ -25,6 +25,7 @@ import { grammarTier } from '../model/tiers.js';
 import type { UnimportedView } from '../model/unimported.js';
 import { buildTypeView } from '../model/typeview.js';
 import { findPersonalData } from '../model/personal.js';
+import { isRetired } from '../analyze/retired.js';
 import type { SummarySource } from '../model/types.js';
 
 const MAX_ROUTES = 40;
@@ -159,11 +160,7 @@ export function renderAtlasMarkdown(graph: AtlasGraph, options: MarkdownOptions 
   if (others.length > 0) {
     out.push('## Also runs on its own');
     out.push('');
-    for (const node of others) {
-      const meta = node.meta as { endpointKind?: string; route?: string; schedule?: string; sites?: { path: string }[] };
-      const when = meta.schedule ? ` (${meta.schedule})` : '';
-      out.push(`- **${meta.endpointKind}** ${meta.route ?? node.name}${when} — \`${meta.sites?.[0]?.path ?? '—'}\``);
-    }
+    appendOtherDoors(out, others);
     out.push('');
   }
 
@@ -174,6 +171,18 @@ export function renderAtlasMarkdown(graph: AtlasGraph, options: MarkdownOptions 
     for (const store of insights.stores) {
       const tables = store.tables.length > 0 ? ` — tables: ${store.tables.join(', ')}` : '';
       out.push(`- **${store.name}** (${store.client}) — ${store.reads} reads, ${store.writes} writes${tables}`);
+      // The catalog rows are kept out of the data model, and saying so is the point:
+      // a repo that reads `information_schema` has schema-dump or verification scripts
+      // in it, which is a real fact about the codebase and a different one from
+      // "this app has a table" (#86).
+      if (store.catalogTables.length > 0) {
+        const n = store.catalogTables.length;
+        out.push(
+          `  - Also queries the database's own catalog (${n} ${plural(n, 'row')}: ` +
+            `${store.catalogTables.slice(0, 4).join(', ')}${n > 4 ? ', …' : ''}) — ` +
+            `this app inspects its own schema. Not counted as part of the data model.`,
+        );
+      }
     }
     for (const service of insights.services) {
       out.push(
@@ -203,6 +212,8 @@ export function renderAtlasMarkdown(graph: AtlasGraph, options: MarkdownOptions 
   // answers the same question those do — what is this made of — and because an agent
   // about to change this code needs it before it starts, not after.
   appendUnimported(out, overview.unimported);
+
+  appendRetired(out, graph);
 
   // --- shapes ---
   const types = buildTypeView(graph, MAX_TYPES);
@@ -400,6 +411,117 @@ function appendPorts(out: string[], graph: AtlasGraph): void {
  * opposite reading of the one `appendUnimported` needs — "no personal data found" is a
  * claim this method is nowhere near strong enough to make.
  */
+/**
+ * How many sibling scripts in one folder before they become a shape (#88).
+ *
+ * Set well above a handful on purpose. A repo with six commands wants all six listed —
+ * folding there would hide something a reader would rather have seen — and it is
+ * `scripts/verify/` with thirty near-identical entries that costs them the page.
+ */
+const CLI_FOLD_AT = 8;
+
+/** How many of a folded folder's scripts to name, so the group is still checkable. */
+const CLI_SHOWN_WHEN_FOLDED = 3;
+
+interface DoorMeta {
+  endpointKind?: string;
+  route?: string;
+  schedule?: string;
+  sites?: { path: string }[];
+}
+
+/**
+ * Webhooks, crons and command-line entry points, written so a hundred of them still read.
+ *
+ * Two things were wrong with the flat list. A CLI door printed its own path on both
+ * sides of the em-dash — `scripts/_audit/census.py — scripts/_audit/census.py` — because
+ * it had no name and the path stood in for one; that is fixed upstream, and here the
+ * path is simply not repeated when the command already contains it. And a folder of
+ * thirty verification scripts is a shape, not a list: the reader wants "31 scripts under
+ * scripts/verify, run one at a time", not thirty lines between them and the rest of the
+ * page.
+ */
+function appendOtherDoors(out: string[], doors: { name: string; meta: Record<string, unknown> }[]): void {
+  const line = (door: { name: string; meta: Record<string, unknown> }): string => {
+    const meta = door.meta as DoorMeta;
+    const when = meta.schedule ? ` (${meta.schedule})` : '';
+    const label = meta.route ?? door.name;
+    const path = meta.sites?.[0]?.path;
+    // The path once. It is already inside `python scripts/…`, and a row that says the
+    // same thing twice teaches the reader that the row says nothing.
+    const where = path && !label.includes(path) ? ` — \`${path}\`` : '';
+    return `- **${meta.endpointKind}** ${label}${when}${where}`;
+  };
+
+  const cli = doors.filter((door) => (door.meta as DoorMeta).endpointKind === 'cli');
+  const rest = doors.filter((door) => (door.meta as DoorMeta).endpointKind !== 'cli');
+  for (const door of rest) out.push(line(door));
+
+  // Grouped by the folder they sit in, which is the boundary the rest of the page is
+  // already drawn on and the one a reader would use to go and look.
+  const byFolder = new Map<string, typeof cli>();
+  for (const door of cli) {
+    const path = (door.meta as DoorMeta).sites?.[0]?.path ?? '';
+    const folder = path.includes('/') ? path.slice(0, path.lastIndexOf('/')) : '';
+    const list = byFolder.get(folder);
+    if (list) list.push(door);
+    else byFolder.set(folder, [door]);
+  }
+
+  for (const [folder, group] of [...byFolder].sort((a, b) => a[0].localeCompare(b[0]))) {
+    if (group.length < CLI_FOLD_AT) {
+      for (const door of group) out.push(line(door));
+      continue;
+    }
+    out.push(
+      `- **cli** ${group.length} scripts under \`${folder || 'the repo root'}\`, run one at a time — ` +
+        `${group
+          .slice(0, CLI_SHOWN_WHEN_FOLDED)
+          .map((door) => `\`${((door.meta as DoorMeta).sites?.[0]?.path ?? '').split('/').pop()}\``)
+          .join(', ')}, and ${group.length - CLI_SHOWN_WHEN_FOLDED} more`,
+    );
+  }
+}
+
+/** How many retired files to name before the rest become a count. */
+const MAX_RETIRED = 12;
+
+/**
+ * The lanes that are still on disk and say they are finished (#87).
+ *
+ * This section is the price of leaving them out of the prose and out of "where to look
+ * first". Hiding is fine; hiding silently is not — and the reverse failure is real too:
+ * a backstop somebody still runs by hand would vanish from a map that simply dropped
+ * it. So the file is named, the words that disqualified it are quoted, and the reader
+ * decides.
+ */
+function appendRetired(out: string[], graph: AtlasGraph): void {
+  const retired = graph
+    .allNodes()
+    .filter((node) => node.kind === 'file' && isRetired(node))
+    .sort((a, b) => (a.path ?? '').localeCompare(b.path ?? ''));
+  if (retired.length === 0) return;
+
+  out.push('## Code that says it is retired');
+  out.push('');
+  out.push(
+    `${retired.length} ${plural(retired.length, 'file')} ${retired.length === 1 ? 'describes itself' : 'describe themselves'} ` +
+      `as deprecated, archived or parked — by the folder ${retired.length === 1 ? 'it sits' : 'they sit'} in, or by ` +
+      `${retired.length === 1 ? 'its' : 'their'} own opening line. ` +
+      `Still in the map and still on disk; left out of the architecture description and out of what to read first.`,
+  );
+  out.push('');
+  for (const node of retired.slice(0, MAX_RETIRED)) {
+    const info = (node.meta as { retired?: { evidence: string; says: string } }).retired;
+    const because = info?.evidence === 'path' ? `in \`${info.says}/\`` : `says "${oneLine(info?.says ?? '')}"`;
+    out.push(`- \`${node.path}\` — ${because}`);
+  }
+  if (retired.length > MAX_RETIRED) {
+    out.push(`- …and ${retired.length - MAX_RETIRED} more.`);
+  }
+  out.push('');
+}
+
 function appendPersonalData(out: string[], graph: AtlasGraph): void {
   const report = findPersonalData(graph.allNodes(), graph.allEdges());
   // Nothing matched means no section. The heading promises findings, and printing it over

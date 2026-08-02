@@ -691,6 +691,11 @@ function factRows(node: AtlasNode): [string, string][] {
       rows.push(['Reads', String(meta.reads)]);
       rows.push(['Writes', String(meta.writes)]);
       if (meta.tables.length > 0) rows.push(['Tables', meta.tables.join(', ')]);
+      // Not folded into the row above: the database's own catalog is not this app's
+      // data model, and the panel is the one place with room to say which is which.
+      if (meta.catalogTables?.length) {
+        rows.push(['Inspects its own schema', meta.catalogTables.join(', ')]);
+      }
       break;
     }
     case 'zone':

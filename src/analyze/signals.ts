@@ -75,6 +75,14 @@ export interface EntryPoint {
   path: string;
   /** `main`, `bin`, `exports`, `scripts.build`, `project.scripts` — where it was found. */
   field: string;
+  /**
+   * The word somebody types to run it, when the manifest gives it one (#88).
+   *
+   * `[project.scripts] estimate = "pkg.cli:main"` and npm's `bin` both name a command;
+   * `main` and `exports` name a file nobody types. Absent means the file has no name of
+   * its own, and the command is the interpreter and the path.
+   */
+  command?: string;
 }
 
 /** One column of one table, as the schema declares it. */
@@ -139,6 +147,23 @@ export interface ProjectSignals {
   goModules: Set<string>;
   /** What this repo calls itself in `go.mod` — the prefix its own imports carry. */
   goModule: string | null;
+  /**
+   * Package ids every `.csproj` in the repo references, and the SDKs those projects
+   * declare. Kept apart from the npm, PyPI and Go sets for the same reason those three
+   * are kept apart: `Stripe` means one thing on NuGet and another on npm, and a name
+   * that switches on the wrong ecosystem's detector puts a box on the map that the code
+   * never asked for.
+   */
+  dotnetPackages: Set<string>;
+  /** `Microsoft.NET.Sdk.Web` and friends — how a .NET project says what kind it is. */
+  dotnetSdks: Set<string>;
+  /**
+   * `<OutputType>` values across the repo's project files — `Exe`, `WinExe`, `Library`.
+   *
+   * The .NET equivalent of a `bin` entry in package.json: a line somebody wrote saying
+   * this project is a thing you run rather than a thing you reference.
+   */
+  dotnetOutputTypes: Set<string>;
   /**
    * Whether the project declares itself something other code installs and imports —
    * a `setup.py`, a `[project]` table, a `package.json` with an entry point.
@@ -219,6 +244,7 @@ export function readSignals(
     sqlSchema: readSqlSchema(root, prisma !== null),
     ...readPythonPackages(root),
     ...readGoModule(root),
+    ...readDotnetProjects(root),
     ...readEnvExample(root),
     declaresAPackage: readsAsAPackage(root, packageJson),
     entryPoints: readEntryPoints(root, packageJson),
@@ -242,21 +268,25 @@ const ENTRY_FIELDS = ['main', 'module', 'browser', 'types', 'typings', 'source']
  */
 function readEntryPoints(root: string, pkg: Record<string, unknown> | null): EntryPoint[] {
   const out: EntryPoint[] = [];
-  const add = (value: unknown, field: string) => {
+  const add = (value: unknown, field: string, command?: string) => {
     if (typeof value !== 'string' || value === '') return;
     const normalized = value.replace(/^\.\//, '');
-    if (!out.some((entry) => entry.path === normalized && entry.field === field)) {
-      out.push({ path: normalized, field });
+    const existing = out.find((entry) => entry.path === normalized && entry.field === field);
+    if (existing) {
+      existing.command ??= command;
+      return;
     }
+    out.push(command ? { path: normalized, field, command } : { path: normalized, field });
   };
 
   if (pkg) {
     for (const field of ENTRY_FIELDS) add(pkg[field], field);
 
+    // `bin` is the one npm field whose *key* is a word somebody types.
     const bin = pkg.bin;
-    if (typeof bin === 'string') add(bin, 'bin');
+    if (typeof bin === 'string') add(bin, 'bin', typeof pkg.name === 'string' ? pkg.name : undefined);
     else if (bin && typeof bin === 'object') {
-      for (const value of Object.values(bin as Record<string, unknown>)) add(value, 'bin');
+      for (const [name, value] of Object.entries(bin as Record<string, unknown>)) add(value, 'bin', name);
     }
 
     // An `exports` map nests conditions arbitrarily deep — `{".": {"import": {"types":
@@ -296,7 +326,8 @@ function readEntryPoints(root: string, pkg: Record<string, unknown> | null): Ent
       }
       if (!inScripts) continue;
       const target = /=\s*["']([A-Za-z0-9_.]+)\s*:/.exec(line);
-      if (target) add(`${target[1].split('.').join('/')}.py`, 'project.scripts');
+      const named = /^\s*([A-Za-z0-9_.-]+)\s*=/.exec(line);
+      if (target) add(`${target[1].split('.').join('/')}.py`, 'project.scripts', named?.[1]);
     }
   }
 
@@ -511,6 +542,67 @@ function readGoModule(root: string): { goModules: Set<string>; goModule: string 
   }
 
   return { goModules: modules, goModule: module };
+}
+
+/**
+ * What every `.csproj` in the repo references, and what kind of project each one is.
+ *
+ * Read with regular expressions rather than an XML parser, which is the same bargain
+ * `go.mod` and `pyproject.toml` are read on: two attributes out of a file whose full
+ * grammar would cost a dependency, and a missed reference costs a label rather than a
+ * wrong answer.
+ *
+ * Searched a few levels deep because a .NET solution puts each project in its own folder
+ * — `src/Api/Api.csproj`, `src/Worker/Worker.csproj` — and a repo root with nothing but a
+ * `.sln` in it is the normal shape rather than the exception. `Directory.Packages.props`
+ * is read too: central package management moves every version, and often every id, out
+ * of the project files entirely.
+ */
+function readDotnetProjects(root: string): {
+  dotnetPackages: Set<string>;
+  dotnetSdks: Set<string>;
+  dotnetOutputTypes: Set<string>;
+} {
+  const packages = new Set<string>();
+  const sdks = new Set<string>();
+  const outputTypes = new Set<string>();
+
+  const files: string[] = [];
+  const scan = (dir: string, depth: number) => {
+    if (depth > 3 || files.length > 200) return;
+    let entries: fs.Dirent[];
+    try {
+      entries = fs.readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const entry of entries) {
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) {
+        if (/^(node_modules|\.git|bin|obj|packages)$/i.test(entry.name)) continue;
+        scan(full, depth + 1);
+      } else if (/\.(cs|fs|vb)proj$/i.test(entry.name) || /^Directory\.(Packages|Build)\.props$/i.test(entry.name)) {
+        files.push(full);
+      }
+    }
+  };
+  scan(root, 0);
+
+  for (const file of files) {
+    const text = readText(file);
+    for (const match of text.matchAll(/<(?:PackageReference|PackageVersion|FrameworkReference)\s[^>]*Include\s*=\s*"([^"]+)"/gi)) {
+      packages.add(match[1]);
+    }
+    for (const match of text.matchAll(/<Project\s[^>]*Sdk\s*=\s*"([^"]+)"/gi)) {
+      // `Sdk="Microsoft.NET.Sdk.Web"`, and occasionally a version after a slash.
+      for (const sdk of match[1].split(';')) sdks.add(sdk.split('/')[0].trim());
+    }
+    for (const match of text.matchAll(/<OutputType>\s*([^<\s]+)\s*<\/OutputType>/gi)) {
+      outputTypes.add(match[1].trim());
+    }
+  }
+
+  return { dotnetPackages: packages, dotnetSdks: sdks, dotnetOutputTypes: outputTypes };
 }
 
 /** PyPI treats `-`, `_` and `.` as the same character, and so does everyone else. */

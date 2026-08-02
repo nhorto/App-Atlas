@@ -525,13 +525,18 @@ def prefix_of(keywords):
 
 
 def path_constants(tree):
-    """Module- and class-level assignments of a string that looks like a URL path.
+    """Module- and class-level assignments of a string naming a path or a whole address.
 
     `API_V1_STR: str = "/api/v1"` on a settings class is how the most-used FastAPI
     template in existence writes its API prefix, and nothing else in the repo spells the
-    address out. Only values starting with `/` are collected: the point is to answer
-    "what path is this name", so a name that was never a path is noise, and noise here
-    turns into a collision that makes a real prefix unreadable."""
+    address out. `STATUS_FEED = "https://…"` at the top of a module is the same habit
+    pointed outwards, and a `requests.get(STATUS_FEED)` further down is an outside
+    service the map used to miss entirely (#89).
+
+    Nothing else is collected. A name that was never an address is noise, and noise here
+    turns into a collision that makes a real prefix unreadable — which is also why the
+    two kinds stay distinguishable by their own text, and why each consumer filters for
+    the one it wants rather than trusting the list to hold only its own kind."""
     out = []
 
     def take(stmt):
@@ -539,8 +544,11 @@ def path_constants(tree):
         if len(targets) != 1 or not isinstance(targets[0], ast.Name) or stmt.value is None:
             return
         value = value_of(stmt.value)
-        if value.get("t") == "str" and not value.get("partial") and value["v"].startswith("/"):
-            out.append({"name": targets[0].id, "value": value["v"], "line": stmt.lineno})
+        if value.get("t") != "str" or value.get("partial"):
+            return
+        text = value["v"]
+        if text.startswith("/") or text[:8].lower().startswith(("http://", "https://")):
+            out.append({"name": targets[0].id, "value": text, "line": stmt.lineno})
 
     for stmt in tree.body:
         if isinstance(stmt, (ast.Assign, ast.AnnAssign)):

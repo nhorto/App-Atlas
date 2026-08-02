@@ -35,12 +35,14 @@ import {
   makeStoreId,
   makeTypeId,
 } from '../../model/types.js';
+import { catalogSchema } from '../sql.js';
+import { isParked } from '../retired.js';
 import { hashParts } from '../../util/hash.js';
 import { isWorker } from '../wrangler.js';
 import { classifyZone } from '../zones.js';
 import { isCatchAllMatcher, matcherMatches } from './auth.js';
 import { composeRoutePrefixes, moduleOf, mountGraph, routerKey as moduleRouterKey } from './mounts.js';
-import { guardThroughHops, reachableGuards, servicesThroughWrappers } from './reach.js';
+import { guardThroughHops, reachableGuards, servicesThroughUrlHelpers, servicesThroughWrappers } from './reach.js';
 import type { ReachedGuard } from './reach.js';
 import type {
   AuthAliasFinding,
@@ -190,6 +192,15 @@ function describesTheApp(): (finding: BoundaryFinding) => boolean {
     switch (finding.type) {
       case 'service':
       case 'store':
+      // The halves of a two-file answer are filtered here too, or the filter is one a
+      // service can walk around: pair a `url-through` in a fixture with a `url-sink`
+      // beside it and the company comes out the other side, after this ran. Found by
+      // regenerating this repo's own map, where `test/fixtures/updatecheck` turned into
+      // an outside host App Atlas was said to call.
+      case 'url-sink':
+      case 'url-through':
+      case 'wrapper-call':
+      case 'client-export':
         return !isTest(finding.site.path);
       case 'router-build':
       case 'router-mount':
@@ -209,27 +220,6 @@ function pathOf(finding: BoundaryFinding): string {
   return '';
 }
 
-/**
- * Directories whose name says the code in them was set aside.
- *
- * Deliberately short, and deliberately not `archive`, `old`, `legacy` or `backup` on
- * their own: a Next.js app can ship `app/api/archive/route.ts`, and dropping a real
- * door because a folder is called `archive` is a far worse error than counting a dead
- * one. What is left is either explicitly parked or wears the underscore that says
- * "not part of the build" — and both are unambiguous enough to act on.
- *
- * powerfab-dashboard reported 111 ways in, among them every retired script in
- * `scripts/categories/_archive/` and `parked/`. A door somebody cannot use is not a
- * way in, and a count that includes them is a count nobody can act on.
- */
-const PARKED_SEGMENT =
-  /^(_archive[d]?|_old|_deprecated|_legacy|_unused|_bak|_backup|_graveyard|_parked|_attic|parked|graveyard|attic|deprecated)$/i;
-
-function isParked(path: string): boolean {
-  if (!path) return false;
-  return path.split('/').some((segment) => PARKED_SEGMENT.test(segment));
-}
-
 export function buildBoundaryGraph(raw: BuildInput): BoundaryGraph {
   const nodes: AtlasNode[] = [];
   const edges: AtlasEdge[] = [];
@@ -243,7 +233,7 @@ export function buildBoundaryGraph(raw: BuildInput): BoundaryGraph {
   // on the same box as the direct ones rather than a second one beside it.
   const input: BuildInput = {
     ...raw,
-    findings: [...shipped, ...servicesThroughWrappers(shipped)],
+    findings: [...shipped, ...servicesThroughWrappers(shipped), ...servicesThroughUrlHelpers(shipped)],
   };
 
   const endpoints = collectEndpoints(input);
@@ -260,6 +250,8 @@ export function buildBoundaryGraph(raw: BuildInput): BoundaryGraph {
     input.findings.filter((f): f is RouterGuardFinding => f.type === 'router-guard'),
     input.findings.filter((f): f is PathGuardFinding => f.type === 'path-guard'),
   );
+
+  nameCommandLineDoors(endpoints, input);
 
   const envEndpoint = collectEnv(input);
   if (envEndpoint) endpoints.set(envEndpoint.id, envEndpoint);
@@ -359,6 +351,49 @@ function routerKey(path: string, varName: string): string {
 function byModule(key: string): string {
   const cut = key.indexOf('\0');
   return moduleRouterKey(moduleOf(key.slice(0, cut)), key.slice(cut + 1));
+}
+
+/** How each language starts a file from a shell. */
+const RUNNERS: Record<string, string> = {
+  py: 'python',
+  mjs: 'node',
+  cjs: 'node',
+  js: 'node',
+  ts: 'node',
+  sh: 'sh',
+  rb: 'ruby',
+};
+
+/**
+ * Gives a command-line door the command somebody types (#88).
+ *
+ * An HTTP door reads `POST /api/users` — the address, then the file that answers at it.
+ * A CLI door read `scripts/_audit/census.py — scripts/_audit/census.py`: the same string
+ * twice, once for a name it never had. On the repo that turned this up, 103 of 105 ways
+ * in were that line, and a section that says nothing a hundred times is a section a
+ * reader learns to skip.
+ *
+ * A manifest that names the command wins outright — `[project.scripts] estimate =
+ * "pkg.cli:main"` means the thing you type is `estimate`, and the path is an
+ * implementation detail. Otherwise the command is the interpreter and the path, which
+ * is a fact and is also exactly what a person would type. Nothing is invented: a file
+ * whose extension has no known runner keeps its path and the renderer prints it once.
+ */
+function nameCommandLineDoors(endpoints: Map<string, MergedEndpoint>, input: BuildInput): void {
+  const entries = input.signals.entryPoints ?? [];
+  for (const endpoint of endpoints.values()) {
+    if (endpoint.meta.endpointKind !== 'cli' || endpoint.meta.route) continue;
+    const path = endpoint.meta.sites[0]?.path;
+    if (!path) continue;
+
+    const declared = entries.find((entry) => entry.command && entry.path === path);
+    if (declared?.command) {
+      endpoint.meta.route = declared.command;
+      continue;
+    }
+    const runner = RUNNERS[path.split('.').pop()?.toLowerCase() ?? ''];
+    if (runner) endpoint.meta.route = `${runner} ${path}`;
+  }
 }
 
 function collectEndpoints(input: BuildInput): Map<string, MergedEndpoint> {
@@ -1231,7 +1266,15 @@ function addWorkerBindings(input: BuildInput, merged: Map<string, MergedStore>):
         readSites: [],
         writeSites: [],
         tableSites: new Map(),
-        meta: { storeKind: shape.storeKind, client: shape.client, tables: [], reads: 0, writes: 0, sites: [site] },
+        meta: {
+          storeKind: shape.storeKind,
+          client: shape.client,
+          tables: [],
+          catalogTables: [],
+          reads: 0,
+          writes: 0,
+          sites: [site],
+        },
       });
     }
   }
@@ -1242,6 +1285,16 @@ function collectStores(input: BuildInput): Map<string, MergedStore> {
 
   const noteTable = (store: MergedStore, table: string | null, site: CodeSite) => {
     if (!table) return;
+    // The database's own catalog is not the app's data model (#86). The read is real
+    // and stays counted — it is the *table* that does not belong beside `estimates`,
+    // so it moves to a list of its own rather than disappearing.
+    const catalog = catalogSchema(table);
+    if (catalog) {
+      if (!store.meta.catalogTables.some((known) => known.toLowerCase() === table.toLowerCase())) {
+        store.meta.catalogTables.push(table);
+      }
+      return;
+    }
     // `session.get(Item, id)` names the model and the migration beside it names the
     // table, so one table arrives spelled two ways. SQL identifiers do not distinguish
     // them either, and counting both turns two tables into four.
@@ -1281,6 +1334,7 @@ function collectStores(input: BuildInput): Map<string, MergedStore> {
         storeKind: finding.storeKind,
         client: finding.client,
         tables: [],
+        catalogTables: [],
         reads: finding.operation === 'read' ? 1 : 0,
         writes: finding.operation === 'write' ? 1 : 0,
         sites: [finding.site],
@@ -1301,7 +1355,10 @@ function collectStores(input: BuildInput): Map<string, MergedStore> {
     }
   }
 
-  for (const store of merged.values()) store.meta.tables.sort();
+  for (const store of merged.values()) {
+    store.meta.tables.sort();
+    store.meta.catalogTables.sort();
+  }
   return merged;
 }
 
@@ -1353,6 +1410,9 @@ function nameTheAnonymousDatabase(merged: Map<string, MergedStore>): void {
     appendAll(target.writeSites, store.writeSites);
     for (const table of store.meta.tables) {
       if (!target.meta.tables.includes(table)) target.meta.tables.push(table);
+    }
+    for (const table of store.meta.catalogTables) {
+      if (!target.meta.catalogTables.includes(table)) target.meta.catalogTables.push(table);
     }
     for (const [table, sites] of store.tableSites) {
       const existing = target.tableSites.get(table);

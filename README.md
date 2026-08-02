@@ -33,7 +33,7 @@ Two rules keep it trustworthy:
 ## Status
 
 **Milestones M1–M5 are complete.** The CLI, the TypeScript/JavaScript analyzer, the
-Python analyzer, the atlas data model, incremental re-analysis, watch mode, the
+Python and Go and C# analyzers, the atlas data model, incremental re-analysis, watch mode, the
 drill-down architecture map, the boundary view, the security badges, the plain-English
 explanations, the type explorer, guided walkthroughs, monorepo scopes and the
 `ATLAS.md` export all work on real repositories. See [the roadmap](#roadmap) and
@@ -424,6 +424,61 @@ so a name is matched rather than resolved and every link between files says **li
 
 [ts-go]: https://github.com/tree-sitter/tree-sitter-go
 
+## C#, at the same tier
+
+```bash
+app-atlas ~/code/my-dotnet-api
+```
+
+A .NET service gets its files, its namespaces, its classes, interfaces, records and
+structs with their properties, its methods under the types they hang off, and its `///`
+doc comments read verbatim — and its boundary, in both of the styles ASP.NET Core is
+written in.
+
+**Controllers.** `[Route("api/v1/[controller]")]` on the class and `[HttpGet("{id}")]`
+on the action are two halves of one address; App Atlas puts them back together, token
+substitution included, so the map shows `GET /api/v1/orders/{id}` — the URL a customer
+types, not the two fragments it was written as.
+
+**Minimal APIs.** `app.MapGet("/health", …)`, and `app.MapGroup("/admin")` prefixes
+composed through however many levels a versioned API nests them.
+
+**Locks, in the direction that matters.** `[Authorize]` on a controller locks every
+action under it, and `[AllowAnonymous]` on one action unlocks that one — which is how
+nearly every .NET app writes its sign-in route. Reading the class attribute alone would
+badge the one deliberately-open door as protected, and being wrong in that direction is
+the worst thing this tool can do. `.RequireAuthorization()` chained onto a minimal-API
+route counts the same way.
+
+**Data.** A `DbContext` writes its tables down as `DbSet<T>` properties, which is a
+better list than any query could give you: every table the app knows about, declared, in
+one place. Dapper's tables are read out of the SQL. `Where` and `Select` are LINQ before
+they are Entity Framework, so they only count as a query when written on a `DbSet` the
+file actually declared — a map that reports a `List<string>` as a table has invented
+somebody's schema.
+
+**Visibility is read from the word `public`,** not from the capital letter. Every C#
+style guide says public members are PascalCase, so the convention would even be right
+most of the time — and it would be a convention presented as a fact.
+
+**Desktop apps get their screens.** A WinUI or WPF window is instantiated by its markup
+and by nothing else, so App Atlas reads the `.xaml` beside the code: `x:Class` is the
+class the markup completes, a `Window` or a `Page` is a screen somebody opens, and
+`Click="OnRefresh"` is a method the framework calls that nothing in the code ever
+mentions. Without them a desktop app looks like a library with no way in — which is what
+`<OutputType>WinExe</OutputType>` also settles, for a console app with no markup at all.
+
+**What links two C# files** is a `using` plus a type this file actually names. Nothing in
+C# names a file, so the pair is the evidence, and the link is marked `likely` because a
+name matched a name.
+
+The grammar is a WebAssembly file this repo ships, from [tree-sitter-c-sharp][ts-cs] and
+checked against a recorded hash. No .NET SDK is involved and none is needed. The same
+trade Go makes applies here and is stated in the same places: a grammar, no resolution,
+links between files marked **likely**.
+
+[ts-cs]: https://github.com/tree-sitter/tree-sitter-c-sharp
+
 ## Monorepos get one map each
 
 ```
@@ -543,7 +598,8 @@ CLI ──▶ Analyzer ──▶ Atlas model ──▶ Enricher ──▶ Local 
 After v1.0, in rough order of how useful they'd be: a "what changed" overlay that shows
 what your agent just did to the map, with the new routes glowing; cross-package tracing
 so a monorepo can follow a call from the web app through a shared package into the API;
-and more language plugins. (The MCP server that used to head this list shipped — see
+and more language plugins — the seam is proven now that Go and C# both go through it.
+(The MCP server that used to head this list shipped — see
 [Or let it ask questions](#or-let-it-ask-questions).)
 
 ## Development

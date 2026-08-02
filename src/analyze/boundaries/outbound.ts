@@ -10,11 +10,13 @@
  * makes precision matter: a hostname we cannot resolve is reported as a hostname, not
  * guessed into a brand.
  */
-import { Node } from 'ts-morph';
-import type { CallExpression, NewExpression } from 'ts-morph';
+import { Node, SyntaxKind } from 'ts-morph';
+import type { ArrowFunction, CallExpression, FunctionExpression, NewExpression } from 'ts-morph';
 import type { ServiceCategory } from '../../model/types.js';
 import { isInternalHost, serviceForHost, serviceForPackage } from './catalog.js';
-import { dottedName, literalPrefix, literalString, objectProp } from './ast.js';
+import { constantString, dottedName, literalString, objectProp } from './ast.js';
+
+type FunctionLikeDeclaration = ArrowFunction | FunctionExpression;
 import type { BoundaryDetector, DetectorContext } from './types.js';
 
 /** Clients whose calls are HTTP requests with a URL in the first argument. */
@@ -58,11 +60,13 @@ export const outboundDetector: BoundaryDetector = {
   enabled: () => true,
   visit(node, ctx) {
     if (Node.isNewExpression(node)) return sdkConstruction(node, ctx);
+    if (Node.isFunctionDeclaration(node) || Node.isVariableDeclaration(node)) return urlSink(node, ctx);
     if (!Node.isCallExpression(node)) return;
     const dotted = dottedName(node.getExpression());
     if (!dotted) return;
 
     if (httpCall(node, dotted, ctx)) return;
+    if (urlThroughHelper(node, dotted, ctx)) return;
     sdkCall(node, dotted, ctx);
   },
 };
@@ -83,11 +87,11 @@ function httpCall(call: CallExpression, dotted: string, ctx: DetectorContext): b
 
   // `axios.create({ baseURL })` names the service for every call made through it.
   if (last === 'create') {
-    const base = literalPrefix(objectProp(call.getArguments()[0], 'baseURL'));
+    const base = constantString(objectProp(call.getArguments()[0], 'baseURL'));
     return base ? report(base, call, ctx, false) : false;
   }
 
-  const url = literalPrefix(call.getArguments()[0]);
+  const url = constantString(call.getArguments()[0]);
   if (!url) return false;
 
   const writes = WRITE_VERBS.has(last) || methodOfOptions(call) !== null;
@@ -120,12 +124,110 @@ function report(url: string, call: CallExpression, ctx: DetectorContext, writes:
   return true;
 }
 
-function hostOf(url: string): string | null {
+export function hostOf(url: string): string | null {
   const match = /^https?:\/\/([^/?#]+)/i.exec(url.trim());
   if (!match) return null;
   const authority = match[1].split('@').pop() ?? '';
   const host = authority.split(':')[0].toLowerCase();
   return host.length > 0 ? host : null;
+}
+
+// ---------------------------------------------------------------------------
+// A URL that reaches the call one hop away (#89)
+// ---------------------------------------------------------------------------
+
+/**
+ * `export async function fetchFeedVersion(url) { await fetch(url) }`.
+ *
+ * The console that turned this up keeps every request in one small module and passes
+ * the address in, which is ordinary and good practice, and left the map reporting
+ * **0 outside services** for an app that phones home on every launch. What is recorded
+ * here is only "a request goes out through this parameter" — where it goes is the call
+ * site's to say.
+ */
+function urlSink(node: Node, ctx: DetectorContext): void {
+  const fn = Node.isFunctionDeclaration(node) ? node : functionOf(node);
+  if (!fn) return;
+  const exportName = exportedFunctionName(node);
+  if (!exportName) return;
+
+  const params = fn.getParameters().map((param) => param.getName());
+  if (params.length === 0) return;
+
+  for (const call of fn.getDescendantsOfKind(SyntaxKind.CallExpression)) {
+    const dotted = dottedName(call.getExpression());
+    if (!dotted) continue;
+    const parts = dotted.split('.');
+    const last = parts[parts.length - 1];
+    if (!HTTP_CLIENTS.has(parts[0]) || !(parts.length === 1 || HTTP_VERBS.has(last) || last === 'fetch')) continue;
+
+    // The argument has to be the parameter itself. A URL the helper builds out of one
+    // is a different claim, and one this cannot check.
+    const arg = call.getArguments()[0];
+    if (!arg || !Node.isIdentifier(arg)) continue;
+    const paramIndex = params.indexOf(arg.getText());
+    if (paramIndex < 0) continue;
+
+    ctx.emit({
+      type: 'url-sink',
+      exportName,
+      paramIndex,
+      writes: WRITE_VERBS.has(last) || methodOfOptions(call) !== null,
+      site: ctx.site(call, dotted),
+    });
+    return;
+  }
+}
+
+/** The function behind `export const ping = async (url) => …`. */
+function functionOf(node: Node): FunctionLikeDeclaration | null {
+  if (!Node.isVariableDeclaration(node)) return null;
+  const initializer = node.getInitializer();
+  if (!initializer) return null;
+  if (Node.isArrowFunction(initializer) || Node.isFunctionExpression(initializer)) return initializer;
+  return null;
+}
+
+/** The name the module exports this function under, or null when it keeps it. */
+function exportedFunctionName(node: Node): string | null {
+  if (Node.isFunctionDeclaration(node)) {
+    return node.isExported() ? (node.getName() ?? 'default') : null;
+  }
+  if (Node.isVariableDeclaration(node)) {
+    return node.getVariableStatement()?.isExported() ? node.getName() : null;
+  }
+  return null;
+}
+
+/**
+ * `fetchFeedVersion(EXPECTED.feedLatest)` — a call into this repo carrying an address.
+ *
+ * Written down as a question, not an answer. Whether anything is sent depends on what
+ * the other module does with it, and `writeFileSync(path, "https://crates.io/")` is a
+ * licence notice being generated rather than a company this app depends on.
+ */
+function urlThroughHelper(call: CallExpression, dotted: string, ctx: DetectorContext): boolean {
+  // A helper is called by its bare name. `client.get(url)` is somebody's HTTP client
+  // and is handled above or not at all.
+  if (dotted.includes('.')) return false;
+  const binding = ctx.imports.get(dotted);
+  if (!binding || binding.external) return false;
+
+  const args = call.getArguments();
+  for (let index = 0; index < args.length; index++) {
+    const url = constantString(args[index]);
+    if (!url || !/^https?:\/\//i.test(url)) continue;
+    ctx.emit({
+      type: 'url-through',
+      exportName: binding.imported,
+      module: binding.module,
+      argIndex: index,
+      url,
+      site: ctx.site(call, dotted),
+    });
+    return true;
+  }
+  return false;
 }
 
 // ---------------------------------------------------------------------------

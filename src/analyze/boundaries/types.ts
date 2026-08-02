@@ -198,6 +198,41 @@ export interface WrapperCallFinding {
 }
 
 /**
+ * A function that hands one of its parameters to an HTTP call (#89).
+ *
+ * Half an answer on its own — it says a request goes out through here and nothing
+ * about where. The call site holds the other half, and `reach.ts` pairs them.
+ */
+export interface UrlSinkFinding {
+  type: 'url-sink';
+  /** The name the module exports it under, so an alias at the call site still matches. */
+  exportName: string;
+  /** Which parameter reaches the call. */
+  paramIndex: number;
+  /** Whether the request sends data rather than only reading. */
+  writes: boolean;
+  site: CodeSite;
+}
+
+/**
+ * A call into this repo's own code carrying a URL we could resolve to a constant.
+ *
+ * Deliberately not a service on its own. A URL passed to `writeFileSync` is licence
+ * metadata being copied into a notices file, not a company this app talks to, and the
+ * difference between the two is whether the function on the other end makes a request.
+ */
+export interface UrlThroughFinding {
+  type: 'url-through';
+  exportName: string;
+  /** The specifier as written: `./net.mjs`, `@/lib/http`. */
+  module: string;
+  argIndex: number;
+  /** The resolved URL, in full — the host is taken from it after pairing. */
+  url: string;
+  site: CodeSite;
+}
+
+/**
  * A function that turns unauthenticated callers away — it raises or returns a 401 or
  * a 403. Naming it in a route's dependency list is how a whole family of Python
  * frameworks spells "you must be signed in".
@@ -416,6 +451,8 @@ export type BoundaryFinding =
   | WebhookFinding
   | ClientExportFinding
   | WrapperCallFinding
+  | UrlSinkFinding
+  | UrlThroughFinding
   | AuthCheckerFinding
   | AuthAliasFinding
   | RouterBuildFinding

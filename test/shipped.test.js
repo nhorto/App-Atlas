@@ -24,9 +24,18 @@ const services = py.nodes.filter((n) => n.kind === 'service');
 
 test('a call with a literal URL still names the company on the other end', () => {
   assert.deepEqual(
-    services.map((n) => n.name),
-    ['api.postmarkapp.com'],
+    services.map((n) => n.name).sort(),
+    ['api.postmarkapp.com', 'status.internal-vendor.example'],
   );
+});
+
+test('a module constant is the same fact as the literal it holds (#89)', () => {
+  // `STATUS_FEED = "https://…"` at the top, `requests.get(STATUS_FEED)` below. Same
+  // file only on the Python side — there is no import graph here to carry a constant
+  // across one, so a URL in `config.py` used from `client.py` is still not found.
+  const feed = services.find((n) => n.name === 'status.internal-vendor.example');
+  assert.ok(feed, `got ${services.map((n) => n.name).join(', ')}`);
+  assert.deepEqual(feed.meta.hosts, ['status.internal-vendor.example']);
 });
 
 test('a variable that receives an HTTP call is not a company', () => {

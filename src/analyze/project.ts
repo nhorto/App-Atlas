@@ -11,6 +11,7 @@ import fg from 'fast-glob';
 import ignoreFactory from 'ignore';
 import type { Zone } from '../model/types.js';
 import { goFrameworkFor } from './generic/go/frameworks.js';
+import { dotnetFrameworkFor, DOTNET_SDKS } from './generic/csharp/frameworks.js';
 import { extOf, relPosix, toPosix } from '../util/paths.js';
 import { readSignals } from './signals.js';
 import type { ProjectSignals } from './signals.js';
@@ -54,6 +55,8 @@ export interface ProjectInfo {
    * `ViewFileTreeStore.ts` is imported by two `.vue` files and by nothing else.
    */
   unreadFormats: { ext: string; count: number }[];
+  /** Repo-relative paths of markup files `markup.ts` will read. */
+  markupFiles: string[];
   warnings: string[];
 }
 
@@ -74,15 +77,29 @@ export interface DiscoverOptions {
   repoRoot?: string;
 }
 
-export const SOURCE_GLOB = '**/*.{ts,tsx,mts,cts,js,jsx,mjs,cjs,py,pyi,ipynb,go}';
+export const SOURCE_GLOB = '**/*.{ts,tsx,mts,cts,js,jsx,mjs,cjs,py,pyi,ipynb,go,cs}';
 
 /**
  * Single-file component formats: a module in every sense except that nothing here can
  * parse one. Counted so that anything reading the import graph knows how much of it is
  * missing. Deliberately not `.mdx`, which is prose that occasionally imports a component
  * rather than code that always does.
+ *
+ * `.razor` and `.cshtml` are here for the same reason and matter more than they look. A
+ * Razor component declares its own route with `@page` and names the services it injects,
+ * so a Blazor app's whole URL surface and half its links live in files nothing here
+ * opens. `.xaml` used to be on this list and has come off it — see `MARKUP_GLOB`.
  */
-const UNREAD_FORMAT_GLOB = '**/*.{vue,svelte,astro}';
+const UNREAD_FORMAT_GLOB = '**/*.{vue,svelte,astro,razor,cshtml}';
+
+/**
+ * Markup that App Atlas reads (#103).
+ *
+ * Not a source file — no analyzer parses it, and it has no functions of its own — but
+ * not an unread one either: `markup.ts` takes the four attributes worth having out of
+ * it. Kept apart from `SOURCE_GLOB` so no language plugin ever tries to claim one.
+ */
+const MARKUP_GLOB = '**/*.xaml';
 
 export const DEFAULT_IGNORES = [
   '**/node_modules/**',
@@ -193,6 +210,17 @@ export async function discoverProject(rootInput: string, options: DiscoverOption
   });
   const unreadFormats = countByExtension(applyGitignore(root, components.map(toPosix)));
 
+  const markup = await fg(MARKUP_GLOB, {
+    cwd: root,
+    absolute: false,
+    dot: false,
+    onlyFiles: true,
+    followSymbolicLinks: false,
+    suppressErrors: true,
+    ignore: [...DEFAULT_IGNORES, ...(options.extraIgnores ?? [])],
+  });
+  const markupFiles = applyGitignore(root, markup.map(toPosix)).sort();
+
   let relPaths = filtered;
   if (relPaths.length > options.maxFiles) {
     warnings.push(
@@ -218,6 +246,7 @@ export async function discoverProject(rootInput: string, options: DiscoverOption
     workspaces,
     ignored: options.extraIgnores ?? [],
     unreadFormats,
+    markupFiles,
     warnings,
   };
 }
@@ -295,6 +324,16 @@ function detectFrameworks(pkg: Record<string, unknown> | null, signals: ProjectS
   }
   for (const module of signals.goModules) {
     const label = goFrameworkFor(module);
+    if (label) out.add(label);
+  }
+  for (const id of signals.dotnetPackages) {
+    const label = dotnetFrameworkFor(id);
+    if (label) out.add(label);
+  }
+  // ASP.NET Core ships inside the runtime rather than as a dependency, so a web service
+  // can reference nothing at all and still be one. The SDK attribute is its declaration.
+  for (const sdk of signals.dotnetSdks) {
+    const label = DOTNET_SDKS[sdk];
     if (label) out.add(label);
   }
   return [...out].sort();

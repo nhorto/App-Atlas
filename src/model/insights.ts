@@ -67,6 +67,8 @@ export interface StoreInsight {
   client: string;
   storeKind: string;
   tables: string[];
+  /** Catalog rows queried — the app inspecting its own schema, not its data (#86). */
+  catalogTables: string[];
   reads: number;
   writes: number;
 }
@@ -290,6 +292,9 @@ function buildStores(graph: AtlasGraph): StoreInsight[] {
         client: meta.client,
         storeKind: meta.storeKind,
         tables: meta.tables,
+        // An atlas written before #86 has no such field; `?? []` keeps a cached one
+        // readable rather than making the whole run fail on a missing list.
+        catalogTables: meta.catalogTables ?? [],
         reads: meta.reads,
         writes: meta.writes,
       };

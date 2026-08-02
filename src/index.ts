@@ -6,7 +6,7 @@
  */
 export { analyzeProject, computeStats, TOOL_VERSION } from './analyze/index.js';
 export type { AnalyzeOptions, AnalyzeResult } from './analyze/index.js';
-export { enrichAtlas } from './enrich/index.js';
+export { collectAppFacts, enrichAtlas } from './enrich/index.js';
 export type { CostEstimate, EnrichOptions, EnrichReport } from './enrich/index.js';
 export { selectBackend } from './enrich/backends/index.js';
 export { describeRun, writeTheWords } from './enrich/session.js';
@@ -27,10 +27,12 @@ export { describeChanges, diffAtlas } from './model/changes.js';
 export type { ChangeReport } from './model/changes.js';
 export { AtlasGraph } from './model/graph.js';
 export type { LevelView, NodeView, OverviewView } from './model/graph.js';
+export { buildGroups } from './model/groups.js';
 export { buildBoundaryView } from './model/boundary.js';
 export type { BoundaryCard, BoundaryFlow, BoundaryView, BoundaryZone } from './model/boundary.js';
 export { classifyArchetype } from './analyze/archetype.js';
 export { buildSchemaNodes } from './analyze/schema.js';
+export { catalogSchema } from './analyze/sql.js';
 export { classifyZone, dominantZone } from './analyze/zones.js';
 export { findScopes } from './analyze/workspace.js';
 export type { Scope } from './analyze/workspace.js';
