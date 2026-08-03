@@ -41,6 +41,25 @@
   margin-bottom: 3px;
 }
 
+/* The hover card leads with the real path, because this is what somebody reads just
+   before going to find the thing. The generated name comes after it, marked (#94). */
+.node-hover-name {
+  font-family: var(--mono);
+}
+
+.node-hover-alias {
+  display: block;
+  font-family: var(--font-display);
+  font-size: 12.5px;
+  color: #d9d2c0;
+  margin-bottom: 5px;
+}
+
+.node-hover-alias .alias-mark {
+  background: rgba(227, 182, 97, 0.2);
+  color: #e3b661;
+}
+
 .node-hover-text {
   display: block;
   font-size: 12.5px;
@@ -453,13 +472,16 @@
   background: var(--surface);
 }
 
+/* Monospace, because it is the folder's real name and somebody is going to paste it
+   into a file search. The zone's legend swatch sits beside it — the same square
+   the map key uses. */
 .part-name {
   display: flex;
   align-items: center;
   gap: 8px;
-  font-family: var(--font-display);
-  font-size: 15px;
-  font-weight: 600;
+  font-family: var(--mono);
+  font-size: 13.5px;
+  font-weight: 650;
 }
 
 .part-name::before {
@@ -470,10 +492,19 @@
   background: var(--zc, var(--zone-unknown));
 }
 
-.part-path {
-  font-family: var(--mono);
-  font-size: 11px;
-  color: var(--ink-faint);
+/* The generated name, marked, under the folder's own — the Map's card does the same
+   thing in the same order (#94). */
+.part-alias {
+  display: flex;
+  align-items: baseline;
+  gap: 5px;
+  font-family: var(--font-display);
+  font-size: 12.5px;
+  color: var(--ink-soft);
+}
+
+.part-scope {
+  font-style: italic;
 }
 
 .part-summary {

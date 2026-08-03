@@ -70,7 +70,13 @@ export type EndpointKind =
   // not even HTTP. Kept out of the auth-coverage count deliberately, and for the same
   // reason `screen` is: a web server publishing port 80 is the point, not a finding,
   // and a headline where most rows are unalarming is a headline people stop reading.
-  | 'port';
+  | 'port'
+  // A command a desktop app's own interface calls across its process boundary — a
+  // `#[tauri::command]` the webview invokes. A door in every sense that matters to the
+  // map (it is how anything reaches the engine), and kept out of the auth-coverage
+  // count for the reason `screen` is: the caller is the app's own interface, not a
+  // stranger, and "no auth check" on one would be a false alarm.
+  | 'ipc';
 
 /** What a third party does for you — drives the grouping in the boundary view. */
 export type ServiceCategory =
@@ -199,6 +205,16 @@ export interface ModuleMeta {
   fileCount: number;
   descendantFileCount: number;
   collapsedFrom?: string[];
+  /**
+   * How many files the generated name and sentence on this node were written about,
+   * when the words layer described a *group* rather than the whole subtree (#94).
+   *
+   * Absent when nothing was generated, when the description covers everything under the
+   * node, or on an atlas written before this existed. Present and smaller than
+   * `descendantFileCount` means the words and the count are about different things, and
+   * every surface that prints them together has to say so.
+   */
+  describedFileCount?: number;
 }
 
 /** One place in the code where a boundary was observed. */

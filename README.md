@@ -33,7 +33,7 @@ Two rules keep it trustworthy:
 ## Status
 
 **Milestones M1–M5 are complete.** The CLI, the TypeScript/JavaScript analyzer, the
-Python and Go and C# analyzers, the atlas data model, incremental re-analysis, watch mode, the
+Python, Go, C# and Rust analyzers, the atlas data model, incremental re-analysis, watch mode, the
 drill-down architecture map, the boundary view, the security badges, the plain-English
 explanations, the type explorer, guided walkthroughs, monorepo scopes and the
 `ATLAS.md` export all work on real repositories. See [the roadmap](#roadmap) and
@@ -129,9 +129,14 @@ top of the screen:
 |---|---|
 | **Boundaries** | What gets into your app, and where it ends up |
 | **Overview** | What this app is, and where to start reading |
-| **Map** | How your code is organized — the folders and files, and what uses what |
-| **Data model** | What your data looks like — the shapes your app moves around |
+| **Map** | The code you would open and edit — your real folders and files, and what uses what |
+| **Data model** | The data your app keeps — the shapes and tables that outlive a single run |
 | **Security** | Who can get in, where your data goes, and what you rely on |
+
+The last two are both a canvas of boxes and lines, which made them read as variations on
+one picture. The line that tells them apart is **the Map is the code you change; the Data
+model is the data you keep** — and each screen says so by naming the other, with a link
+that follows the relationship: a shape on the Data model was written by a file on the Map.
 
 ### Boundaries — the home screen
 
@@ -227,6 +232,21 @@ database diagram draws a foreign key — so you can see that `Order.user` points
 
 ![The architecture map, drilled into a folder](docs/architecture-map.png)
 
+- **Every box is your folder, under its real name.** A generated name is a good headline
+  — "Dashboard Panels" beats `app/src/panels` — but it is not something you can search
+  for, so it sits underneath, marked `AI`. When the words were written about a cut across
+  the folder rather than all of it, the card says so: *The Command Deck · 4 of 89*.
+- **An arrow says which of four things it is.** `uses` is imports and calls; `reads` and
+  `writes` are your data, in the data zone's own green. A read's arrowhead points at the
+  *code*, because that is where the data ends up — the picture and the boundary view now
+  agree about which way a query moves.
+- **The number on an arrow carries its unit** — `15 imports`, `25 reads`, `43 queries`.
+  Fifteen rolled-up connections and fifteen call sites are different facts.
+- **The legend is a filter.** Click a zone to switch it off. Tests start off, because
+  "what is my app" is not a question test code answers — and the key says what it is
+  holding back, with the count, so nothing is ever hidden quietly.
+- **Folders** opens the tree as it is on disk: real paths, real names, nothing generated.
+  The grouped map says what the parts are; this says where they are.
 - **Hover** a box for a one-line answer to "what is this?", with a marker saying
   whether the sentence came from your own docstring or was generated.
 - **Click** a box to see what it is, what it uses, and what would break without it.
@@ -479,6 +499,45 @@ links between files marked **likely**.
 
 [ts-cs]: https://github.com/tree-sitter/tree-sitter-c-sharp
 
+## Rust, at the same tier
+
+```bash
+app-atlas ~/code/my-tauri-app
+```
+
+The language that used to be the biggest blank on a mixed repo's map — a Tauri desktop
+app keeps its whole engine in Rust, and a 12,000-line crate the map does not mention is
+a map that moves the centre of gravity of the app. A Rust crate now gets its files, its
+functions and methods under the types their `impl` blocks name, its structs, enums and
+traits with their fields, and its `///` and `//!` doc comments read verbatim — including
+the ones sitting above a `#[derive(…)]`, which is where Rust actually puts them.
+
+**The module system is read as the language defines it.** `mod estimating;` is the
+include it is, `use crate::modules::estimating::load_estimates` is followed to the file
+that declares it, and `pub` — the word, not a naming convention — is what makes a name
+part of the crate's surface. `pub(crate)` deliberately does not count: it is visible
+inside the crate and no further, and rounding it up is the direction this tool never
+rounds.
+
+**`#[tauri::command]` is a door.** It is how anything reaches a desktop app's engine,
+so it appears on the boundary — under its own family, *Commands your screens call* —
+and never in the auth coverage count, because the caller is the app's own interface and
+"no auth check" on one would be a false alarm.
+
+**Data through sqlx**, with the table and the direction read out of the SQL itself, the
+macro and function forms alike; and every `std::env::var` in the config inventory.
+
+**Vendored crates and `target/` never reach the map.** A repo carrying `cargo vendor`
+output or a warm build directory would otherwise drown its own source — the repo that
+asked for this plugin had 77 files of somebody else's MySQL driver in `vendor/`.
+
+The grammar is a WebAssembly file this repo ships, from [tree-sitter-rust][ts-rs] and
+checked against a recorded hash. No Rust toolchain is involved and none is needed. The
+same trade Go and C# make applies here and is stated in the same places: a grammar, no
+resolution, links between files marked **likely**.
+
+[ts-rs]: https://github.com/tree-sitter/tree-sitter-rust
+
 ## Monorepos get one map each
 
 ```
@@ -512,6 +571,14 @@ always shown on screen:
 If a docstring stops matching its code, App Atlas notices. Bodies and docstrings are
 hashed separately, so when the body changes and the comment doesn't, it gets badged
 *may be outdated* rather than repeated as though it were still true.
+
+**A generated name is labelled the same way a generated sentence is.** Folders get
+plain-English headlines, and for a while those were presented as the structure itself —
+so a reader looking for "Estimating Toolkit" in their editor was searching for a string
+that does not occur in their repo. Every screen now leads with the folder's own name and
+marks the generated one underneath. Where a description was written about a group that is
+smaller than the box standing for it, the card prints both numbers rather than the one
+that flatters.
 
 ### It uses the AI subscription you already have
 
@@ -598,7 +665,7 @@ CLI ──▶ Analyzer ──▶ Atlas model ──▶ Enricher ──▶ Local 
 After v1.0, in rough order of how useful they'd be: a "what changed" overlay that shows
 what your agent just did to the map, with the new routes glowing; cross-package tracing
 so a monorepo can follow a call from the web app through a shared package into the API;
-and more language plugins — the seam is proven now that Go and C# both go through it.
+and more language plugins — the seam is proven now that Go, C# and Rust all go through it.
 (The MCP server that used to head this list shipped — see
 [Or let it ask questions](#or-let-it-ask-questions).)
 
@@ -649,7 +716,7 @@ follows. Contributions are welcome, particularly:
   [`queries/go.scm`](src/analyze/generic/queries/go.scm), and a dialect the size of
   [`go/dialect.ts`](src/analyze/generic/go/dialect.ts) — after which the repo has its
   files, functions, types and imports. Boundary detectors on top are optional and
-  separate. Ruby, Java, C#, Rust, Kotlin, PHP and Swift are all wide open. The deeper
+  separate. Ruby, Java, Kotlin, PHP and Swift are all wide open. The deeper
   tiers are [`src/analyze/ts/`](src/analyze/ts/) and
   [`src/analyze/py/`](src/analyze/py/), at different depths on purpose.
 - **Boundary detectors.** A detector is one small file that recognises one family of

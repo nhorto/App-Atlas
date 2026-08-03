@@ -40,7 +40,7 @@ const MAX_REACHING_DOORS = 6;
 const MAX_PERSONAL_TABLES = 12;
 
 /** Doors nobody outside can knock on, so they never appear in the auth table. */
-const OTHER_DOORS = new Set(['webhook', 'cron', 'queue', 'cli', 'file-read']);
+const OTHER_DOORS = new Set(['webhook', 'cron', 'queue', 'cli', 'file-read', 'ipc']);
 
 const MAX_PORTS = 20;
 
@@ -201,7 +201,16 @@ export function renderAtlasMarkdown(graph: AtlasGraph, options: MarkdownOptions 
     out.push('');
     for (const part of parts) {
       const files = Number(part.meta.descendantFileCount ?? part.childCount);
-      const summary = part.summary ? ` — ${oneLine(part.summary)}${mark(part.summarySource)}` : '';
+      // The description was written about a group, which is a cut across the folder
+      // tree rather than a subtree of it — so on a folder that was split, the sentence
+      // covers fewer files than the count beside it. Printing them side by side without
+      // saying so told a reader their dashboard was build configuration (#94).
+      const covered = Number(part.meta.describedFileCount ?? NaN);
+      const scope =
+        Number.isFinite(covered) && covered < files
+          ? ` _(about the ${covered} ${plural(covered, 'file')} directly in it, not all ${files})_`
+          : '';
+      const summary = part.summary ? ` — ${oneLine(part.summary)}${mark(part.summarySource)}${scope}` : '';
       out.push(`- \`${part.path || part.name}\` (${files} ${plural(files, 'file')}, ${part.zone})${summary}`);
     }
     out.push('');

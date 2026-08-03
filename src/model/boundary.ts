@@ -119,6 +119,10 @@ interface InputFamily {
 /** Kept in this order on screen: how a request arrives, roughly. */
 const INPUT_FAMILIES: InputFamily[] = [
   { family: 'screens', label: 'Screens', kinds: ['screen'] },
+  // The doors between a desktop app's interface and its engine. Beside the screens
+  // because that is who calls them; never in the auth table, for the same reason the
+  // screens are not.
+  { family: 'commands', label: 'Commands your screens call', kinds: ['ipc'] },
   { family: 'pages', label: 'Pages', kinds: ['http-route'], match: (meta) => meta.method === 'PAGE' },
   { family: 'routes', label: 'API routes', kinds: ['http-route'], match: (meta) => meta.method !== 'PAGE' },
   { family: 'actions', label: 'Server actions', kinds: ['server-action'] },

@@ -21,6 +21,7 @@ import { extOf } from '../../util/paths.js';
 import type { BoundaryFinding } from '../boundaries/types.js';
 import type { FileSlice, LanguagePlugin, PluginContext, PluginResult } from '../plugin.js';
 import type { SourceFileRef } from '../project.js';
+import type { Dialect } from './dialect.js';
 import { extractFile } from './extract.js';
 import type { GDef, GenericFile } from './ir.js';
 import { LANGUAGES, languageFor } from './languages.js';
@@ -129,7 +130,7 @@ export async function analyzeGeneric(language: GenericLanguage, ctx: PluginConte
       bucket.nodes.push(shallowFileNode(ref, project.root, dialect.id, because));
       continue;
     }
-    bucket.nodes.push(...buildNodes(ref, file, texts.get(ref.relPath) ?? '', project.signals.goModule));
+    bucket.nodes.push(...buildNodes(ref, file, texts.get(ref.relPath) ?? '', project.signals.goModule, dialect));
     declarations.set(ref.relPath, declaredIn(bucket.nodes));
   }
   timings.declarations = Date.now() - t2;
@@ -144,7 +145,12 @@ export async function analyzeGeneric(language: GenericLanguage, ctx: PluginConte
     if (list) list.push(relPath);
     else byNamespace.set(namespace, [relPath]);
   }
-  const scope: NameScope = { kind: dialect.scope ?? 'directory', byNamespace, namespaceOf };
+  const scope: NameScope = {
+    kind: dialect.scope ?? 'directory',
+    byNamespace,
+    namespaceOf,
+    moduleIsAFile: dialect.namespaceIsAFile ?? false,
+  };
 
   const t3 = Date.now();
   for (const ref of stale) {
@@ -203,7 +209,13 @@ export async function analyzeGeneric(language: GenericLanguage, ctx: PluginConte
  */
 const TIER = 'tree-sitter';
 
-function buildNodes(ref: SourceFileRef, file: GenericFile, text: string, ownModule: string | null): AtlasNode[] {
+function buildNodes(
+  ref: SourceFileRef,
+  file: GenericFile,
+  text: string,
+  ownModule: string | null,
+  dialect: Dialect,
+): AtlasNode[] {
   const fileId = makeFileId(ref.relPath);
   const nodes: AtlasNode[] = [];
   const used = new Set<string>();
@@ -229,7 +241,7 @@ function buildNodes(ref: SourceFileRef, file: GenericFile, text: string, ownModu
     meta: {
       ext: extOf(ref.relPath),
       loc: file.loc,
-      externalImports: externalImports(file, ownModule),
+      externalImports: externalImports(file, ownModule, dialect),
       exportedNames: [] as string[],
       functionCount: 0,
       typeCount: 0,
@@ -313,7 +325,7 @@ function functionNode(id: string, parentId: string, ref: SourceFileRef, def: GDe
       isExported: def.exported,
       isMethod: Boolean(def.owner),
       ownerName: def.owner ?? undefined,
-      decorators: [] as string[],
+      decorators: def.decorators,
       loc: def.endLine - def.line + 1,
       tier: TIER,
     },
@@ -457,6 +469,15 @@ export interface NameScope {
   /** namespace → the files declaring it. Empty for a directory-scoped language. */
   byNamespace: Map<string, string[]>;
   namespaceOf: Map<string, string>;
+  /**
+   * Namespace scope where one namespace is one file — Rust, where `modules::estimating`
+   * *is* estimating.rs. Changes three things, all consequences of the same fact: an
+   * import edge needs no name-by-name gate because the import names its one file the
+   * way a Go import names its directory; a `use ns::Item` may point one segment past
+   * the file and resolves by dropping the item; and ancestor namespaces are other
+   * files whose names are not visible without a `use`, so the bare-name pass stays home.
+   */
+  moduleIsAFile: boolean;
 }
 
 /**
@@ -508,20 +529,38 @@ function linkFile(
 
   /** Local package name → the group it stands for. */
   const packageDirs = new Map<string, string>();
+  /** Local name → the one declaration a `use ns::Item` brought in, for the bare-name pass. */
+  const itemImports = new Map<string, { group: string; item: string }>();
   for (const imp of file.imports) {
-    const group = byNamespace
-      ? scope.byNamespace.has(imp.module)
-        ? imp.module
-        : null
-      : resolveImport(index, imp.module, ownModule);
+    let group: string | null;
+    let item: string | null = null;
+    if (byNamespace) {
+      if (scope.byNamespace.has(imp.module)) group = imp.module;
+      else if (scope.moduleIsAFile) {
+        // `use crate::modules::estimating::compute_all` names an item one segment past
+        // its file. The file is the module path above it, and the item is what the
+        // bare-name pass should look up in that file.
+        const dot = imp.module.lastIndexOf('.');
+        const parent = dot === -1 ? null : imp.module.slice(0, dot);
+        group = parent && scope.byNamespace.has(parent) ? parent : null;
+        if (group) item = imp.module.slice(dot + 1);
+      } else group = null;
+    } else group = resolveImport(index, imp.module, ownModule);
     if (group === null) continue;
     packageDirs.set(imp.local, group);
+    if (scope.moduleIsAFile) itemImports.set(imp.local, { group, item: item ?? imp.local });
     for (const target of filesOf(group)) {
       if (target === ref.relPath) continue;
       // Directory scope keeps every file in the package: an import path names the
-      // folder, so the whole folder is what was imported. A namespace is not a unit
-      // anybody imports, so the edge has to earn itself one file at a time.
-      if (byNamespace && ![...(declarations.get(target)?.keys() ?? [])].some((name) => mentioned.has(name))) {
+      // folder, so the whole folder is what was imported. A C# namespace is not a unit
+      // anybody imports, so there the edge has to earn itself one file at a time — but
+      // a namespace that is one file (Rust) is imported exactly the way a folder is,
+      // and `mod estimating;` is the include even when nothing else names it.
+      if (
+        byNamespace &&
+        !scope.moduleIsAFile &&
+        ![...(declarations.get(target)?.keys() ?? [])].some((name) => mentioned.has(name))
+      ) {
         continue;
       }
       addEdge(edges, {
@@ -539,7 +578,15 @@ function linkFile(
 
   /** Every declaration visible without qualification: this file's package. */
   const inPackage = new Map<string, Declaration>();
-  const visible = byNamespace ? enclosingNamespaces(scope.namespaceOf.get(ref.relPath) ?? '') : [here];
+  // For C#, resolution walks outward through the enclosing namespaces, because the
+  // language says a bare name reaches them. A Rust module sees nothing above it
+  // without a `use`, so only its own file is in scope — the `use`s are handled by
+  // `itemImports`, which is where that language brings names in.
+  const visible = byNamespace
+    ? scope.moduleIsAFile
+      ? [scope.namespaceOf.get(ref.relPath) ?? '']
+      : enclosingNamespaces(scope.namespaceOf.get(ref.relPath) ?? '')
+    : [here];
   for (const group of visible) {
     for (const sibling of filesOf(group)) {
       for (const [name, decl] of declarations.get(sibling) ?? []) {
@@ -556,9 +603,15 @@ function linkFile(
     return null;
   };
 
+  /** What a `use ns::Item` (or its alias) put in scope, when the bare name is used. */
+  const viaImport = (name: string): Declaration | null => {
+    const entry = itemImports.get(name);
+    return entry ? declarationsIn(entry.group, entry.item) : null;
+  };
+
   const reference = (fromId: string, bare: string[], qualified: string[]) => {
     for (const name of bare) {
-      const target = inPackage.get(name);
+      const target = inPackage.get(name) ?? viaImport(name);
       if (!target || target.nodeId === fromId) continue;
       addEdge(edges, {
         kind: 'references',
@@ -637,13 +690,19 @@ function addEdge(edges: Map<string, AtlasEdge>, input: EdgeInput): void {
 /**
  * Which third parties this file brings in.
  *
- * Go's own rule, not a list: an import path whose first segment has a dot in it names a
- * host, so it came off the internet. `net/http` and `database/sql` have no dot and are
- * the standard library, which nobody thinks of as a dependency.
+ * The default is Go's own rule, not a list: an import path whose first segment has a
+ * dot in it names a host, so it came off the internet. `net/http` and `database/sql`
+ * have no dot and are the standard library, which nobody thinks of as a dependency.
+ * A dialect whose imports do not work that way — Rust, whose dependencies are bare
+ * crate names — answers for itself through `externalImport`.
  */
-function externalImports(file: GenericFile, ownModule: string | null): string[] {
+function externalImports(file: GenericFile, ownModule: string | null, dialect: Dialect): string[] {
   const out = new Set<string>();
   for (const imp of file.imports) {
+    if (dialect.externalImport) {
+      if (dialect.externalImport(imp.module)) out.add(imp.module);
+      continue;
+    }
     const first = imp.module.split('/')[0] ?? '';
     if (!first.includes('.')) continue;
     if (ownModule && (imp.module === ownModule || imp.module.startsWith(`${ownModule}/`))) continue;
