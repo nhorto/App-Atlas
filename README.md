@@ -129,9 +129,14 @@ top of the screen:
 |---|---|
 | **Boundaries** | What gets into your app, and where it ends up |
 | **Overview** | What this app is, and where to start reading |
-| **Map** | How your code is organized — the folders and files, and what uses what |
-| **Data model** | What your data looks like — the shapes your app moves around |
+| **Map** | The code you would open and edit — your real folders and files, and what uses what |
+| **Data model** | The data your app keeps — the shapes and tables that outlive a single run |
 | **Security** | Who can get in, where your data goes, and what you rely on |
+
+The last two are both a canvas of boxes and lines, which made them read as variations on
+one picture. The line that tells them apart is **the Map is the code you change; the Data
+model is the data you keep** — and each screen says so by naming the other, with a link
+that follows the relationship: a shape on the Data model was written by a file on the Map.
 
 ### Boundaries — the home screen
 
@@ -227,6 +232,21 @@ database diagram draws a foreign key — so you can see that `Order.user` points
 
 ![The architecture map, drilled into a folder](docs/architecture-map.png)
 
+- **Every box is your folder, under its real name.** A generated name is a good headline
+  — "Dashboard Panels" beats `app/src/panels` — but it is not something you can search
+  for, so it sits underneath, marked `AI`. When the words were written about a cut across
+  the folder rather than all of it, the card says so: *The Command Deck · 4 of 89*.
+- **An arrow says which of four things it is.** `uses` is imports and calls; `reads` and
+  `writes` are your data, in the data zone's own green. A read's arrowhead points at the
+  *code*, because that is where the data ends up — the picture and the boundary view now
+  agree about which way a query moves.
+- **The number on an arrow carries its unit** — `15 imports`, `25 reads`, `43 queries`.
+  Fifteen rolled-up connections and fifteen call sites are different facts.
+- **The legend is a filter.** Click a zone to switch it off. Tests start off, because
+  "what is my app" is not a question test code answers — and the key says what it is
+  holding back, with the count, so nothing is ever hidden quietly.
+- **Folders** opens the tree as it is on disk: real paths, real names, nothing generated.
+  The grouped map says what the parts are; this says where they are.
 - **Hover** a box for a one-line answer to "what is this?", with a marker saying
   whether the sentence came from your own docstring or was generated.
 - **Click** a box to see what it is, what it uses, and what would break without it.
@@ -512,6 +532,14 @@ always shown on screen:
 If a docstring stops matching its code, App Atlas notices. Bodies and docstrings are
 hashed separately, so when the body changes and the comment doesn't, it gets badged
 *may be outdated* rather than repeated as though it were still true.
+
+**A generated name is labelled the same way a generated sentence is.** Folders get
+plain-English headlines, and for a while those were presented as the structure itself —
+so a reader looking for "Estimating Toolkit" in their editor was searching for a string
+that does not occur in their repo. Every screen now leads with the folder's own name and
+marks the generated one underneath. Where a description was written about a group that is
+smaller than the box standing for it, the card prints both numbers rather than the one
+that flatters.
 
 ### It uses the AI subscription you already have
 
