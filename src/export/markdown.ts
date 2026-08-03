@@ -40,7 +40,7 @@ const MAX_REACHING_DOORS = 6;
 const MAX_PERSONAL_TABLES = 12;
 
 /** Doors nobody outside can knock on, so they never appear in the auth table. */
-const OTHER_DOORS = new Set(['webhook', 'cron', 'queue', 'cli', 'file-read']);
+const OTHER_DOORS = new Set(['webhook', 'cron', 'queue', 'cli', 'file-read', 'ipc']);
 
 const MAX_PORTS = 20;
 

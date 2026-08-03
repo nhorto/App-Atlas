@@ -76,8 +76,15 @@ import { dominantZone } from './zones.js';
  * calling a detected store and a detected framework unfounded. Not one atlas fact differs,
  * and `PROMPT_VERSION` does not move either, because the question asked of the model is
  * unchanged — only what we do with the answer afterwards.
+ *
+ * 0.18.0 is the ordinary case: Rust joins the grammar tier (#85), so a repo with `.rs`
+ * files in it now answers with files, functions, types, imports, Tauri command doors and
+ * sqlx tables where it used to answer with nothing. A Rust-free repo's atlas is
+ * unchanged; its cache is discarded anyway, because the version is part of the
+ * fingerprint and a fingerprint that special-cased "probably unaffected" would be a
+ * cache that can lie.
  */
-export const TOOL_VERSION = '0.17.0';
+export const TOOL_VERSION = '0.18.0';
 
 export interface AnalyzeOptions {
   maxFiles?: number;
