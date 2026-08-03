@@ -635,7 +635,8 @@ function AtlasApp() {
     <div className={showPanel ? 'app' : 'app is-wide'}>
       <header className="topbar">
         <span className="brand">
-          <span className="brand-mark" aria-hidden="true">✦</span>
+          {/* A compass point, not a sparkle: the mark of a map, drawn in route-red. */}
+          <span className="brand-mark" aria-hidden="true">⌖</span>
           App Atlas
         </span>
         <nav className="tabs" aria-label="Views">

@@ -18,7 +18,7 @@
      a five-line step ended mid-sentence while half the canvas above sat empty. */
   max-height: min(68%, 560px);
   border: 1px solid var(--line-strong);
-  border-radius: 12px;
+  border-radius: 4px;
   background: var(--surface);
   box-shadow: 0 10px 34px rgba(64, 54, 32, 0.18);
   overflow: hidden;
@@ -70,11 +70,10 @@
 }
 
 .wt-dot {
-  width: 8px;
-  height: 8px;
+  width: 7px;
+  height: 7px;
   padding: 0;
   border: 0;
-  border-radius: 50%;
   background: var(--line-strong);
   cursor: pointer;
 }
@@ -161,10 +160,8 @@
 /* Somebody else's words, and they look like it. */
 .wt-quote {
   margin: 11px 0 0;
-  padding: 9px 12px;
-  border-left: 3px solid var(--line-strong);
-  background: var(--surface-press);
-  border-radius: 0 6px 6px 0;
+  padding: 2px 0 2px 12px;
+  border-left: 2px solid var(--line-strong);
   max-width: 74ch;
 }
 
@@ -197,7 +194,7 @@
   margin: 7px 0 0;
   padding: 10px 12px;
   border: 1px solid var(--line);
-  border-radius: 7px;
+  border-radius: 2px;
   background: var(--surface-press);
   overflow-x: auto;
   font-family: var(--mono);
@@ -230,61 +227,61 @@
 
 /* --- the launch points ---------------------------------------------------- */
 
+/* The tours are a table of contents, because that is what they are: a list of
+   routes through the book. Serif titles, dot leaders, the step count where a
+   contents page puts its folio number. Not a grid of cards. */
 .tour-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
-  gap: 10px;
-}
-
-/* Tour launch points wear the same label cut; the binding strip is terracotta
-   because a tour is a route, and route-red belongs to the map's pen. */
-.tour-card {
-  position: relative;
   display: flex;
   flex-direction: column;
-  gap: 3px;
-  padding: 11px 14px 12px;
-  border: 1px solid var(--line-strong);
-  border-top: 4px solid var(--accent);
-  background: var(--label);
-  clip-path: polygon(0 0, calc(100% - 14px) 0, 100% 14px, 100% 100%, 0 100%);
-  filter: drop-shadow(1px 2px 0 rgba(64, 54, 32, 0.09));
+}
+
+.tour-card {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 8px 2px 9px;
+  border: 0;
+  border-top: 1px solid var(--line);
+  background: none;
   text-align: left;
   font: inherit;
   color: inherit;
   cursor: pointer;
-  transition: filter 120ms ease, border-color 120ms ease, transform 120ms ease;
 }
 
-.tour-card::before {
+.tour-card:first-child {
+  border-top: 0;
+}
+
+.tour-card:hover .tour-title {
+  color: var(--accent);
+}
+
+/* The dot leader, running from the title to the count. */
+.tour-card::after {
   content: '';
-  position: absolute;
-  inset: 3px;
-  border: 1px dashed var(--line);
-  clip-path: polygon(0 0, calc(100% - 11px) 0, 100% 11px, 100% 100%, 0 100%);
-  pointer-events: none;
-}
-
-.tour-card:hover {
-  border-left-color: var(--ink-faint);
-  border-right-color: var(--ink-faint);
-  border-bottom-color: var(--ink-faint);
-  transform: translateY(-1px);
-  filter: drop-shadow(1px 3px 0 rgba(64, 54, 32, 0.13));
-}
-
-.tour-card.tour-flow {
-  border-top-color: var(--zone-api);
+  order: 2;
+  flex: 1;
+  min-width: 28px;
+  align-self: stretch;
+  margin: 0 2px 5px;
+  border-bottom: 1px dotted var(--line-strong);
 }
 
 .tour-title {
-  font-size: 13.5px;
+  order: 1;
+  font-family: var(--font-display);
+  font-size: 14.5px;
   font-weight: 600;
   line-height: 1.4;
+  transition: color 120ms ease;
 }
 
 .tour-sub {
+  order: 3;
+  flex: none;
   font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
   color: var(--ink-faint);
 }
 
@@ -312,9 +309,9 @@
 
 .btn-tour {
   margin-top: 9px;
-  padding: 7px 11px;
+  padding: 6px 11px;
   border: 1px solid var(--line-strong);
-  border-radius: 7px;
+  border-radius: 2px;
   background: var(--surface);
   font: inherit;
   font-size: 12.5px;
