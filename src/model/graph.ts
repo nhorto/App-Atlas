@@ -42,6 +42,13 @@ export interface OutsideFlow {
   weight: number;
   /** True when the inside node calls out; false when the outside world calls in. */
   out: boolean;
+  /**
+   * What kind of relationship this stands for — the same field `LevelEdge` carries, and
+   * for the same reason (#90). `out` says which side of the membrane the *code* is on;
+   * it does not say which way the data moves, because a file that reads a table and a
+   * file that writes one are both the caller. Only the kind tells them apart.
+   */
+  kinds: EdgeKind[];
 }
 
 /**
@@ -245,7 +252,13 @@ export class AtlasGraph {
     // store, service or endpoint on its far side; discarding that and keeping a
     // count was making the reader infer the most interesting fact on the screen.
     const outside = new Map<string, OutsideNeighbor>();
-    const noteOutside = (world: AtlasNode | null, insideId: string, weight: number, out: boolean) => {
+    const noteOutside = (
+      world: AtlasNode | null,
+      insideId: string,
+      weight: number,
+      out: boolean,
+      kind: EdgeKind,
+    ) => {
       if (!world || world.id === levelId || visibleIds.has(world.id)) return;
       let entry = outside.get(world.id);
       if (!entry) {
@@ -254,8 +267,12 @@ export class AtlasGraph {
       }
       entry.total += weight;
       const flow = entry.flows.find((f) => f.insideId === insideId && f.out === out);
-      if (flow) flow.weight += weight;
-      else entry.flows.push({ insideId, weight, out });
+      if (flow) {
+        flow.weight += weight;
+        if (!flow.kinds.includes(kind)) flow.kinds.push(kind);
+      } else {
+        entry.flows.push({ insideId, weight, out, kinds: [kind] });
+      }
     };
 
     for (const edge of this.relations) {
@@ -274,10 +291,10 @@ export class AtlasGraph {
         }
       } else if (from && visibleIds.has(from)) {
         outsideOut.set(from, (outsideOut.get(from) ?? 0) + edge.weight);
-        noteOutside(this.worldNeighborOf(edge.toId), from, edge.weight, true);
+        noteOutside(this.worldNeighborOf(edge.toId), from, edge.weight, true, edge.kind);
       } else if (to && visibleIds.has(to)) {
         outsideIn.set(to, (outsideIn.get(to) ?? 0) + edge.weight);
-        noteOutside(this.worldNeighborOf(edge.fromId), to, edge.weight, false);
+        noteOutside(this.worldNeighborOf(edge.fromId), to, edge.weight, false, edge.kind);
       }
     }
 

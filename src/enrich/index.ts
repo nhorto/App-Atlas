@@ -212,7 +212,7 @@ export async function enrichAtlas(options: EnrichOptions): Promise<EnrichReport>
       continue;
     }
     const node = byId.get(item.group.id);
-    if (node) applyModule(node, hit.text, routes, report);
+    if (node) applyModule(node, hit.text, item.group.fileCount, routes, report);
     report.reusedFromCache++;
   }
 
@@ -223,7 +223,7 @@ export async function enrichAtlas(options: EnrichOptions): Promise<EnrichReport>
       continue;
     }
     const node = byId.get(item.item.key);
-    if (node) applyModule(node, hit.text, routes, report);
+    if (node) applyModule(node, hit.text, null, routes, report);
     report.reusedFromCache++;
   }
 
@@ -265,6 +265,7 @@ export async function enrichAtlas(options: EnrichOptions): Promise<EnrichReport>
       nodeIds: batch.map((group) => group.id),
       hashes: batch.map((group) => hashOf.get(group.id) ?? ''),
       paths: batch.map((group) => group.path),
+      describes: batch.map((group) => group.fileCount),
       request: groupBatchRequest(batch.map((group, index) => ({ key: String(index + 1), group }))),
     });
   }
@@ -336,6 +337,17 @@ interface Job {
   hashes: string[];
   /** The path shown in the prompt, also in that order. Accepted as a reply key. */
   paths: string[];
+  /**
+   * Module tier only: how many files the answer will be *about*, per node, or null when
+   * the answer covers whatever the node covers.
+   *
+   * A group is a cut across the folder tree, so the sentence written about `app` is
+   * written about the five files sitting directly in it — while the box on the map
+   * standing for `app` covers its ninety-six-file subtree. Carrying the number the
+   * description was written against is what lets every screen print a count that
+   * matches the words beside it (#94).
+   */
+  describes?: (number | null)[];
   request: { system: string; user: string; maxOutputTokens: number };
   /**
    * Overview only: everything about this app the reader will find on their own screen —
@@ -438,7 +450,10 @@ function applyReply(
     if (job.tier === 'module') {
       const entry = value as { name?: unknown; text?: unknown };
       const stored = JSON.stringify({ name: entry?.name ?? null, text: entry?.text ?? null });
-      if (applyModule(node, stored, routes, report)) remember(report, 'module', node.id, hash, stored);
+      const describes = job.describes?.[index] ?? null;
+      if (applyModule(node, stored, describes, routes, report)) {
+        remember(report, 'module', node.id, hash, stored);
+      }
       continue;
     }
 
@@ -449,8 +464,21 @@ function applyReply(
   }
 }
 
-/** Folders carry a name and a sentence, stored together so one cache hit restores both. */
-function applyModule(node: AtlasNode, stored: string, routes: MethodsByRoute, report: EnrichReport): boolean {
+/**
+ * Folders carry a name and a sentence, stored together so one cache hit restores both.
+ *
+ * `describes` is how many files the answer was written about, when that is a different
+ * number from the subtree the node stands for. It is recorded beside the words rather
+ * than left to the reader to notice, because the alternative is what #94 reported: a
+ * card reading "Build Settings · 96 files" over a sentence about five of them.
+ */
+function applyModule(
+  node: AtlasNode,
+  stored: string,
+  describes: number | null,
+  routes: MethodsByRoute,
+  report: EnrichReport,
+): boolean {
   let entry: { name?: unknown; text?: unknown };
   try {
     entry = JSON.parse(stored) as { name?: unknown; text?: unknown };
@@ -460,6 +488,7 @@ function applyModule(node: AtlasNode, stored: string, routes: MethodsByRoute, re
 
   const label = cleanLabel(entry.name, node.name);
   const sentence = cleanSentence(entry.text);
+  if (describes !== null && (label || sentence)) node.meta.describedFileCount = describes;
   if (label) {
     node.label = label;
     report.labelled++;

@@ -7,6 +7,7 @@
  */
 import { Handle, Position, type NodeProps } from '@xyflow/react';
 import type {
+  AtlasNode,
   EndpointMeta,
   FieldInfo,
   LevelNode,
@@ -49,7 +50,10 @@ export function AtlasNodeCard({ data, selected }: NodeProps) {
 
         <div className="card-head">
           <span className="card-kind">{kindGlyph(node)}</span>
-          <span className="card-name">{node.label ?? node.name}</span>
+          {/* The folder's real name, always, and never the generated one. A reader who
+              wants to open "Estimating Toolkit" in their editor has nothing to search
+              for — that string does not occur in the repo (#94). */}
+          <span className="card-name">{node.name}</span>
           {node.drillable ? (
             // A visible way in. Double-click works too, but a button beats a gesture
             // nobody told you about.
@@ -68,6 +72,8 @@ export function AtlasNodeCard({ data, selected }: NodeProps) {
         </div>
 
         <div className="card-sub">{subtitle(node)}</div>
+
+        <GeneratedName node={node} />
 
         {node.kind === 'endpoint' ? <EndpointBadge node={node} /> : null}
 
@@ -95,19 +101,77 @@ export function AtlasNodeCard({ data, selected }: NodeProps) {
 }
 
 /**
+ * The name a model gave this folder, under the folder's own name and marked as such.
+ *
+ * The project labels every generated *sentence* `(ai)` and used to present a generated
+ * *name* as the structure itself (#94). It is worth keeping — "Dashboard Panels" says
+ * more than `app/src/panels` — but only where a reader can see which is which.
+ *
+ * The second half is the harder defect the same issue turned up. A group is a flat cut
+ * across the folder tree, so the sentence written about `app` covers the five files
+ * sitting directly in it, while the box covers its ninety-six-file subtree. The card
+ * prints both numbers rather than the one that flatters: the name is real, its reach is
+ * five files, and the box is still ninety-six.
+ */
+function GeneratedName({ node }: { node: LevelNode }) {
+  const alias = node.label;
+  if (!alias || alias === node.name) return null;
+  const scope = describedScope(node);
+  return (
+    <div className="card-alias" title={aliasTitle(node, alias, scope)}>
+      <span className="alias-mark">AI</span>
+      <span className="alias-name">{alias}</span>
+      {scope ? <span className="alias-scope">{scope.short}</span> : null}
+    </div>
+  );
+}
+
+/**
+ * How much of a folder the generated words actually cover, when it is not all of it.
+ *
+ * Exported because the card and the detail panel must not be able to disagree about it:
+ * the whole defect was one surface printing a count the words beside it did not describe.
+ */
+export function describedScope(node: AtlasNode): { covered: number; total: number; short: string } | null {
+  const covered = Number(node.meta.describedFileCount ?? NaN);
+  const total = Number(node.meta.descendantFileCount ?? node.meta.fileCount ?? 0);
+  if (!Number.isFinite(covered) || covered >= total) return null;
+  return { covered, total, short: `${covered} of ${total}` };
+}
+
+function aliasTitle(node: AtlasNode, alias: string, scope: { covered: number; total: number } | null): string {
+  const where = node.path ? ` for ${node.path}` : '';
+  if (!scope) return `"${alias}" is a generated name${where}. The name on the card is the real one.`;
+  return (
+    `"${alias}" is a generated name, written about the ${scope.covered} files directly in ` +
+    `${node.path ?? node.name} — not about all ${scope.total} files under it.`
+  );
+}
+
+/**
  * The one-line answer, on hover (SPEC.md 6.2). This is the payoff of the words layer
  * on the map: you can sweep a folder full of files and read what each one is for
  * without clicking anything, and the small coloured dot says whether the sentence came
  * from the code's own docs or from a model.
+ *
+ * It leads with the path, because this is the tooltip somebody reads when they are
+ * about to go and find the thing.
  */
 function HoverCard({ node }: { node: LevelNode }) {
   const stale = node.meta?.docsStale === true;
+  const scope = describedScope(node);
   return (
     <div className="node-hover" aria-hidden>
-      <span className="node-hover-name">{node.label ?? node.name}</span>
+      <span className="node-hover-name">{node.path ?? node.name}</span>
+      {node.label && node.label !== node.name ? (
+        <span className="node-hover-alias">
+          <span className="alias-mark">AI</span> {node.label}
+        </span>
+      ) : null}
       <span className="node-hover-text">{node.summary}</span>
       <span className={`node-hover-source source-${node.summarySource ?? 'none'}${stale ? ' is-stale' : ''}`}>
         {node.summarySource === 'docs' ? (stale ? 'your docs · may be outdated' : "your code's docs") : 'AI explanation'}
+        {scope ? ` · about ${scope.covered} of the ${scope.total} files in here` : ''}
       </span>
     </div>
   );
