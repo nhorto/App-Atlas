@@ -33,14 +33,20 @@ const LAYOUT_OPTIONS: Record<string, string> = {
 
 /** Card size for a node, chosen so text never has to shrink to fit. */
 export function sizeOf(node: LevelNode): { width: number; height: number } {
-  const nameWidth = Math.min(360, Math.max(190, node.name.length * 8.4 + 72));
+  // The generated name is a row of its own under the real one (#94), so a folder that
+  // has one is a row taller — and wide enough for whichever of the two names is longer,
+  // since a truncated generated name reads as the folder having a strange real name.
+  const alias = node.label && node.label !== node.name ? node.label : '';
+  const longest = Math.max(node.name.length, alias.length + 4);
+  const nameWidth = Math.min(360, Math.max(190, longest * 8.4 + 72));
+  const aliasRow = alias ? 18 : 0;
   switch (node.kind) {
     case 'module': {
       const previewRows = Math.min(node.preview.length, 4);
-      return { width: Math.max(nameWidth, 230), height: 74 + previewRows * 17 };
+      return { width: Math.max(nameWidth, 230), height: 74 + aliasRow + previewRows * 17 };
     }
     case 'file':
-      return { width: Math.max(nameWidth, 210), height: 72 };
+      return { width: Math.max(nameWidth, 210), height: 72 + aliasRow };
     case 'type': {
       const fields = (node.meta.fields as unknown[] | undefined)?.length ?? 0;
       // Six field rows at most, plus a row for the "+N more" line when it appears.

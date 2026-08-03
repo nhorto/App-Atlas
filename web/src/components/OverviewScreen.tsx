@@ -24,7 +24,7 @@ import type {
   Tour,
   UnimportedView,
 } from '../types';
-import { zoneLabel } from './AtlasNodeCard';
+import { describedScope, zoneLabel } from './AtlasNodeCard';
 import { TrustLabel } from './Trust';
 
 /**
@@ -137,13 +137,25 @@ export function OverviewScreen({ view, tours, onDrill, onReveal, onStartTour, on
           <div className="part-grid">
             {parts.map((part) => (
               <button key={part.id} className={`part-card zone-${part.zone}`} onClick={() => onDrill(part.id)}>
-                <span className="part-name">{part.label ?? part.name}</span>
-                {part.label ? <span className="part-path">{part.name}</span> : null}
+                {/* The folder's real name leads and the generated one is marked under
+                    it, the same way round as the cards on the Map (#94). */}
+                <span className="part-name">{part.name}</span>
+                {part.label && part.label !== part.name ? (
+                  <span className="part-alias">
+                    <span className="alias-mark">AI</span> {part.label}
+                  </span>
+                ) : null}
                 {/* The count already has a home in `part-meta` below, so the fallback
                     is the zone alone — repeating it read as "1 files · Logic / 1 file". */}
                 <span className="part-summary">{part.summary ?? zoneLabel(part.zone)}</span>
                 <span className="part-meta">
                   {countOf(part)} {countOf(part) === 1 ? 'file' : 'files'}
+                  {describedScope(part) ? (
+                    <span className="part-scope">
+                      {' '}
+                      · the words above cover {describedScope(part)?.covered}
+                    </span>
+                  ) : null}
                 </span>
               </button>
             ))}

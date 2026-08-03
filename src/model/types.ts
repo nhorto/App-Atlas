@@ -205,6 +205,16 @@ export interface ModuleMeta {
   fileCount: number;
   descendantFileCount: number;
   collapsedFrom?: string[];
+  /**
+   * How many files the generated name and sentence on this node were written about,
+   * when the words layer described a *group* rather than the whole subtree (#94).
+   *
+   * Absent when nothing was generated, when the description covers everything under the
+   * node, or on an atlas written before this existed. Present and smaller than
+   * `descendantFileCount` means the words and the count are about different things, and
+   * every surface that prints them together has to say so.
+   */
+  describedFileCount?: number;
 }
 
 /** One place in the code where a boundary was observed. */
