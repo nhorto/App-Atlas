@@ -76,6 +76,14 @@ export interface GDef {
   returns: string;
   /** Whether other packages can see it, by whatever rule the language uses. */
   exported: boolean;
+  /**
+   * Attributes or decorators written on the definition, as written, whitespace
+   * collapsed: `tauri::command`, `derive(Debug,Serialize)`. Empty for languages that
+   * have none or whose dialect does not collect them. A detector reads these the way
+   * the C# one reads attribute-shaped calls — `#[tauri::command]` is the whole evidence
+   * that a Rust function is a door.
+   */
+  decorators: string[];
   /** Struct, class or interface members. */
   fields: GField[];
   /** Every bare identifier mentioned inside, for the reference pass to resolve. */
