@@ -190,6 +190,13 @@ export interface OutsideFlow {
   weight: number;
   /** True when the inside node calls out; false when the outside world calls in. */
   out: boolean;
+  /**
+   * What the flow is. `out` says which side the code is on, not which way the data
+   * moves — a file that reads a table is the caller just as much as one that writes it
+   * — so only the kind can point the arrowhead correctly (#90). Empty on an atlas
+   * written before this existed, which draws the way it always did.
+   */
+  kinds?: EdgeKind[];
 }
 
 /** A store, service or endpoint this level talks to, drawn beyond the boundary line. */

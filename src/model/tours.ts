@@ -167,10 +167,13 @@ function welcomeTour(graph: AtlasGraph): Tour {
     steps.push({
       id: 'welcome:parts',
       title: 'The parts it is made of',
+      // Real folder names, not the generated ones. The count beside each is its whole
+      // subtree, while a generated name may have been written about a cut across it
+      // (#94) — and a step's body carries no provenance mark to say which is which, so
+      // the only honest string here is the one the reader can find on disk.
       body: `The code divides into ${countOf(parts, 'part')} at the top level. The biggest: ${list(
         modules.map(
-          (node) =>
-            `${node.label ?? node.name} (${countOf(Number(node.meta.descendantFileCount ?? node.childCount), 'file')})`,
+          (node) => `${node.name} (${countOf(Number(node.meta.descendantFileCount ?? node.childCount), 'file')})`,
         ),
       )}.`,
       quote: null,
