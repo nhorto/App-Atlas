@@ -20,7 +20,7 @@ import type {
   ServiceMeta,
   StoreMeta,
 } from '../types';
-import { zoneLabel } from './AtlasNodeCard';
+import { describedScope, zoneLabel } from './AtlasNodeCard';
 import { Summary, TrustLabel } from './Trust';
 
 /** Which screen the panel is sitting beside — the instructions differ per screen. */
@@ -36,10 +36,23 @@ interface Props {
   onReveal: (id: string) => void;
   onDrill: (id: string) => void;
   onStartTour: (id: string) => void;
+  /** Opens this shape on the Data model, the other screen made of boxes and lines. */
+  onShowInDataModel: (id: string) => void;
   onClose: () => void;
 }
 
-export function DetailPanel({ detail, overview, view, aiEnabled, tour, onReveal, onDrill, onStartTour, onClose }: Props) {
+export function DetailPanel({
+  detail,
+  overview,
+  view,
+  aiEnabled,
+  tour,
+  onReveal,
+  onDrill,
+  onStartTour,
+  onShowInDataModel,
+  onClose,
+}: Props) {
   // A description generated from this panel has to appear in this panel, and the atlas
   // on the server is the copy that got updated — not the one we were handed.
   const [written, setWritten] = useState<{ id: string; text: string } | null>(null);
@@ -53,6 +66,7 @@ export function DetailPanel({ detail, overview, view, aiEnabled, tour, onReveal,
   const isContainer =
     node.kind === 'module' || node.kind === 'file' || node.kind === 'app' || node.kind === 'zone';
   const isBoundary = node.kind === 'endpoint' || node.kind === 'service' || node.kind === 'store';
+  const scope = describedScope(node);
 
   return (
     <aside className="panel">
@@ -64,11 +78,34 @@ export function DetailPanel({ detail, overview, view, aiEnabled, tour, onReveal,
             ×
           </button>
         </div>
-        <h2>{node.label ?? node.name}</h2>
+        {/* The real name is the heading and the generated one sits under it, marked —
+            the same rule the cards on the Map follow, and for the same reason (#94). */}
+        <h2>{node.name}</h2>
+        {node.label && node.label !== node.name ? (
+          <p className="panel-alias">
+            <span className="alias-mark">AI</span> {node.label}
+            {scope ? (
+              <span className="alias-scope"> — written about {scope.covered} of these {scope.total} files</span>
+            ) : null}
+          </p>
+        ) : null}
         {node.path && node.path !== node.name ? <p className="panel-path">{node.path}</p> : null}
         {isContainer && detail.children.length > 0 ? (
           <button className="btn-primary" onClick={() => onDrill(node.id)}>
             Look inside →
+          </button>
+        ) : null}
+        {/* The Map and the Data model are two pictures of the same thing, and the link
+            between them explains the split better than any wording could (#95): a shape
+            here is written by a file there. */}
+        {node.kind === 'type' && view === 'types' && node.path ? (
+          <button className="btn-ghost panel-cross" onClick={() => onReveal(node.id)}>
+            Show the code on the Map →
+          </button>
+        ) : null}
+        {node.kind === 'type' && view === 'map' ? (
+          <button className="btn-ghost panel-cross" onClick={() => onShowInDataModel(node.id)}>
+            See it on the Data model →
           </button>
         ) : null}
         {/* SPEC.md 6.5's "explain like I'm new": the same facts, walked instead of listed.

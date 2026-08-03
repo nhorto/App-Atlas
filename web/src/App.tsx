@@ -45,10 +45,20 @@ import {
   setScope,
 } from './api';
 import { layoutLevel, layoutOutsideWorld, MEMBRANE_ID, sizeOf, type Positioned } from './layout';
+import {
+  ARROW_BUDGET,
+  arrowStyle,
+  budgetEdges,
+  edgeLabel,
+  filterLevel,
+  LABEL_EVERYTHING_BELOW,
+  type ShownLevel,
+} from './mapview';
 import type {
   AtlasNode,
   AtlasStats,
   BoundaryView,
+  EdgeKind,
   InsightsView,
   LevelView,
   NodeView,
@@ -61,7 +71,9 @@ import type {
 import { AtlasNodeCard, MembraneNode, zoneLabel } from './components/AtlasNodeCard';
 import { BoundaryScreen } from './components/BoundaryScreen';
 import { DetailPanel } from './components/DetailPanel';
+import { FolderTree } from './components/FolderTree';
 import { InsightsScreen } from './components/InsightsScreen';
+import { MapKey } from './components/MapKey';
 import { OverviewScreen } from './components/OverviewScreen';
 import { SearchPalette } from './components/SearchPalette';
 import { TypeScreen } from './components/TypeScreen';
@@ -70,6 +82,19 @@ import { Walkthrough } from './components/Walkthrough';
 const nodeTypes = { atlas: AtlasNodeCard, membrane: MembraneNode };
 
 const ZONES: Zone[] = ['ui', 'api', 'logic', 'data', 'config', 'test'];
+
+/**
+ * Hidden when the Map first opens.
+ *
+ * Someone opening the Map is asking *what is my app*, and test code is not part of that
+ * answer — it is part of how the app is checked. On this repo `test/fixtures` alone is
+ * 175 files against 84 of source, so the default the other way round shows a picture of
+ * the tests with the tool somewhere inside it.
+ *
+ * A map that quietly omits a sixth of the repo is the failure this project exists to
+ * avoid, so the key says what it is holding back, with the count, at all times (#91).
+ */
+const HIDDEN_BY_DEFAULT: Zone[] = ['test'];
 
 type ViewName = 'boundaries' | 'overview' | 'map' | 'types' | 'insights';
 
@@ -96,13 +121,31 @@ const TABS: { view: ViewName; label: string }[] = [
  * fix that — "Map" and "Data model" only mean something once you already know what
  * they contain — so every view now says its question in the same place, in the reader's
  * words rather than ours.
+ *
+ * The Map and the Data model needed more than that (#95). Both old sentences described
+ * *structure*, which is true of both and therefore tells nobody which tab their question
+ * belongs to. The distinction that does is sharper: **the Map is the code you change;
+ * the Data model is the data you keep.** One is files you would open; the other is the
+ * records that are still there after the process exits.
  */
 const LEDES: Record<ViewName, string> = {
   boundaries: 'What gets into your app, and where it ends up.',
   overview: 'What this app is, and where to start reading.',
-  map: 'How your code is organized — the folders and files, and what uses what.',
-  types: 'What your data looks like — the shapes your app moves around, and how they connect.',
+  map: 'The code you would open and edit — your real folders and files, and what uses what.',
+  types: 'The data your app keeps — the shapes and tables that outlive a single run.',
   insights: 'Who can get in, where your data goes, and what you rely on.',
+};
+
+/**
+ * The screen next door, named where the confusion happens.
+ *
+ * A lede that names the other screen does more work than another paragraph about this
+ * one, because the reader's problem is never "what is on this screen" — they can see
+ * that — it is "which of these two did I want".
+ */
+const NEIGHBOURS: Partial<Record<ViewName, { lead: string; view: ViewName; name: string }>> = {
+  map: { lead: 'For the shapes this code puts data into, see the', view: 'types', name: 'Data model' },
+  types: { lead: 'For the files that read and write them, see the', view: 'map', name: 'Map' },
 };
 
 export function App() {
@@ -128,7 +171,12 @@ function AtlasApp() {
   const [stepIndex, setStepIndex] = useState(0);
   const [levelId, setLevelId] = useState<string | null>(initial.levelId);
   const [level, setLevel] = useState<LevelView | null>(null);
+  /** The level after the zone filter — what is actually on the canvas. */
+  const [shown, setShown] = useState<ShownLevel | null>(null);
   const [positions, setPositions] = useState<Map<string, Positioned>>(new Map());
+  const [hiddenZones, setHiddenZones] = useState<Set<Zone>>(() => new Set(HIDDEN_BY_DEFAULT));
+  const [showAllArrows, setShowAllArrows] = useState(false);
+  const [treeOpen, setTreeOpen] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [detail, setDetail] = useState<NodeView | null>(null);
   const [loading, setLoading] = useState(true);
@@ -270,18 +318,14 @@ function AtlasApp() {
       .catch((err: Error) => setError(err.message));
   }, [view, types]);
 
-  // --- load and lay out the current level ---
+  // --- load the current level ---
   useEffect(() => {
     if (view !== 'map' || !levelId) return;
     let cancelled = false;
     setLoading(true);
     fetchLevel(levelId)
-      .then(async (data) => {
-        const laid = await layoutLevel(data.nodes, data.edges);
-        if (cancelled) return;
-        setLevel(data);
-        setPositions(layoutOutsideWorld(laid, data.outside));
-        setLoading(false);
+      .then((data) => {
+        if (!cancelled) setLevel(data);
       })
       .catch((err: Error) => {
         if (cancelled) return;
@@ -297,6 +341,32 @@ function AtlasApp() {
       cancelled = true;
     };
   }, [view, levelId, overview, revision]);
+
+  // --- filter it, then lay out what is left ---
+  // Separate from the fetch because the filter changes without the level doing so, and
+  // elk has to run again when it does: hiding the tests removes boxes, and the arrows
+  // that ended in them go too. What is drawn and where it sits are set together, so the
+  // canvas can never be handed a node list its positions do not cover.
+  useEffect(() => {
+    if (view !== 'map' || !level) return;
+    let cancelled = false;
+    const next = filterLevel(level, hiddenZones);
+    setLoading(true);
+    layoutLevel(next.nodes, next.edges)
+      .then((laid) => {
+        if (cancelled) return;
+        setShown(next);
+        setPositions(layoutOutsideWorld(laid, next.outside));
+        setLoading(false);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [view, level, hiddenZones]);
 
   // --- load detail for the selection ---
   useEffect(() => {
@@ -343,7 +413,7 @@ function AtlasApp() {
   // arrive together with the level. The first call runs a frame after the nodes
   // render; the delayed one covers React Flow syncing its store just after that.
   useEffect(() => {
-    if (view !== 'map' || !level || positions.size === 0) return;
+    if (view !== 'map' || !shown || positions.size === 0) return;
     const options = { padding: 0.2, maxZoom: 1 };
     const frame = requestAnimationFrame(() => void fitView(options));
     const timer = window.setTimeout(() => void fitView({ ...options, duration: 250 }), 150);
@@ -351,7 +421,7 @@ function AtlasApp() {
       cancelAnimationFrame(frame);
       window.clearTimeout(timer);
     };
-  }, [view, level, positions, fitView]);
+  }, [view, shown, positions, fitView]);
 
   const go = useCallback((next: ViewName, id?: string | null) => {
     setView(next);
@@ -378,6 +448,28 @@ function AtlasApp() {
   /** Select without moving: what the boundary and security screens want. */
   const select = useCallback((id: string) => {
     if (id) setSelectedId(id);
+  }, []);
+
+  /**
+   * The same shape, seen on the other screen made of boxes and lines.
+   *
+   * The pair is what confused the reader in #95, and the cure is being able to follow
+   * the link rather than being told about it: a type on the Map is a card on the Data
+   * model, and the file that declares it is a box back on the Map.
+   */
+  const showInDataModel = useCallback((id: string) => {
+    setView('types');
+    setSelectedId(id);
+    writeHash('types', null);
+  }, []);
+
+  const toggleZone = useCallback((zone: Zone) => {
+    setHiddenZones((hidden) => {
+      const next = new Set(hidden);
+      if (next.has(zone)) next.delete(zone);
+      else next.add(zone);
+      return next;
+    });
   }, []);
 
   // --- guided tours (SPEC.md 6.4) ---
@@ -478,22 +570,22 @@ function AtlasApp() {
 
   /** The selection plus everything one hop away from it. */
   const neighborIds = useMemo(() => {
-    if (!level || !selectedId) return null;
+    if (!shown || !selectedId) return null;
     const ids = new Set<string>([selectedId]);
-    for (const edge of level.edges) {
+    for (const edge of shown.edges) {
       if (edge.fromId === selectedId) ids.add(edge.toId);
       if (edge.toId === selectedId) ids.add(edge.fromId);
     }
     return ids;
-  }, [level, selectedId]);
+  }, [shown, selectedId]);
 
   // A click during a tour wins: following your own thread is the point of being
   // allowed to detour, and "Show me again" puts the step's highlight back.
   const litIds = neighborIds ?? tourFocus;
 
   const rfNodes: Node[] = useMemo(() => {
-    if (!level) return [];
-    const cards: Node[] = level.nodes.map((node) => {
+    if (!shown) return [];
+    const cards: Node[] = shown.nodes.map((node) => {
       const placed = positions.get(node.id);
       const fallback = sizeOf(node);
       return {
@@ -519,7 +611,7 @@ function AtlasApp() {
     // card per store/service/endpoint this level talks to. Ghosts keep their real
     // atlas ids, so clicking one opens the same detail panel as the real thing.
     const membrane = positions.get(MEMBRANE_ID);
-    if (level.outside.length > 0 && membrane) {
+    if (shown.outside.length > 0 && membrane) {
       cards.push({
         id: MEMBRANE_ID,
         type: 'membrane',
@@ -532,7 +624,7 @@ function AtlasApp() {
         focusable: false,
       } satisfies Node);
 
-      for (const neighbor of level.outside) {
+      for (const neighbor of shown.outside) {
         const placed = positions.get(neighbor.node.id);
         if (!placed) continue;
         cards.push({
@@ -553,66 +645,87 @@ function AtlasApp() {
       }
     }
     return cards;
-  }, [level, positions, litIds, selectedId, drill]);
+  }, [shown, positions, litIds, selectedId, drill]);
+
+  /** The arrows the budget lets through — every one of them when there are few. */
+  const arrows = useMemo(
+    () => (shown ? budgetEdges(shown.edges, selectedId, showAllArrows) : []),
+    [shown, selectedId, showAllArrows],
+  );
 
   const rfEdges: Edge[] = useMemo(() => {
-    if (!level) return [];
-    const drawn: Edge[] = level.edges.map((edge) => {
-      const touchesSelection = selectedId === edge.fromId || selectedId === edge.toId;
-      const opacity = selectedId ? (touchesSelection ? 0.95 : 0.06) : 0.32;
-      const width = Math.min(5, 1 + Math.log2(edge.weight + 1));
+    if (!shown) return [];
+    // A level small enough to read gets every label without being asked. Above that they
+    // arrive on click, because a hundred of them is not a legible picture either.
+    const labelAll = arrows.length <= LABEL_EVERYTHING_BELOW;
+
+    /** One arrow, styled and pointed by what it actually stands for (#90). */
+    const draw = (
+      id: string,
+      fromId: string,
+      toId: string,
+      weight: number,
+      kinds: EdgeKind[] | undefined,
+      lit: boolean,
+      dashed: boolean,
+    ): Edge => {
+      const arrow = arrowStyle(kinds);
+      const colour = lit ? arrow.strokeLit : arrow.stroke;
+      const opacity = selectedId ? (lit ? 0.95 : 0.06) : dashed ? 0.45 : 0.32;
+      const width = Math.min(5, 1 + Math.log2(weight + 1));
+      const head = { type: MarkerType.ArrowClosed, width: 14, height: 14, color: colour };
       return {
-        id: edge.id,
-        source: edge.fromId,
-        target: edge.toId,
-        label: touchesSelection && edge.weight > 1 ? String(edge.weight) : undefined,
+        id,
+        source: fromId,
+        target: toId,
+        label: lit || labelAll ? edgeLabel(kinds, weight) : undefined,
         labelBgStyle: { fill: '#f4f1e9' },
         labelStyle: { fontSize: 11, fill: '#5f594b' },
         style: {
-          stroke: touchesSelection ? '#4a4436' : '#a89f8b',
-          strokeWidth: touchesSelection ? Math.max(1.6, width) : width,
+          stroke: colour,
+          strokeWidth: lit ? Math.max(1.6, width) : width,
+          ...(dashed ? { strokeDasharray: '7 5' } : {}),
           opacity,
         },
-        markerEnd: {
-          type: MarkerType.ArrowClosed,
-          width: 14,
-          height: 14,
-          color: touchesSelection ? '#4a4436' : '#a89f8b',
-        },
+        // The head sits at the end the data arrives at, which for a read is the code.
+        // React Flow's marker is defined `auto-start-reverse`, so a start marker points
+        // back down the line rather than along it.
+        ...(arrow.head === 'start' || arrow.head === 'both' ? { markerStart: head } : {}),
+        ...(arrow.head === 'end' || arrow.head === 'both' ? { markerEnd: head } : {}),
       } satisfies Edge;
-    });
+    };
+
+    const drawn: Edge[] = arrows.map((edge) =>
+      draw(
+        edge.id,
+        edge.fromId,
+        edge.toId,
+        edge.weight,
+        edge.kinds,
+        selectedId === edge.fromId || selectedId === edge.toId,
+        false,
+      ),
+    );
 
     // Flows across the membrane. Dashed where the internal edges are solid: the
     // difference between "these two files talk" and "this one leaves the building".
-    for (const neighbor of level.outside) {
+    for (const neighbor of shown.outside) {
       for (const flow of neighbor.flows) {
-        const touchesSelection = selectedId === flow.insideId || selectedId === neighbor.node.id;
-        const opacity = selectedId ? (touchesSelection ? 0.95 : 0.06) : 0.45;
-        const width = Math.min(5, 1 + Math.log2(flow.weight + 1));
-        drawn.push({
-          id: `membrane:${flow.out ? 'out' : 'in'}:${flow.insideId}->${neighbor.node.id}`,
-          source: flow.out ? flow.insideId : neighbor.node.id,
-          target: flow.out ? neighbor.node.id : flow.insideId,
-          label: touchesSelection && flow.weight > 1 ? String(flow.weight) : undefined,
-          labelBgStyle: { fill: '#f4f1e9' },
-          labelStyle: { fontSize: 11, fill: '#5f594b' },
-          style: {
-            stroke: touchesSelection ? '#4a4436' : '#a89f8b',
-            strokeWidth: touchesSelection ? Math.max(1.6, width) : width,
-            strokeDasharray: '7 5',
-            opacity,
-          },
-          markerEnd: {
-            type: MarkerType.ArrowClosed,
-            width: 14,
-            height: 14,
-            color: touchesSelection ? '#4a4436' : '#a89f8b',
-          },
-        } satisfies Edge);
+        drawn.push(
+          draw(
+            `membrane:${flow.out ? 'out' : 'in'}:${flow.insideId}->${neighbor.node.id}`,
+            flow.out ? flow.insideId : neighbor.node.id,
+            flow.out ? neighbor.node.id : flow.insideId,
+            flow.weight,
+            flow.kinds,
+            selectedId === flow.insideId || selectedId === neighbor.node.id,
+            true,
+          ),
+        );
       }
     }
     return drawn;
-  }, [level, selectedId]);
+  }, [shown, arrows, selectedId]);
 
   if (error) {
     return (
@@ -626,6 +739,8 @@ function AtlasApp() {
 
   const crumbs = level?.breadcrumb ?? [];
   const quiet = quietViews(overview?.meta.stats);
+  const neighbour = NEIGHBOURS[view];
+  const legendZones = zonesPresent(overview, shown);
 
   // The overview page already answers "what is this app?" at full width. Showing the
   // same numbers again in the side panel is just the page twice.
@@ -679,9 +794,15 @@ function AtlasApp() {
 
         <div className="topbar-right">
           {justUpdated ? <span className="live-badge">code changed · updated</span> : null}
+          {/* The count describes the canvas, so it moves with the filter and says it is
+              moving. A number that stayed at 238 while 6 boxes were held back would be
+              the one thing #91 said was not available: silently disagreeing with the
+              picture beside it. */}
           {view === 'map' && level && level.totalChildren > 0 ? (
-            <span className="topbar-count">
-              {level.totalChildren} {level.totalChildren === 1 ? 'item' : 'items'}
+            <span className="topbar-count" title={itemCountTitle(level, shown)}>
+              {shown && shown.hiddenTotal > 0
+                ? `${shown.nodes.length} of ${level.totalChildren} items`
+                : `${level.totalChildren} ${level.totalChildren === 1 ? 'item' : 'items'}`}
               {level.truncated ? ' (showing first 400)' : ''}
             </span>
           ) : null}
@@ -692,7 +813,19 @@ function AtlasApp() {
         </div>
       </header>
 
-      <p className="view-lede">{LEDES[view]}</p>
+      <p className="view-lede">
+        {LEDES[view]}
+        {neighbour ? (
+          <span className="lede-neighbour">
+            {' '}
+            {neighbour.lead}{' '}
+            <button className="lede-link" onClick={() => go(neighbour.view, levelId)}>
+              {neighbour.name}
+            </button>
+            .
+          </span>
+        ) : null}
+      </p>
 
       <main className={view === 'map' ? 'canvas' : 'canvas canvas-page'}>
         {view === 'boundaries' ? (
@@ -748,24 +881,56 @@ function AtlasApp() {
             {/* The path you drilled, drawn on the map it describes. It used to live in
                 the top chrome, where it read as decoration and nobody found it — where
                 you are belongs on the picture, not in the corner of the frame. */}
-            {crumbs.length > 0 ? (
-              <nav className="map-crumbs" aria-label="Where you are in the map">
-                {crumbs.map((crumb: AtlasNode, index) => (
-                  <span key={crumb.id}>
-                    {index > 0 ? <span className="crumb-sep">›</span> : null}
-                    <button
-                      className={index === crumbs.length - 1 ? 'crumb is-current' : 'crumb'}
-                      onClick={() => drill(crumb.id)}
-                    >
-                      {crumb.label ?? crumb.name}
-                    </button>
-                  </span>
-                ))}
-              </nav>
-            ) : null}
+            <div className="map-topline">
+              {crumbs.length > 0 ? (
+                <nav className="map-crumbs" aria-label="Where you are in the map">
+                  {crumbs.map((crumb: AtlasNode, index) => (
+                    <span key={crumb.id}>
+                      {index > 0 ? <span className="crumb-sep">›</span> : null}
+                      <button
+                        className={index === crumbs.length - 1 ? 'crumb is-current' : 'crumb'}
+                        // The real name, never the generated one: a breadcrumb is an
+                        // address, and an address you cannot search for is not one (#94).
+                        onClick={() => drill(crumb.id)}
+                      >
+                        {crumb.name}
+                      </button>
+                    </span>
+                  ))}
+                </nav>
+              ) : null}
+              {/* The other half of "I think we kind of need both" (#94): the grouped,
+                  named boxes answer what the parts are; this answers where they are. */}
+              <button
+                className={treeOpen ? 'map-tree-toggle is-on' : 'map-tree-toggle'}
+                onClick={() => setTreeOpen((open) => !open)}
+                aria-pressed={treeOpen}
+              >
+                {treeOpen ? 'Hide folders' : 'Folders'}
+              </button>
+            </div>
             {loading ? <div className="loading">Drawing the map…</div> : null}
-            {!loading && level && level.nodes.length === 0 ? (
-              <div className="loading">Nothing inside this one.</div>
+            {!loading && shown && shown.nodes.length === 0 ? (
+              <div className="loading">
+                {shown.hiddenTotal > 0
+                  ? `Everything here is hidden by the filter — ${shown.hiddenTotal} ${
+                      shown.hiddenTotal === 1 ? 'box' : 'boxes'
+                    }.`
+                  : 'Nothing inside this one.'}
+              </div>
+            ) : null}
+
+            {treeOpen && overview ? (
+              <FolderTree
+                // Keyed on the revision so a watch-mode rebuild reloads the tree
+                // instead of leaving folders that no longer exist on screen.
+                key={revision}
+                rootId={overview.rootId}
+                levelId={levelId}
+                onDrill={drill}
+                onReveal={reveal}
+                onClose={() => setTreeOpen(false)}
+              />
             ) : null}
 
             <ReactFlow
@@ -800,14 +965,16 @@ function AtlasApp() {
               />
             </ReactFlow>
 
-            <div className="legend">
-              {ZONES.map((zone) => (
-                <span key={zone} className="legend-item">
-                  <span className={`dot zone-${zone}`} />
-                  {zoneLabel(zone)}
-                </span>
-              ))}
-            </div>
+            <MapKey
+              zones={legendZones}
+              hiddenZones={hiddenZones}
+              hidden={shown?.hidden ?? []}
+              onToggleZone={toggleZone}
+              arrowsShown={arrows.length}
+              arrowsTotal={shown?.edges.length ?? 0}
+              showAllArrows={showAllArrows}
+              onToggleArrows={() => setShowAllArrows((all) => !all)}
+            />
 
             <div className="hint">
               Click to inspect · Press › or double-click to look inside · Backspace to go back
@@ -838,6 +1005,7 @@ function AtlasApp() {
           onReveal={reveal}
           onDrill={drill}
           onStartTour={startTour}
+          onShowInDataModel={showInDataModel}
           onClose={() => setSelectedId(null)}
         />
       ) : null}
@@ -905,6 +1073,32 @@ function quietViews(stats: AtlasStats | undefined): Set<ViewName> {
   if (stats.routes === 0 && stats.externalServices === 0 && stats.envVars === 0) quiet.add('insights');
   if (stats.types === 0) quiet.add('types');
   return quiet;
+}
+
+/**
+ * The zones this project actually has, in the fixed order the colour language uses.
+ *
+ * The old legend printed all six whether or not the repo had any of them, so a project
+ * with no `api` zone still got an API dot — inviting the reader to go looking for
+ * something that is not there. Counted app-wide rather than per level, because the key
+ * describes the colours of the whole map; the union with what is on screen covers the
+ * kinds of node that are not files and so are not in the file census.
+ */
+function zonesPresent(overview: OverviewView | null, shown: ShownLevel | null): Zone[] {
+  const present = new Set<Zone>();
+  for (const [zone, count] of Object.entries(overview?.zoneCounts ?? {})) {
+    if (count > 0) present.add(zone as Zone);
+  }
+  for (const node of shown?.nodes ?? []) present.add(node.zone);
+  for (const entry of shown?.hidden ?? []) present.add(entry.zone);
+  return ZONES.filter((zone) => present.has(zone));
+}
+
+/** What the item count means when a filter is on, spelled out rather than implied. */
+function itemCountTitle(level: LevelView, shown: ShownLevel | null): string {
+  if (!shown || shown.hiddenTotal === 0) return `Everything at this level of the map`;
+  const parts = shown.hidden.map((entry) => `${entry.count} ${zoneLabel(entry.zone).toLowerCase()}`);
+  return `${shown.nodes.length} of ${level.totalChildren} boxes are drawn — the filter is holding back ${parts.join(', ')}.`;
 }
 
 function writeHash(view: ViewName, levelId: string | null): void {
