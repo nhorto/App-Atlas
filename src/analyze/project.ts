@@ -12,6 +12,7 @@ import ignoreFactory from 'ignore';
 import type { Zone } from '../model/types.js';
 import { goFrameworkFor } from './generic/go/frameworks.js';
 import { dotnetFrameworkFor, DOTNET_SDKS } from './generic/csharp/frameworks.js';
+import { rustFrameworkFor } from './generic/rust/frameworks.js';
 import { extOf, relPosix, toPosix } from '../util/paths.js';
 import { readSignals } from './signals.js';
 import type { ProjectSignals } from './signals.js';
@@ -77,7 +78,7 @@ export interface DiscoverOptions {
   repoRoot?: string;
 }
 
-export const SOURCE_GLOB = '**/*.{ts,tsx,mts,cts,js,jsx,mjs,cjs,py,pyi,ipynb,go,cs}';
+export const SOURCE_GLOB = '**/*.{ts,tsx,mts,cts,js,jsx,mjs,cjs,py,pyi,ipynb,go,cs,rs}';
 
 /**
  * Single-file component formats: a module in every sense except that nothing here can
@@ -328,6 +329,10 @@ function detectFrameworks(pkg: Record<string, unknown> | null, signals: ProjectS
   }
   for (const id of signals.dotnetPackages) {
     const label = dotnetFrameworkFor(id);
+    if (label) out.add(label);
+  }
+  for (const crate of signals.cargoPackages) {
+    const label = rustFrameworkFor(crate);
     if (label) out.add(label);
   }
   // ASP.NET Core ships inside the runtime rather than as a dependency, so a web service

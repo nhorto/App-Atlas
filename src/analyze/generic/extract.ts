@@ -226,6 +226,7 @@ function newDef(
     params: [],
     returns: returns ? collapse(returns.text) : '',
     exported: dialect.exported(name.text),
+    decorators: [] as string[],
     fields: [] as GField[],
     uses: [] as string[],
     qualifiedUses: [] as string[],
@@ -359,11 +360,18 @@ function attachDocs(file: GenericFile, dialect: Dialect, root: Node): void {
   //
   // Collecting more comments cannot attach a wrong one: a doc is still only the block
   // whose last line sits immediately above the declaration.
-  const comments = root.descendantsOfType(dialect.comment);
+  const commentTypes = new Set(Array.isArray(dialect.comment) ? dialect.comment : [dialect.comment]);
+  const comments = root.descendantsOfType([...commentTypes]);
   if (comments.length === 0 && file.defs.length === 0) return;
 
+  // A node that ends at column 0 really ended on the line before — tree-sitter-rust's
+  // comments swallow their trailing newline, which put every one of them "ending" on
+  // the line of the thing below and made no doc in the language ever attach.
   const byEndLine = new Map<number, Node>();
-  for (const comment of comments) byEndLine.set(comment.endPosition.row + 1, comment);
+  for (const comment of comments) {
+    const endLine = comment.endPosition.column === 0 ? comment.endPosition.row : comment.endPosition.row + 1;
+    byEndLine.set(endLine, comment);
+  }
 
   /** Walks up through contiguous comment lines and joins them. */
   const blockAbove = (line: number): string | null => {
@@ -380,7 +388,7 @@ function attachDocs(file: GenericFile, dialect: Dialect, root: Node): void {
 
   // The file's own doc is the block above whatever it declares first — a Go package
   // clause, an import, a function. Anything lower down is a comment about that thing.
-  const first = root.namedChildren.find((n) => Boolean(n) && n.type !== dialect.comment);
+  const first = root.namedChildren.find((n) => Boolean(n) && !commentTypes.has(n.type));
   if (first) file.doc = blockAbove(first.startPosition.row + 1);
 }
 

@@ -48,7 +48,7 @@ export function grammarTier(nodes: readonly AtlasNode[]): TierNote | null {
 }
 
 /** `go` → `Go`. A table now that there is more than one exception to title-casing. */
-const LABELS: Record<string, string> = { go: 'Go', csharp: 'C#' };
+const LABELS: Record<string, string> = { go: 'Go', csharp: 'C#', rust: 'Rust' };
 
 function label(id: string): string {
   return LABELS[id] ?? id.charAt(0).toUpperCase() + id.slice(1);

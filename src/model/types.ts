@@ -70,7 +70,13 @@ export type EndpointKind =
   // not even HTTP. Kept out of the auth-coverage count deliberately, and for the same
   // reason `screen` is: a web server publishing port 80 is the point, not a finding,
   // and a headline where most rows are unalarming is a headline people stop reading.
-  | 'port';
+  | 'port'
+  // A command a desktop app's own interface calls across its process boundary — a
+  // `#[tauri::command]` the webview invokes. A door in every sense that matters to the
+  // map (it is how anything reaches the engine), and kept out of the auth-coverage
+  // count for the reason `screen` is: the caller is the app's own interface, not a
+  // stranger, and "no auth check" on one would be a false alarm.
+  | 'ipc';
 
 /** What a third party does for you — drives the grouping in the boundary view. */
 export type ServiceCategory =

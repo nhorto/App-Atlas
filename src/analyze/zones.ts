@@ -103,6 +103,34 @@ function classifyGoZone(lower: string, base: string): Zone {
 }
 
 /**
+ * Rust's own words for the same roles.
+ *
+ * Its own table for the reason the others have one. `tests/` and `benches/` are
+ * Cargo's, `schema.rs` is Diesel's generated schema and `migrations/` is where both
+ * ORMs keep theirs, and `commands.rs` is where a Tauri app keeps the doors its webview
+ * calls — none of which the JavaScript table could know without being wrong about
+ * JavaScript.
+ */
+const RUST_TEST = [/(^|\/)tests?\//, /(^|\/)benches\//, /_test\.rs$/];
+const RUST_CONFIG = new Set(['build.rs', 'config.rs', 'settings.rs', 'options.rs']);
+const RUST_DATA = new Set(['schema.rs', 'models.rs', 'model.rs', 'db.rs', 'database.rs', 'store.rs', 'repository.rs', 'queries.rs', 'entities.rs']);
+const RUST_DATA_DIRS = [/(^|\/)migrations?\//, /(^|\/)models?\//, /(^|\/)entities\//, /(^|\/)db\//, /(^|\/)database\//, /(^|\/)store\//, /(^|\/)repositor(y|ies)\//];
+const RUST_API = new Set(['routes.rs', 'router.rs', 'handlers.rs', 'handler.rs', 'server.rs', 'api.rs', 'commands.rs', 'middleware.rs']);
+const RUST_API_DIRS = [/(^|\/)api\//, /(^|\/)routes?\//, /(^|\/)handlers?\//, /(^|\/)controllers?\//, /(^|\/)server\//, /(^|\/)commands?\//, /(^|\/)rpc\//];
+const RUST_UI_DIRS = [/(^|\/)templates?\//, /(^|\/)static\//, /(^|\/)views?\//, /(^|\/)ui\//];
+
+function classifyRustZone(lower: string, base: string): Zone {
+  if (RUST_TEST.some((r) => r.test(lower))) return 'test';
+  if (RUST_DATA.has(base) || RUST_DATA_DIRS.some((r) => r.test(lower))) return 'data';
+  if (RUST_API.has(base) || RUST_API_DIRS.some((r) => r.test(lower))) return 'api';
+  if (RUST_UI_DIRS.some((r) => r.test(lower))) return 'ui';
+  if (RUST_CONFIG.has(base)) return 'config';
+  // `main.rs` is the wiring, the way a Go `cmd/` is: the doors it mounts are declared
+  // elsewhere, and colouring the entry point as API would put the plumbing in with them.
+  return 'logic';
+}
+
+/**
  * Classifies a repo-relative file path into a zone. Order matters: the most specific
  * signals (tests, config, data) win over the broadest ones (a file under `app/`).
  */
@@ -113,6 +141,7 @@ export function classifyZone(relPath: string): Zone {
 
   if (ext === '.py' || ext === '.pyi') return classifyPythonZone(lower, base);
   if (ext === '.go') return classifyGoZone(lower, base);
+  if (ext === '.rs') return classifyRustZone(lower, base);
 
   // A notebook is where the analysis itself lives, whatever it is named. The Python
   // filename conventions do not apply — nobody calls a notebook `models.py`.

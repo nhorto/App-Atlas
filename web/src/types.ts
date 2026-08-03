@@ -41,7 +41,11 @@ export type EndpointKind =
   | 'cli'
   | 'env'
   | 'file-read'
-  | 'screen';
+  | 'screen'
+  | 'export'
+  | 'port'
+  /** A command the desktop app's own interface calls — a `#[tauri::command]`. */
+  | 'ipc';
 
 export type ServiceCategory =
   | 'payments'

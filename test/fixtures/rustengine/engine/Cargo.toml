@@ -1,0 +1,12 @@
+# The in-process, pure-Rust rewrite of the Python data-gen.
+[package]
+name = "fabis-engine"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+serde = { workspace = true }
+sqlx = { version = "0.8", features = ["mysql", "runtime-tokio"] }
+
+[dev-dependencies]
+tokio = "1"

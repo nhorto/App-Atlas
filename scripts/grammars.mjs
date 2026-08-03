@@ -30,6 +30,14 @@ export const GRAMMARS = [
     license: 'MIT',
     sha256: '6f69e1cae44e1c32c1eccc170dc5a9778fb94ff716f71113fe1f8c4299aa2f40',
   },
+  {
+    id: 'rust',
+    package: 'tree-sitter-rust',
+    version: '0.24.0',
+    entry: 'tree-sitter-rust.wasm',
+    license: 'MIT',
+    sha256: 'f65f354215611fd94ad34134b3427eb3d58cbb745df7b6509ba722184db73d57',
+  },
 ];
 
 /** Where a fetched grammar lands, repo-relative. */

@@ -58,8 +58,11 @@ export interface Dialect {
    * prefix.
    */
   calls: Set<string>;
-  /** Node type for a comment. */
-  comment: string;
+  /**
+   * Node type for a comment. An array where a grammar splits them: tree-sitter-rust
+   * has `line_comment` and `block_comment` and nothing called `comment` at all.
+   */
+  comment: string | string[];
 
   /**
    * What groups declarations into one namespace a file can see without qualification.
@@ -72,6 +75,27 @@ export interface Dialect {
    * an empty "where to look first" (#96).
    */
   scope?: 'directory' | 'namespace';
+
+  /**
+   * Namespace scope, where one namespace is one file rather than a region of the repo.
+   *
+   * Rust is the reason. A `use crate::modules::estimating` names *a file* the way a Go
+   * import names a directory — so the import edge is the import itself and does not
+   * have to earn itself name by name the way a C# `using` must; and a module's
+   * ancestors are other files whose names are *not* visible without a `use`, so the
+   * bare-name pass must not walk outward the way C#'s resolution rules say to.
+   */
+  namespaceIsAFile?: boolean;
+
+  /**
+   * Whether an import names a third-party dependency rather than more of this repo.
+   *
+   * The default is Go's rule — the first path segment names a host, so a dot in it
+   * means the internet — which is exactly wrong for a language whose external
+   * dependencies are bare crate names. A dialect that resolves its own imports knows
+   * the difference and says so here.
+   */
+  externalImport?(module: string): boolean;
 
   /** Turns a string literal node's text into the string it denotes. */
   unquote(text: string): string;

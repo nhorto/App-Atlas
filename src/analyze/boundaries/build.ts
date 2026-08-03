@@ -1106,11 +1106,23 @@ function pushGuard(endpoint: MergedEndpoint, guard: GuardInfo): void {
 /**
  * The env bundle isn't served by a web framework, so its `framework` says which runtime
  * reads the config — named after where the reads actually are. Calling a pure-Python
- * project's config "Node" was just wrong.
+ * project's config "Node" was just wrong, and a pure-Rust project's the same.
  */
 function envRuntime(sites: CodeSite[]): string {
-  const python = sites.filter((s) => /\.pyi?$/.test(s.path)).length;
-  return python > sites.length / 2 ? 'Python' : 'Node';
+  const byExtension = new Map<string, number>();
+  for (const site of sites) {
+    const runtime = /\.pyi?$/.test(site.path) ? 'Python' : /\.go$/.test(site.path) ? 'Go' : /\.rs$/.test(site.path) ? 'Rust' : /\.cs$/.test(site.path) ? '.NET' : 'Node';
+    byExtension.set(runtime, (byExtension.get(runtime) ?? 0) + 1);
+  }
+  let best = 'Node';
+  let bestCount = 0;
+  for (const [runtime, count] of byExtension) {
+    if (count > bestCount) {
+      best = runtime;
+      bestCount = count;
+    }
+  }
+  return bestCount > sites.length / 2 ? best : 'Node';
 }
 
 /**
@@ -1466,6 +1478,7 @@ const ENDPOINT_ZONES: Record<EndpointKind, Zone> = {
   cron: 'api',
   queue: 'api',
   realtime: 'api',
+  ipc: 'api',
   cli: 'config',
   env: 'config',
   'file-read': 'data',

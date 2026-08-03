@@ -1,0 +1,12 @@
+[package]
+name = "fabis-app"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+tauri = "2"
+fabis-engine = { path = "../../engine" }
+
+[dependencies.sqlx]
+version = "0.8"
+features = ["mysql"]

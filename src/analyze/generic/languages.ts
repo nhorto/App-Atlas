@@ -17,6 +17,8 @@ import { goDialect } from './go/dialect.js';
 import { detectGoBoundaries } from './go/boundaries.js';
 import { csharpDialect } from './csharp/dialect.js';
 import { detectCSharpBoundaries } from './csharp/boundaries.js';
+import { rustDialect } from './rust/dialect.js';
+import { detectRustBoundaries } from './rust/boundaries.js';
 import type { GenericFile } from './ir.js';
 
 export interface BoundaryInput {
@@ -54,6 +56,7 @@ export interface GenericLanguage {
 export const LANGUAGES: GenericLanguage[] = [
   { dialect: goDialect, boundaries: detectGoBoundaries },
   { dialect: csharpDialect, boundaries: detectCSharpBoundaries },
+  { dialect: rustDialect, boundaries: detectRustBoundaries },
 ];
 
 /** The language that claims a file, by extension, or null when none does. */

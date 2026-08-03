@@ -158,6 +158,13 @@ export interface ProjectSignals {
   /** `Microsoft.NET.Sdk.Web` and friends — how a .NET project says what kind it is. */
   dotnetSdks: Set<string>;
   /**
+   * Crate names every `Cargo.toml` in the repo depends on, as written — Cargo names
+   * use hyphens and are never scoped. Kept apart from the npm, PyPI, Go and NuGet
+   * sets for the reason those four are kept apart: a name that means one thing on
+   * crates.io must never switch on another ecosystem's detector.
+   */
+  cargoPackages: Set<string>;
+  /**
    * `<OutputType>` values across the repo's project files — `Exe`, `WinExe`, `Library`.
    *
    * The .NET equivalent of a `bin` entry in package.json: a line somebody wrote saying
@@ -245,6 +252,7 @@ export function readSignals(
     ...readPythonPackages(root),
     ...readGoModule(root),
     ...readDotnetProjects(root),
+    cargoPackages: readCargoManifests(root),
     ...readEnvExample(root),
     declaresAPackage: readsAsAPackage(root, packageJson),
     entryPoints: readEntryPoints(root, packageJson),
@@ -603,6 +611,67 @@ function readDotnetProjects(root: string): {
   }
 
   return { dotnetPackages: packages, dotnetSdks: sdks, dotnetOutputTypes: outputTypes };
+}
+
+/**
+ * Every crate the repo's `Cargo.toml` files depend on.
+ *
+ * Read with the same bargain go.mod and the .csproj files are read on: a line parser
+ * over the handful of shapes real manifests use, not a TOML grammar. A dependency is a
+ * key under `[dependencies]` (dev and build included — a detector gated on a crate the
+ * repo only tests with still describes code that is really there), a
+ * `[dependencies.foo]` section header, or a key under `[workspace.dependencies]`,
+ * which is where a workspace keeps the versions its members inherit.
+ *
+ * Searched a few levels deep because a workspace puts each crate in its own folder —
+ * `engine/Cargo.toml`, `app/src-tauri/Cargo.toml` — and the root manifest often
+ * declares nothing but the member list.
+ */
+function readCargoManifests(root: string): Set<string> {
+  const packages = new Set<string>();
+
+  const files: string[] = [];
+  const scan = (dir: string, depth: number) => {
+    if (depth > 3 || files.length > 100) return;
+    let entries: fs.Dirent[];
+    try {
+      entries = fs.readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const entry of entries) {
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) {
+        if (/^(node_modules|\.git|target|vendor|dist|build)$/i.test(entry.name)) continue;
+        scan(full, depth + 1);
+      } else if (entry.name === 'Cargo.toml') {
+        files.push(full);
+      }
+    }
+  };
+  scan(root, 0);
+
+  const DEPENDENCY_SECTION = /^\[(?:workspace\.|target\.[^\]]+\.)?(?:dependencies|dev-dependencies|build-dependencies)\]$/;
+  const INLINE_DEPENDENCY = /^\[(?:workspace\.|target\.[^\]]+\.)?(?:dependencies|dev-dependencies|build-dependencies)\.([A-Za-z0-9_-]+)\]$/;
+
+  for (const file of files) {
+    let inDependencies = false;
+    for (const raw of splitLines(readText(file))) {
+      const line = raw.replace(/#.*$/, '').trim();
+      if (!line) continue;
+      if (line.startsWith('[')) {
+        const inline = INLINE_DEPENDENCY.exec(line);
+        if (inline) packages.add(inline[1]);
+        inDependencies = DEPENDENCY_SECTION.test(line);
+        continue;
+      }
+      if (!inDependencies) continue;
+      const key = /^([A-Za-z0-9_-]+)\s*=/.exec(line);
+      if (key) packages.add(key[1]);
+    }
+  }
+
+  return packages;
 }
 
 /** PyPI treats `-`, `_` and `.` as the same character, and so does everyone else. */
