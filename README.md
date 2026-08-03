@@ -33,7 +33,7 @@ Two rules keep it trustworthy:
 ## Status
 
 **Milestones M1–M5 are complete.** The CLI, the TypeScript/JavaScript analyzer, the
-Python and Go and C# analyzers, the atlas data model, incremental re-analysis, watch mode, the
+Python, Go, C# and Rust analyzers, the atlas data model, incremental re-analysis, watch mode, the
 drill-down architecture map, the boundary view, the security badges, the plain-English
 explanations, the type explorer, guided walkthroughs, monorepo scopes and the
 `ATLAS.md` export all work on real repositories. See [the roadmap](#roadmap) and
@@ -479,6 +479,45 @@ links between files marked **likely**.
 
 [ts-cs]: https://github.com/tree-sitter/tree-sitter-c-sharp
 
+## Rust, at the same tier
+
+```bash
+app-atlas ~/code/my-tauri-app
+```
+
+The language that used to be the biggest blank on a mixed repo's map — a Tauri desktop
+app keeps its whole engine in Rust, and a 12,000-line crate the map does not mention is
+a map that moves the centre of gravity of the app. A Rust crate now gets its files, its
+functions and methods under the types their `impl` blocks name, its structs, enums and
+traits with their fields, and its `///` and `//!` doc comments read verbatim — including
+the ones sitting above a `#[derive(…)]`, which is where Rust actually puts them.
+
+**The module system is read as the language defines it.** `mod estimating;` is the
+include it is, `use crate::modules::estimating::load_estimates` is followed to the file
+that declares it, and `pub` — the word, not a naming convention — is what makes a name
+part of the crate's surface. `pub(crate)` deliberately does not count: it is visible
+inside the crate and no further, and rounding it up is the direction this tool never
+rounds.
+
+**`#[tauri::command]` is a door.** It is how anything reaches a desktop app's engine,
+so it appears on the boundary — under its own family, *Commands your screens call* —
+and never in the auth coverage count, because the caller is the app's own interface and
+"no auth check" on one would be a false alarm.
+
+**Data through sqlx**, with the table and the direction read out of the SQL itself, the
+macro and function forms alike; and every `std::env::var` in the config inventory.
+
+**Vendored crates and `target/` never reach the map.** A repo carrying `cargo vendor`
+output or a warm build directory would otherwise drown its own source — the repo that
+asked for this plugin had 77 files of somebody else's MySQL driver in `vendor/`.
+
+The grammar is a WebAssembly file this repo ships, from [tree-sitter-rust][ts-rs] and
+checked against a recorded hash. No Rust toolchain is involved and none is needed. The
+same trade Go and C# make applies here and is stated in the same places: a grammar, no
+resolution, links between files marked **likely**.
+
+[ts-rs]: https://github.com/tree-sitter/tree-sitter-rust
+
 ## Monorepos get one map each
 
 ```
@@ -598,7 +637,7 @@ CLI ──▶ Analyzer ──▶ Atlas model ──▶ Enricher ──▶ Local 
 After v1.0, in rough order of how useful they'd be: a "what changed" overlay that shows
 what your agent just did to the map, with the new routes glowing; cross-package tracing
 so a monorepo can follow a call from the web app through a shared package into the API;
-and more language plugins — the seam is proven now that Go and C# both go through it.
+and more language plugins — the seam is proven now that Go, C# and Rust all go through it.
 (The MCP server that used to head this list shipped — see
 [Or let it ask questions](#or-let-it-ask-questions).)
 
@@ -649,7 +688,7 @@ follows. Contributions are welcome, particularly:
   [`queries/go.scm`](src/analyze/generic/queries/go.scm), and a dialect the size of
   [`go/dialect.ts`](src/analyze/generic/go/dialect.ts) — after which the repo has its
   files, functions, types and imports. Boundary detectors on top are optional and
-  separate. Ruby, Java, C#, Rust, Kotlin, PHP and Swift are all wide open. The deeper
+  separate. Ruby, Java, Kotlin, PHP and Swift are all wide open. The deeper
   tiers are [`src/analyze/ts/`](src/analyze/ts/) and
   [`src/analyze/py/`](src/analyze/py/), at different depths on purpose.
 - **Boundary detectors.** A detector is one small file that recognises one family of
