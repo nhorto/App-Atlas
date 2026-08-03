@@ -1104,6 +1104,16 @@ function pushGuard(endpoint: MergedEndpoint, guard: GuardInfo): void {
 // ---------------------------------------------------------------------------
 
 /**
+ * The env bundle isn't served by a web framework, so its `framework` says which runtime
+ * reads the config — named after where the reads actually are. Calling a pure-Python
+ * project's config "Node" was just wrong.
+ */
+function envRuntime(sites: CodeSite[]): string {
+  const python = sites.filter((s) => /\.pyi?$/.test(s.path)).length;
+  return python > sites.length / 2 ? 'Python' : 'Node';
+}
+
+/**
  * Every env read in the project becomes one door, not one per variable — otherwise a
  * normal app buries its twelve real entry points under forty config boxes. The
  * variables themselves live in the node's metadata and drive the secrets badge.
@@ -1137,7 +1147,7 @@ function collectEnv(input: BuildInput): MergedEndpoint | null {
       endpointKind: 'env',
       method: 'ENV',
       route: null,
-      framework: 'Node',
+      framework: envRuntime(sites),
       guards: [],
       writes: false,
       sites,
