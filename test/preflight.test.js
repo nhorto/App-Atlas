@@ -13,7 +13,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { promisify } from 'node:util';
 import { isSqliteExperimentalWarning, nodeIsTooOld } from '../dist/node/preflight.js';
 import { displayPath, ignoreAtlasDirectory } from '../dist/node/index.js';
@@ -40,7 +40,10 @@ async function withNodeVersion(version) {
     fs.writeFileSync(
       shim,
       `Object.defineProperty(process.versions, 'node', { value: ${JSON.stringify(version)}, configurable: true });\n` +
-        `await import(${JSON.stringify(CLI)});\n`,
+        // A URL, not a path: `import('C:\\…')` is not a specifier Windows accepts, and
+        // the failure looked exactly like the guard firing — every case exiting 1,
+        // including the ones that should have passed.
+        `await import(${JSON.stringify(pathToFileURL(CLI).href)});\n`,
     );
     try {
       const { stdout, stderr } = await run(process.execPath, [shim, '--version'], { cwd: dir });
