@@ -268,8 +268,15 @@ export const csharpDialect: Dialect = {
       if (node) def.exported = isPublicDeclaration(node);
       // `class Sync : BackgroundService` — the base list is the declaration a detector
       // needs to see, and the capture vocabulary has no name for it, so it is read off
-      // the tree here the way visibility is.
-      if (node && def.kind === 'type') def.bases = baseNames(node);
+      // the tree here the way visibility is. `partial` is the same situation again: the
+      // keyword is the entire evidence that two files declare one class (#97).
+      if (node && def.kind === 'type') {
+        def.bases = baseNames(node);
+        for (let i = 0; i < node.namedChildCount; i++) {
+          const child = node.namedChild(i);
+          if (child?.type === 'modifier' && child.text === 'partial') def.partial = true;
+        }
+      }
     }
 
     // A member's modifiers belong to the declaration that wrote it, so walk the members

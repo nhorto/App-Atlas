@@ -92,6 +92,12 @@ export interface GDef {
    * languages whose dialect does not collect them.
    */
   bases: string[];
+  /**
+   * One part of a type the language allows to be split across files — C#'s `partial`.
+   * Set on every part or on none: a class without the keyword cannot be split, which is
+   * what lets the parts merge without ever merging two types that merely share a name.
+   */
+  partial?: boolean;
   /** Struct, class or interface members. */
   fields: GField[];
   /** Every bare identifier mentioned inside, for the reference pass to resolve. */
