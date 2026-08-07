@@ -9,6 +9,7 @@ export type { AnalyzeOptions, AnalyzeResult } from './analyze/index.js';
 export { collectAppFacts, enrichAtlas } from './enrich/index.js';
 export type { CostEstimate, EnrichOptions, EnrichReport } from './enrich/index.js';
 export { selectBackend } from './enrich/backends/index.js';
+export { agentCliById } from './enrich/backends/agent-cli.js';
 export { describeRun, writeTheWords } from './enrich/session.js';
 export { explanationKey, estimateTokens, PROMPT_VERSION } from './enrich/types.js';
 export type { CachedExplanation, EnrichBackend, EnrichRequest, EnrichTier } from './enrich/types.js';

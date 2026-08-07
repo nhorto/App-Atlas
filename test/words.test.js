@@ -20,6 +20,7 @@ import path from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 import {
+  agentCliById,
   atlasDbPath,
   AtlasStore,
   cleanLabel,
@@ -799,3 +800,104 @@ test('a group of one file is not "1 files"', async () => {
 function escapeRe(text) {
   return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
+
+// ---------------------------------------------------------------------------
+// Nothing happens silently (#111)
+// ---------------------------------------------------------------------------
+
+/** Runs `writeTheWords` against a real temp repo with a stub backend, capturing stdout. */
+async function runWithBackend(backend) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'atlas-say-'));
+  const lines = [];
+  const realLog = console.log;
+  console.log = (...args) => lines.push(args.join(' '));
+  try {
+    fs.cpSync(FIXTURE, dir, { recursive: true });
+    const { atlas } = await analyzeProject(dir, { followReferences: true, cache: 'off' });
+    const report = await writeTheWords({ root: dir, atlas, enabled: true, backend });
+    return { report, out: lines.join('\n') };
+  } finally {
+    console.log = realLog;
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+test('a run that spends a subscription says so before it spends it', async () => {
+  // The bug this pins: a bare `analyze` on a fresh install went away for twenty
+  // seconds and came back having written fifteen explanations, reporting a real cost
+  // *after* the money. "Free at the margin" is not free — it is somebody's plan quota
+  // and their time — and the announcement is unconditional even where the question
+  // is not.
+  const { report, out } = await runWithBackend(stubBackend({ billing: 'subscription' }));
+  assert.ok(report.described + report.labelled > 0, 'the stub did write something');
+  assert.match(out, /Writing \d+ descriptions with Stub/);
+  assert.match(out, /--no-ai/, 'and it says how to stop it');
+});
+
+test('the announcement names the machine when the model runs on it', async () => {
+  const { out } = await runWithBackend(stubBackend({ billing: 'local' }));
+  assert.match(out, /on this machine/);
+  assert.doesNotMatch(out, /subscription/);
+});
+
+test('a CLI that prices its own probe is metered, whatever the table says', { skip: process.platform === 'win32' && 'needs a POSIX shim on PATH' }, async () => {
+  // An agent CLI is *assumed* to be a subscription, and usually is. Authenticated with
+  // an API key it bills per token instead — and the probe, which is one real request,
+  // comes back priced. That number is evidence and the assumption is a guess, so the
+  // evidence wins before the first paid batch rather than after it.
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'atlas-cli-'));
+  try {
+    const shim = path.join(dir, 'claude');
+    fs.writeFileSync(
+      shim,
+      '#!/bin/sh\ncat > /dev/null\nprintf \'{"result":"ATLAS_READY","total_cost_usd":0.004,"usage":{"input_tokens":10,"output_tokens":2}}\'\n',
+    );
+    fs.chmodSync(shim, 0o755);
+    const realPath = process.env.PATH;
+    process.env.PATH = `${dir}${path.delimiter}${realPath}`;
+    try {
+      const backend = agentCliById('claude');
+      assert.equal(backend.billing, 'subscription', 'the assumption before any evidence');
+      const check = await backend.probe();
+      assert.equal(check.ok, true);
+      assert.equal(backend.billing, 'metered', 'the priced probe overturned it');
+    } finally {
+      process.env.PATH = realPath;
+    }
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('a CLI whose probe costs nothing stays a subscription', { skip: process.platform === 'win32' && 'needs a POSIX shim on PATH' }, async () => {
+  // The other direction matters just as much: interrupting somebody for a flat-fee
+  // tool they already pay for is friction with nothing on the other side of the scale.
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'atlas-cli-'));
+  try {
+    const shim = path.join(dir, 'claude');
+    fs.writeFileSync(shim, '#!/bin/sh\ncat > /dev/null\nprintf \'{"result":"ATLAS_READY","total_cost_usd":0}\'\n');
+    fs.chmodSync(shim, 0o755);
+    const realPath = process.env.PATH;
+    process.env.PATH = `${dir}${path.delimiter}${realPath}`;
+    try {
+      const backend = agentCliById('claude');
+      await backend.probe();
+      assert.equal(backend.billing, 'subscription');
+    } finally {
+      process.env.PATH = realPath;
+    }
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('a metered backend still gets the question, not the announcement', async () => {
+  // The question carries the number and waits for an answer; replacing it with a line
+  // of prose would be a downgrade. Non-interactive stdin declines, which is the
+  // existing rule and the one that must not regress.
+  const { report, out } = await runWithBackend(
+    stubBackend({ billing: 'metered', pricing: { inputPerMillion: 3, outputPerMillion: 15 } }),
+  );
+  assert.doesNotMatch(out, /Writing \d+ descriptions with Stub/);
+  assert.equal(report.declined, true, 'a non-interactive run must not spend money');
+});
