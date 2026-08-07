@@ -33,6 +33,12 @@ export interface EndpointFinding {
   /** The handler writes data somewhere. Raises the stakes of an unprotected door. */
   writes: boolean;
   guards: GuardInfo[];
+  /**
+   * How often it runs, when the code declared it — `every 5 minutes` read off a
+   * `PeriodicTimer`. Never set when the interval is configuration: "runs continuously"
+   * is true and "every 5 minutes" would be invented.
+   */
+  schedule?: string;
   site: CodeSite;
   /** The atlas node that answers this door. */
   handlerId: string | null;

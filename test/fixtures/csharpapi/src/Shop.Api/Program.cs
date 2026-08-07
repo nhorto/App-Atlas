@@ -1,10 +1,14 @@
 using Microsoft.EntityFrameworkCore;
 using Shop.Api;
 using Shop.Api.Data;
+using Shop.Api.Services;
 
 var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddDbContext<ShopContext>();
 builder.Services.AddControllers();
+// The other half of the SyncWorker evidence: the class says what it is, this line says
+// where it was wired in, and the two must land on one door.
+builder.Services.AddHostedService<SyncWorker>();
 
 var app = builder.Build();
 

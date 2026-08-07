@@ -129,6 +129,13 @@
   name: (_) @call.fn
   (attribute_argument_list)? @call.args) @call
 
+; A constructor is a call whose callee is the type: `new PeriodicTimer(…)` is where a
+; worker declares its interval, and `new Uri("https://…")` is where a typed client
+; declares its base address. Without this pattern neither exists to any detector.
+(object_creation_expression
+  type: (_) @call.fn
+  arguments: (argument_list) @call.args) @call
+
 ; --- names bound to values -------------------------------------------------
 ; `var app = builder.Build();` is the only record that `app` is a web application, and
 ; every route mapped on it afterwards says only `app`.

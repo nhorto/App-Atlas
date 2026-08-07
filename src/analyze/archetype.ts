@@ -184,7 +184,7 @@ function countDoors(nodes: AtlasNode[]): DoorCounts {
     else if (kind === 'cli') {
       if (DECLARED_CLI.has(meta.framework)) counts.declaredCli++;
       else counts.runnableFiles++;
-    } else if (kind === 'cron' || kind === 'queue') counts.scheduled++;
+    } else if (kind === 'cron' || kind === 'queue' || kind === 'worker') counts.scheduled++;
   }
   return counts;
 }

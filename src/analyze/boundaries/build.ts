@@ -407,6 +407,9 @@ function collectEndpoints(input: BuildInput): Map<string, MergedEndpoint> {
       existing.meta.writes = existing.meta.writes || finding.writes;
       for (const guard of finding.guards) existing.meta.guards.push(guard);
       if (finding.handlerId) existing.handlerIds.add(finding.handlerId);
+      // The class file read the timer and the registration did not; whichever arrived
+      // first, the door keeps the schedule somebody actually wrote down.
+      if (finding.schedule && !existing.meta.schedule) existing.meta.schedule = finding.schedule;
       for (const name of finding.paramTypes ?? []) existing.paramTypes.add(name);
       if (finding.routerVar) existing.routers.add(routerKey(finding.site.path, finding.routerVar));
       if (finding.handlerOwner) existing.owners.add(finding.handlerOwner);
@@ -423,6 +426,7 @@ function collectEndpoints(input: BuildInput): Map<string, MergedEndpoint> {
         framework: finding.framework,
         guards: [...finding.guards],
         writes: finding.writes,
+        ...(finding.schedule ? { schedule: finding.schedule } : {}),
         sites: [finding.site],
       },
       handlerIds: new Set(finding.handlerId ? [finding.handlerId] : []),
@@ -1477,6 +1481,7 @@ const ENDPOINT_ZONES: Record<EndpointKind, Zone> = {
   webhook: 'api',
   cron: 'api',
   queue: 'api',
+  worker: 'api',
   realtime: 'api',
   ipc: 'api',
   cli: 'config',

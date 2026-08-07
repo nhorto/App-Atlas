@@ -129,6 +129,10 @@ const INPUT_FAMILIES: InputFamily[] = [
   { family: 'webhooks', label: 'Webhooks', kinds: ['webhook'] },
   { family: 'cron', label: 'Scheduled jobs', kinds: ['cron'] },
   { family: 'queue', label: 'Background jobs', kinds: ['queue'] },
+  // Started by the app rather than by a schedule or a queue — a .NET hosted service.
+  // Its own family for the same reason it is its own kind: it has no schedule to print
+  // and nothing enqueues to it, and filing it under either would say one of those.
+  { family: 'workers', label: 'Background services', kinds: ['worker'] },
   { family: 'realtime', label: 'Realtime', kinds: ['realtime'] },
   // Doors a deployment file opens rather than code. Their own card, never folded in with
   // the API routes: they carry no auth verdict, and a card whose "open" badge counted
@@ -346,6 +350,7 @@ const INPUT_NOUNS: Record<string, string> = {
   webhooks: 'webhook',
   cron: 'scheduled job',
   queue: 'worker',
+  workers: 'service',
   realtime: 'subscription',
   ports: 'published port',
   exports: 'function',

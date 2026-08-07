@@ -203,6 +203,7 @@ export function detectCSharpBoundaries(input: BoundaryInput): BoundaryFinding[] 
     detectMinimalApis(input, findings, at);
     detectCheckers(input, findings);
   }
+  if (isDotnetHost(input)) detectHostedServices(input, findings, at);
   detectStores(input, findings, at);
   detectOutbound(input, findings, at);
   detectEnv(input, findings, at);
@@ -633,6 +634,128 @@ function detectCheckers(input: BoundaryInput, findings: BoundaryFinding[]): void
       },
     });
   }
+}
+
+// ---------------------------------------------------------------------------
+// Doors: hosted services, which run without anybody knocking
+// ---------------------------------------------------------------------------
+
+/**
+ * The types whose whole meaning is "this runs with the app".
+ *
+ * `BackgroundService` is an abstract class with one method to override and no second
+ * reason to inherit it; the two interfaces are the same idea in older code. Nothing here
+ * matches by the *name of the app's own class* — `SyncWorker` could be anything, and the
+ * evidence is the base list, not the word Worker.
+ */
+const HOSTED_BASES = new Set(['BackgroundService', 'IHostedService', 'IHostedLifecycleService']);
+
+/**
+ * Hosting ships inside every ASP.NET runtime and inside `Microsoft.NET.Sdk.Worker`, so —
+ * exactly as with the web SDK — a real service can declare no hosting package at all.
+ */
+function isDotnetHost(input: BoundaryInput): boolean {
+  if (isAspNet(input)) return true;
+  if (input.signals.dotnetSdks?.has('Microsoft.NET.Sdk.Worker')) return true;
+  for (const id of input.signals.dotnetPackages ?? []) {
+    if (id.startsWith('Microsoft.Extensions.Hosting')) return true;
+  }
+  return input.file.imports.some((imp) => imp.module.startsWith('Microsoft.Extensions.Hosting'));
+}
+
+/**
+ * `class Sync : BackgroundService`, and `builder.Services.AddHostedService<Sync>()`.
+ *
+ * The .NET equivalent of a cron job or a queue worker: it starts with the application
+ * and touches the database and the network without any request arriving. On the repo
+ * that filed #100, one of these is what actually pushes time records to the vendor —
+ * the most consequential code in the app, and the one thing the map did not mention.
+ *
+ * Both pieces of evidence are declarations, either is enough on its own, and both emit
+ * under the same key, so a class in one file and its registration in another merge into
+ * one door that names the type and the place it was wired in.
+ */
+function detectHostedServices(
+  input: BoundaryInput,
+  findings: BoundaryFinding[],
+  at: (call: GCall, snippet?: string) => CodeSite,
+): void {
+  const { file } = input;
+
+  const worker = (className: string, schedule: string | null, site: CodeSite) => {
+    findings.push({
+      type: 'endpoint',
+      endpointKind: 'worker',
+      key: `worker ${className}`,
+      name: className,
+      method: 'RUNS',
+      route: null,
+      framework: '.NET Generic Host',
+      writes: true,
+      guards: [],
+      ...(schedule ? { schedule } : {}),
+      site,
+      // `ExecuteAsync` is the method the framework calls, so it is the handler; the
+      // class is the fallback when the override is named something older.
+      handlerId: input.nodeIdForName(`${className}.ExecuteAsync`) ?? input.nodeIdForName(className),
+      handlerOwner: className,
+    });
+  };
+
+  for (const def of file.defs) {
+    if (def.kind !== 'type' || !def.bases.some((base) => HOSTED_BASES.has(base))) continue;
+    worker(def.name, workerSchedule(file, def), {
+      path: file.path,
+      line: def.line,
+      nodeId: input.nodeIdForName(def.name) ?? input.fileId,
+      snippet: `class ${def.name} : ${def.bases.join(', ')}`,
+    });
+  }
+
+  for (const call of file.calls) {
+    if (bareMethod(call) !== 'AddHostedService') continue;
+    const typeArg = /^AddHostedService<\s*([\w.]+)\s*>$/.exec(call.method ?? '');
+    if (!typeArg) continue;
+    const className = typeArg[1].split('.').pop()!;
+    worker(className, null, at(call, `AddHostedService<${className}>()`));
+  }
+}
+
+/**
+ * The interval the class itself wrote down, or null.
+ *
+ * A `BackgroundService` usually loops on a `PeriodicTimer` or a `Task.Delay`, and the
+ * interval is sometimes a literal and sometimes configuration. Where it is a literal —
+ * `new PeriodicTimer(TimeSpan.FromMinutes(5))` — it is read; where it is not, this
+ * returns null and the door says nothing, because "runs continuously" is true and
+ * "every 5 minutes" would be invented.
+ */
+const TIMESPAN_UNITS: Record<string, string> = {
+  FromMilliseconds: 'ms',
+  FromSeconds: 'second',
+  FromMinutes: 'minute',
+  FromHours: 'hour',
+  FromDays: 'day',
+};
+
+function workerSchedule(file: GenericFile, def: GDef): string | null {
+  for (const timer of file.calls) {
+    if (timer.startIndex < def.startIndex || timer.endIndex > def.endIndex) continue;
+    const callee = timer.callee;
+    if (callee !== 'PeriodicTimer' && !/(^|\.)Task\.Delay$/.test(callee)) continue;
+
+    // The TimeSpan call is an argument, so its range sits inside the timer's.
+    for (const span of file.calls) {
+      if (span.startIndex < timer.startIndex || span.endIndex > timer.endIndex || span === timer) continue;
+      const unit = TIMESPAN_UNITS[bareMethod(span)];
+      if (!unit || !/(^|\.)TimeSpan\.\w+$/.test(span.callee)) continue;
+      const amount = span.args.find((arg) => arg.t === 'num');
+      if (!amount || amount.t !== 'num') continue;
+      if (unit === 'ms') return `every ${amount.v} ms`;
+      return amount.v === '1' ? `every ${unit}` : `every ${amount.v} ${unit}s`;
+    }
+  }
+  return null;
 }
 
 // ---------------------------------------------------------------------------

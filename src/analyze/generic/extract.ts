@@ -227,6 +227,7 @@ function newDef(
     returns: returns ? collapse(returns.text) : '',
     exported: dialect.exported(name.text),
     decorators: [] as string[],
+    bases: [] as string[],
     fields: [] as GField[],
     uses: [] as string[],
     qualifiedUses: [] as string[],

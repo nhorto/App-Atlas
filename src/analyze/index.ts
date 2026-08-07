@@ -84,7 +84,7 @@ import { dominantZone } from './zones.js';
  * fingerprint and a fingerprint that special-cased "probably unaffected" would be a
  * cache that can lie.
  */
-export const TOOL_VERSION = '0.18.0';
+export const TOOL_VERSION = '0.19.0';
 
 export interface AnalyzeOptions {
   maxFiles?: number;

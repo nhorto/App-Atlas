@@ -84,6 +84,14 @@ export interface GDef {
    * that a Rust function is a door.
    */
   decorators: string[];
+  /**
+   * What a type declares it extends or implements, by name — `BackgroundService` from
+   * `class Sync : BackgroundService`. Base names only, type arguments stripped, because
+   * a detector matches them against a closed list of framework types and
+   * `IHandler<Order>` is `IHandler` to that question. Empty for functions, and for
+   * languages whose dialect does not collect them.
+   */
+  bases: string[];
   /** Struct, class or interface members. */
   fields: GField[];
   /** Every bare identifier mentioned inside, for the reference pass to resolve. */

@@ -160,6 +160,45 @@ test('a hop-found lock is likely, never certain', () => {
 });
 
 // ---------------------------------------------------------------------------
+// Code that runs without anybody knocking (#100)
+// ---------------------------------------------------------------------------
+
+const workers = nodes.filter((node) => node.kind === 'endpoint' && node.meta.endpointKind === 'worker');
+
+test('a hosted service is a door, named once from two declarations', () => {
+  // `class SyncWorker : BackgroundService` in one file, `AddHostedService<SyncWorker>()`
+  // in another. Either alone is enough to say it runs; together they are one door that
+  // names the type and the place it was wired in — not two.
+  assert.equal(workers.length, 1, workers.map((w) => w.name).join(', '));
+  assert.equal(workers[0].name, 'SyncWorker');
+  assert.equal(workers[0].meta.framework, '.NET Generic Host');
+  const sites = workers[0].meta.sites.map((s) => s.path).sort();
+  assert.deepEqual(sites, ['src/Shop.Api/Program.cs', 'src/Shop.Api/Services/SyncWorker.cs']);
+});
+
+test('the interval it declared is read; one it did not would not be', () => {
+  // `new PeriodicTimer(TimeSpan.FromMinutes(5))` is a literal, so saying "every 5
+  // minutes" is reading, not inventing. A worker whose interval is configuration gets
+  // no schedule at all, because "runs continuously" is true and a number would be made up.
+  assert.equal(workers[0].meta.schedule, 'every 5 minutes');
+});
+
+test('its handler is ExecuteAsync, so its database calls hang off the door', () => {
+  const handler = nodes.find((node) => node.name === 'ExecuteAsync' && node.meta.ownerName === 'SyncWorker');
+  assert.ok(handler, 'the override exists as a node');
+  const answers = result.atlas.edges.filter((edge) => edge.fromId === workers[0].id && edge.toId === handler.id);
+  assert.equal(answers.length, 1, 'the door points at the method the framework calls');
+});
+
+test('a worker never enters the auth count', () => {
+  // A stranger cannot knock on it. The one number people act on must not be inflated
+  // by a door that was never reachable — the same rule crons and queues already follow.
+  assert.equal(workers[0].meta.open, undefined, 'no open-door verdict is ever written on it');
+  const doorNames = doors.map((d) => d.name);
+  assert.ok(!doorNames.includes('SyncWorker'), 'and it is not filed with the HTTP routes');
+});
+
+// ---------------------------------------------------------------------------
 // SQL, wherever it was written
 // ---------------------------------------------------------------------------
 
@@ -262,6 +301,8 @@ test('a using plus a name this file actually mentions is a link', () => {
     'src/Shop.Api/Controllers/OrdersController.cs -> src/Shop.Api/Data/ShopContext.cs',
     'src/Shop.Api/Program.cs -> src/Shop.Api/Auth.cs',
     'src/Shop.Api/Program.cs -> src/Shop.Api/Data/ShopContext.cs',
+    'src/Shop.Api/Program.cs -> src/Shop.Api/Services/SyncWorker.cs',
+    'src/Shop.Api/Services/SyncWorker.cs -> src/Shop.Api/Data/ShopContext.cs',
   ]);
 });
 
