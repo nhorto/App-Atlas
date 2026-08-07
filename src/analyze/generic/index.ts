@@ -172,6 +172,7 @@ export async function analyzeGeneric(language: GenericLanguage, ctx: PluginConte
           signals: project.signals,
         }),
       );
+      synthesizeRouteHandlers(bucket, ref, dialect.id);
     }
   }
   timings.references = Date.now() - t3;
@@ -314,6 +315,98 @@ function mergePartialTypes(
   }
 
   return out;
+}
+
+/**
+ * A node for the lambda that answers a door, named after the door (#99).
+ *
+ * `app.MapGet("/api/admin/employees", () => …)` twenty times in one method gave every
+ * one of those doors the same handler: the 200-line method that registered them. The
+ * lambda is a real unit of code with a real range; what it lacked was a node to point
+ * at, and a name. The door's own name is the honest one — it is what a reader clicking
+ * the door is looking for — and `synthesized` on the meta says the source never wrote
+ * it, the same debt every generated name on the map already owes.
+ *
+ * Findings whose site sits inside the lambda move onto its node, so a database call
+ * written in the handler hangs off the door that reaches it rather than off the
+ * registration method. Runs per file, so the synthesized nodes land in the slice cache
+ * like anything else and incremental runs restore them for free.
+ */
+function synthesizeRouteHandlers(
+  bucket: { nodes: AtlasNode[]; boundaries: BoundaryFinding[] },
+  ref: SourceFileRef,
+  language: string,
+): void {
+  const used = new Set(bucket.nodes.map((node) => node.id));
+  const spans: { id: string; startIndex: number; endIndex: number; line: number; endLine: number }[] = [];
+
+  for (const finding of bucket.boundaries) {
+    if (finding.type !== 'endpoint' || !finding.handlerSpan) continue;
+    const span = finding.handlerSpan;
+    const name = `${finding.name} handler`;
+    const id = unique(makeFunctionId(ref.relPath, name), used);
+    const fileId = makeFileId(ref.relPath);
+    bucket.nodes.push({
+      id,
+      kind: 'function',
+      name,
+      label: null,
+      // Structurally the lambda sits inside whatever the old attribution named — the
+      // registering method, or the file when registration is top-level.
+      parentId: finding.handlerId && !finding.handlerId.startsWith('file:') ? finding.handlerId : fileId,
+      language,
+      path: ref.relPath,
+      startLine: span.line,
+      endLine: span.endLine,
+      zone: ref.zone,
+      summary: null,
+      summarySource: null,
+      docHash: null,
+      bodyHash: hashParts(String(span.startIndex), String(span.endIndex - span.startIndex)),
+      hash: hashParts(name, String(span.endIndex - span.startIndex)),
+      provenance: 'static',
+      meta: {
+        signature: `${name}`,
+        params: [] as ParamInfo[],
+        returnType: 'void',
+        isAsync: false,
+        isExported: false,
+        isMethod: false,
+        loc: span.endLine - span.line + 1,
+        tier: TIER,
+        // The source never named this. Every screen that marks generated names can
+        // mark this one by the same flag.
+        synthesized: 'route-handler',
+      },
+    });
+    finding.handlerId = id;
+    spans.push({ id, ...span });
+  }
+  if (spans.length === 0) return;
+
+  // A finding written inside the lambda belongs to it. Sites carry lines, not offsets,
+  // so containment is by line — and the smallest containing lambda wins, since a
+  // one-line handler shares its line with the registration around it.
+  const owner = (line: number): string | null => {
+    let best: (typeof spans)[number] | null = null;
+    for (const span of spans) {
+      if (line < span.line || line > span.endLine) continue;
+      if (!best || span.endLine - span.line < best.endLine - best.line) best = span;
+    }
+    return best?.id ?? null;
+  };
+  for (const finding of bucket.boundaries) {
+    if (finding.type === 'store' || finding.type === 'service' || finding.type === 'env') {
+      const id = owner(finding.site.line);
+      if (id) finding.site.nodeId = id;
+    } else if (finding.type === 'sign-in-call') {
+      const id = owner(finding.site.line);
+      if (id) {
+        finding.nodeId = id;
+        finding.site.nodeId = id;
+      }
+    }
+  }
 }
 
 function fieldsOf(node: AtlasNode): FieldInfo[] {

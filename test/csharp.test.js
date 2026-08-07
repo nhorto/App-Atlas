@@ -113,6 +113,7 @@ test('a group prefix composes, and a chained RequireAuthorization locks', () => 
 test('the door count is the whole list and nothing else', () => {
   assert.deepEqual(doors.map((door) => door.name), [
     'GET /api/kiosk/ping',
+    'GET /api/kiosk/roster',
     'GET /api/kiosk/today',
     'GET /api/v1/orders/{id:int}',
     'GET /api/v1/orders/public-status',
@@ -160,6 +161,42 @@ test('a hop-found lock is likely, never certain', () => {
   const guard = doors.find((d) => d.name === 'GET /api/kiosk/today').meta.guards[0];
   assert.equal(guard.confidence, 'likely');
   assert.equal(guard.provider, 'custom');
+});
+
+// ---------------------------------------------------------------------------
+// A door points at the code that answers it (#99)
+// ---------------------------------------------------------------------------
+
+const handlerOf = (doorName) => {
+  const door = doors.find((d) => d.name === doorName);
+  const edge = result.atlas.edges.find((e) => e.kind === 'exposed-by' && e.fromId === door.id);
+  return edge ? nodes.find((n) => n.id === edge.toId) : undefined;
+};
+
+test('an inline handler gets a node named after its door', () => {
+  // The lambda is a real unit of code with a real range; what it lacked was a node.
+  // Before this, every minimal-API route in a file pointed at the one method that
+  // registered them all — clicking a door landed on the registration, not the answer.
+  const handler = handlerOf('GET /health');
+  assert.equal(handler?.name, 'GET /health handler');
+  assert.equal(handler.meta.synthesized, 'route-handler', 'and it says the source never named it');
+});
+
+test('two doors registered side by side get two handlers, not one', () => {
+  // #23's guard walk starts at the handler, so twenty routes sharing one handler node
+  // means a check reachable from any of them looks reachable from all of them.
+  const start = handlerOf('POST /api/kiosk/shift/start');
+  const end = handlerOf('POST /api/kiosk/shift/end');
+  assert.ok(start && end);
+  assert.notEqual(start.id, end.id);
+});
+
+test('a one-liner delegating to a real method points at the method', () => {
+  // `app.MapGet("/api/kiosk/roster", Roster)` — the handler is a definition, so
+  // nothing is synthesized and the door lands on the eight lines that answer it.
+  const handler = handlerOf('GET /api/kiosk/roster');
+  assert.equal(handler?.name, 'Roster');
+  assert.equal(handler.meta.synthesized, undefined);
 });
 
 // ---------------------------------------------------------------------------

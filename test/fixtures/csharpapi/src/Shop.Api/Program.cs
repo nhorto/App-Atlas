@@ -32,4 +32,13 @@ var kiosk = app.MapGroup("/api/kiosk/shift").RequireDevice();
 kiosk.MapPost("/start", () => Results.Accepted());
 kiosk.MapPost("/end", () => Results.Accepted());
 
+// A one-liner delegating to a real method: the handler *is* a definition, and the
+// door should point at it directly rather than at anything synthesized.
+app.MapGet("/api/kiosk/roster", Roster);
+
 app.Run();
+
+static IResult Roster()
+{
+    return Results.Ok(new[] { "morning", "evening" });
+}

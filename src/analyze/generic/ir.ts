@@ -22,8 +22,12 @@ export type GValue =
    * thing to the reader, so the callee is carried the same way a name is.
    */
   | { t: 'call'; v: string }
-  /** A function written inline. Its body is in `calls` like any other code. */
-  | { t: 'func'; startIndex: number; endIndex: number }
+  /**
+   * A function written inline. Its body is in `calls` like any other code. The line
+   * range is carried beside the character range because the two answer different
+   * questions: containment is asked in characters, and a reader is sent to a line.
+   */
+  | { t: 'func'; startIndex: number; endIndex: number; line: number; endLine: number }
   | { t: 'other' };
 
 export interface GCall {

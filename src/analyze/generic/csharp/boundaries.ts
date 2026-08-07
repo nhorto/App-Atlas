@@ -451,6 +451,11 @@ function detectMinimalApis(
     // another statement, in this same file, which is where the evidence has to be.
     const chain = chainedOnto(file, call);
     const inherited = groupChains.get(call.receiver ?? '');
+    // The handler is the argument, not the method the registration sits in (#99). A
+    // method-group handler — `app.MapGet("/x", handler.GetX)` — is a real definition
+    // and the door points at it; a lambda has no node yet, so its range rides on the
+    // finding for the plugin to turn into one.
+    const handler = handlerOf(call, input);
     findings.push({
       type: 'endpoint',
       endpointKind: 'http-route',
@@ -463,9 +468,33 @@ function detectMinimalApis(
       guards: [...chain.guards, ...(inherited?.guards ?? [])],
       paramTypes: [...chain.filters, ...(inherited?.filters ?? [])],
       site: at(call, `${call.callee}("${first.v}")`),
-      handlerId: input.nodeIdForScope(call.scope),
+      handlerId: handler.id ?? input.nodeIdForScope(call.scope),
+      ...(handler.span ? { handlerSpan: handler.span } : {}),
     });
   }
+}
+
+/**
+ * The handler argument of a minimal-API registration, walked from the end because the
+ * route string comes first. A named handler that this file declares is answered with
+ * its node; one it does not declare (an instance method group on an injected service)
+ * resolves to nothing, and the door falls back to what it always did.
+ */
+function handlerOf(
+  call: GCall,
+  input: BoundaryInput,
+): { id?: string | null; span?: { startIndex: number; endIndex: number; line: number; endLine: number } } {
+  for (let i = call.args.length - 1; i >= 0; i--) {
+    const arg = call.args[i]!;
+    if (arg.t === 'func') {
+      return { span: { startIndex: arg.startIndex, endIndex: arg.endIndex, line: arg.line, endLine: arg.endLine } };
+    }
+    if (arg.t === 'name') {
+      const id = input.nodeIdForName(arg.v) ?? input.nodeIdForName(arg.v.split('.').pop() ?? arg.v);
+      return id ? { id } : {};
+    }
+  }
+  return {};
 }
 
 /** `app.MapMethods("/x", new[] { "GET", "POST" }, h)` — the verb is in the array. */

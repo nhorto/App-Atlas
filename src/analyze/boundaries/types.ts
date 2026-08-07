@@ -43,6 +43,14 @@ export interface EndpointFinding {
   /** The atlas node that answers this door. */
   handlerId: string | null;
   /**
+   * Where the handler's code sits when it is a lambda the source never named (#99):
+   * `app.MapGet("/x", () => …)`. A lambda is not a definition, so `handlerId` can only
+   * say "the method that registered it" — which, in a file registering twenty routes,
+   * is the same 200-line method for all twenty. The language plugin turns this span
+   * into a function node named after the door, and repoints `handlerId` at it.
+   */
+  handlerSpan?: { startIndex: number; endIndex: number; line: number; endLine: number };
+  /**
    * Type names the handler's signature mentions that this file could not resolve. A
    * FastAPI dependency alias is normally one of them and is declared a file away, so
    * `build.ts` matches these against the `auth-alias` findings.
