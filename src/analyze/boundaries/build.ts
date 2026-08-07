@@ -1309,6 +1309,24 @@ function addWorkerBindings(input: BuildInput, merged: Map<string, MergedStore>):
 function collectStores(input: BuildInput): Map<string, MergedStore> {
   const merged = new Map<string, MergedStore>();
 
+  // The other half of #104's pairing. A `DbSet` declaration is a project-wide fact and
+  // a query on `_db.Orders` is a per-file one; the detector reads one file at a time,
+  // so the two meet here, where every file already has.
+  const declaredTables = new Set<string>();
+  for (const finding of input.findings) {
+    if (finding.type === 'store' && finding.declares && finding.table) declaredTables.add(finding.table);
+  }
+  const resolveTable = (finding: StoreFinding): StoreFinding | null => {
+    if (finding.table || !finding.tableReceiver) return finding.requiresTable && !finding.table ? null : finding;
+    for (const segment of finding.tableReceiver.split('.').reverse()) {
+      if (declaredTables.has(segment.trim())) return { ...finding, table: segment.trim() };
+    }
+    // An ambiguous verb on a receiver that turned out not to be a table is LINQ over
+    // somebody's list; an unambiguous one is still a database call whose table this
+    // project never named on the line.
+    return finding.requiresTable ? null : finding;
+  };
+
   const noteTable = (store: MergedStore, table: string | null, site: CodeSite) => {
     if (!table) return;
     // The database's own catalog is not the app's data model (#86). The read is real
@@ -1332,8 +1350,10 @@ function collectStores(input: BuildInput): Map<string, MergedStore> {
     else store.tableSites.set(name, [site]);
   };
 
-  for (const finding of input.findings) {
-    if (finding.type !== 'store') continue;
+  for (const raw of input.findings) {
+    if (raw.type !== 'store') continue;
+    const finding = resolveTable(raw);
+    if (!finding) continue;
     const id = makeStoreId(finding.key);
     const existing = merged.get(id);
     if (existing) {

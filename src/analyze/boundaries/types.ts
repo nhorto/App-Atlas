@@ -97,6 +97,29 @@ export interface StoreFinding {
    * would be a second box for the same database.
    */
   generic?: boolean;
+  /**
+   * This finding is the *declaration* of its table — a `DbSet<Order> Orders` property —
+   * rather than a use of it. The declarations are what `table-receiver` pairing (#104)
+   * resolves against, and marking them beats inferring them from a null operation,
+   * which a SQL statement whose direction was unreadable also has.
+   */
+  declares?: boolean;
+  /**
+   * The dotted receiver the call was written on — `_db.Orders` — when `table` is null
+   * because the file that declares the tables is a different file. Matched against the
+   * project's declared tables once every file has been read (#104): the same deferred
+   * pairing `reach.ts` does, so it survives incremental runs, because both halves are
+   * findings that persist in the slice cache.
+   */
+  tableReceiver?: string;
+  /**
+   * The finding is evidence only if `tableReceiver` resolves to a declared table.
+   * `Where`, `Select` and `Add` are LINQ before they are Entity Framework: written on a
+   * DbSet they are a query, written on a list they are nothing, and which one they are
+   * is exactly what the pairing decides. Unresolved, the finding is dropped — never
+   * kept with a null table, because that would count somebody's list as a database.
+   */
+  requiresTable?: boolean;
   site: CodeSite;
 }
 

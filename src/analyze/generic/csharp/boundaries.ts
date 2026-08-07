@@ -852,6 +852,8 @@ function detectStores(
         // the data moves is what the queries below say, and inventing a direction here
         // would put a write on a screen somebody reads to find out what writes.
         operation: null,
+        // …and it is the half of #104's pairing every other file resolves against.
+        declares: true,
         site: { path: file.path, line: def.line, nodeId: input.nodeIdForName(def.name) ?? input.fileId },
       });
     }
@@ -935,25 +937,47 @@ function detectStores(
     const table = tableOfReceiver(call.receiver, tables);
 
     // Two tiers of evidence. An EF-only method is proof on its own; a LINQ verb is proof
-    // only when it is written on a table this file declared. The table itself is a third
-    // thing again — a `DbContext` usually lives in its own file, so a controller's
-    // `_db.Orders.ToListAsync()` is a database read whose table this file cannot name.
-    // `null` says exactly that, and is a great deal better than either silence or a guess.
+    // only when it is written on a table — this file's own `DbSet`, or one declared in
+    // another file, which is #104's whole problem: a `DbContext` usually lives alone,
+    // so a controller's `_db.Orders.ToListAsync()` is a read whose table this file
+    // cannot name. The receiver is carried instead, and the merge layer matches it
+    // against the tables the project declared once every file has been read.
     const efOnly = EF_ONLY_WRITES.has(method) ? 'write' : EF_ONLY_READS.has(method) ? 'read' : null;
-    const viaTable = table ? (LINQ_WRITES.has(method) ? 'write' : LINQ_READS.has(method) ? 'read' : null) : null;
-    const operation = efOnly ?? viaTable;
-    if (!operation) continue;
+    const linq = LINQ_WRITES.has(method) ? 'write' : LINQ_READS.has(method) ? 'read' : null;
+    const operation = efOnly ?? (table ? linq : null);
+    // A dotted receiver — `_db.Orders`, never a bare `items` — is the shape a DbSet
+    // reached through a context has. A single name stays what it always was: a list.
+    const deferred = !table && call.receiver?.includes('.') ? call.receiver : null;
 
-    findings.push({
-      type: 'store',
-      key: 'efcore',
-      name: 'Database',
-      client: 'Entity Framework Core',
-      storeKind: 'sql',
-      table,
-      operation,
-      site: at(call, `${call.callee}(…)`),
-    });
+    if (operation) {
+      findings.push({
+        type: 'store',
+        key: 'efcore',
+        name: 'Database',
+        client: 'Entity Framework Core',
+        storeKind: 'sql',
+        table,
+        operation,
+        ...(deferred ? { tableReceiver: deferred } : {}),
+        site: at(call, `${call.callee}(…)`),
+      });
+    } else if (linq && deferred) {
+      findings.push({
+        type: 'store',
+        key: 'efcore',
+        name: 'Database',
+        client: 'Entity Framework Core',
+        storeKind: 'sql',
+        table: null,
+        operation: linq,
+        tableReceiver: deferred,
+        // A LINQ verb is only evidence if the receiver turns out to be a table. If it
+        // does not, this finding must vanish rather than survive with a null table —
+        // kept, it would count somebody's list as a database.
+        requiresTable: true,
+        site: at(call, `${call.callee}(…)`),
+      });
+    }
   }
 }
 

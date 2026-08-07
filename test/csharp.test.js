@@ -285,6 +285,18 @@ test('Dapper names its table out of the SQL', () => {
   assert.equal(dapper.meta.reads, 1);
 });
 
+test('a query names its table when the DbContext is in another file (#104)', () => {
+  // `_db.Orders.FirstOrDefaultAsync(…)` and `_db.Orders.Add(…)` in the controller,
+  // `_db.Orders.Where(…).ToListAsync(…)` in the worker — every DbSet lives in
+  // Data/ShopContext.cs, so no single file can name the table. The declaration file
+  // says "these names are tables", the query file carries its receiver, and the two
+  // meet once every file has been read. Before this, the reads were counted with no
+  // table and the `Add` was not counted at all.
+  const ef = stores.find((store) => store.meta.client === 'Entity Framework Core');
+  assert.equal(ef.meta.reads, 3, 'FirstOrDefaultAsync, Where, ToListAsync');
+  assert.equal(ef.meta.writes, 3, 'Orders.Add, and SaveChangesAsync twice');
+});
+
 test('LINQ over a list is not a database', () => {
   // `_skus.Where(…).Select(…)`, `_skus.Count()`, `_skus.Add(sku)` in Reporting.cs. Every
   // one of those method names is also Entity Framework's, which is why they only count
