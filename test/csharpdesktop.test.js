@@ -102,6 +102,45 @@ test('the markup instantiates the class, and that is an edge', () => {
 });
 
 // ---------------------------------------------------------------------------
+// A partial class is one type (#97)
+// ---------------------------------------------------------------------------
+
+test('a class split across two files is one type, not two', () => {
+  // `DashboardWindow.xaml.cs` and `DashboardWindow.Render.cs` both declare
+  // `public sealed partial class DashboardWindow`. That is how C# splits a large class
+  // — mandatory for anything with markup — and drawing it twice inflated the type
+  // count, halved every card, and gave the reference pass two nodes to guess between.
+  const windows = nodes.filter((node) => node.kind === 'type' && node.name === 'DashboardWindow');
+  assert.equal(windows.length, 1, windows.map((w) => w.path).join(', '));
+});
+
+test('the merged type holds the union of its parts, and names both files', () => {
+  const window = nodes.find((node) => node.kind === 'type' && node.name === 'DashboardWindow');
+  // A reader looking for Refresh and one looking for BuildChart must land on the same
+  // card, whichever half of the class they came from.
+  for (const method of ['Refresh', 'BuildChart']) {
+    const fn = nodes.find((node) => node.kind === 'function' && node.name === method);
+    assert.equal(fn.parentId, window.id, `${method} hangs off the one type`);
+  }
+  // A type that lives in two files is a shape the atlas never had before; picking one
+  // file silently would send a reader to the half without what they searched for.
+  assert.deepEqual(window.meta.declaredIn, [
+    'src/Glance.App/DashboardWindow.Render.cs',
+    'src/Glance.App/DashboardWindow.xaml.cs',
+  ]);
+  assert.match(window.summary, /dashboard flyout/, 'the docstring rides along from whichever half wrote it');
+});
+
+test('two types that merely share a name are still two types', () => {
+  // `Glance.App.App` is the application; `Glance.Core.Entities.App` is a tracked
+  // program. Merging them would claim an entity class and an application class are the
+  // same thing — a worse error than the split this fixes. The rule is name AND
+  // namespace AND `partial` on every declaration, and these differ in two of the three.
+  const apps = nodes.filter((node) => node.kind === 'type' && node.name === 'App');
+  assert.equal(apps.length, 2, apps.map((a) => a.path).join(', '));
+});
+
+// ---------------------------------------------------------------------------
 // It still finds the data
 // ---------------------------------------------------------------------------
 

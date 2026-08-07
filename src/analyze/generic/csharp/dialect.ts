@@ -122,6 +122,30 @@ function declaredNames(node: Node): string[] {
   return out;
 }
 
+/**
+ * The names a type declaration says it extends or implements, type arguments stripped.
+ *
+ * `class Sync : BackgroundService, IDisposable` lists both; `Repository<Order>` is
+ * `Repository` to anything matching names against a list. The base list is the last
+ * place C# writes a fact this tier needs and the capture vocabulary cannot name — the
+ * same situation as visibility, solved the same way.
+ */
+function baseNames(node: Node): string[] {
+  const bases = node.namedChildren.find((child) => child?.type === 'base_list');
+  if (!bases) return [];
+  const out: string[] = [];
+  for (let i = 0; i < bases.namedChildCount; i++) {
+    const child = bases.namedChild(i);
+    if (!child) continue;
+    const text = child.text.trim();
+    if (!text) continue;
+    const bare = text.replace(/<[\s\S]*$/, '');
+    const last = bare.split('.').pop();
+    if (last) out.push(last);
+  }
+  return out;
+}
+
 export const csharpDialect: Dialect = {
   ...DEFAULTS,
   id: 'csharp',
@@ -242,6 +266,17 @@ export const csharpDialect: Dialect = {
     for (const def of file.defs) {
       const node = declarations.get(def.startIndex);
       if (node) def.exported = isPublicDeclaration(node);
+      // `class Sync : BackgroundService` — the base list is the declaration a detector
+      // needs to see, and the capture vocabulary has no name for it, so it is read off
+      // the tree here the way visibility is. `partial` is the same situation again: the
+      // keyword is the entire evidence that two files declare one class (#97).
+      if (node && def.kind === 'type') {
+        def.bases = baseNames(node);
+        for (let i = 0; i < node.namedChildCount; i++) {
+          const child = node.namedChild(i);
+          if (child?.type === 'modifier' && child.text === 'partial') def.partial = true;
+        }
+      }
     }
 
     // A member's modifiers belong to the declaration that wrote it, so walk the members

@@ -97,6 +97,10 @@ const PUBLIC_ENV_PREFIX =
 /** Whether a variable name should be treated as holding a credential. */
 function isSecretName(name: string): boolean {
   if (PUBLIC_ENV_PREFIX.test(name)) return false;
+  // A connection string is a credential by construction (#101), whatever the database
+  // is called — the name pattern below matches words, and `ConnectionStrings:Shop`
+  // contains none of them.
+  if (/^ConnectionStrings(:|$)/i.test(name)) return true;
   return SECRET_PATTERN.test(name);
 }
 
@@ -407,6 +411,9 @@ function collectEndpoints(input: BuildInput): Map<string, MergedEndpoint> {
       existing.meta.writes = existing.meta.writes || finding.writes;
       for (const guard of finding.guards) existing.meta.guards.push(guard);
       if (finding.handlerId) existing.handlerIds.add(finding.handlerId);
+      // The class file read the timer and the registration did not; whichever arrived
+      // first, the door keeps the schedule somebody actually wrote down.
+      if (finding.schedule && !existing.meta.schedule) existing.meta.schedule = finding.schedule;
       for (const name of finding.paramTypes ?? []) existing.paramTypes.add(name);
       if (finding.routerVar) existing.routers.add(routerKey(finding.site.path, finding.routerVar));
       if (finding.handlerOwner) existing.owners.add(finding.handlerOwner);
@@ -423,6 +430,7 @@ function collectEndpoints(input: BuildInput): Map<string, MergedEndpoint> {
         framework: finding.framework,
         guards: [...finding.guards],
         writes: finding.writes,
+        ...(finding.schedule ? { schedule: finding.schedule } : {}),
         sites: [finding.site],
       },
       handlerIds: new Set(finding.handlerId ? [finding.handlerId] : []),
@@ -1131,22 +1139,28 @@ function envRuntime(sites: CodeSite[]): string {
  * variables themselves live in the node's metadata and drive the secrets badge.
  */
 function collectEnv(input: BuildInput): MergedEndpoint | null {
-  const byName = new Map<string, CodeSite[]>();
+  const byName = new Map<string, { sites: CodeSite[]; config: boolean }>();
   for (const finding of input.findings) {
     if (finding.type !== 'env') continue;
-    const list = byName.get(finding.name);
-    if (list) list.push(finding.site);
-    else byName.set(finding.name, [finding.site]);
+    const entry = byName.get(finding.name);
+    if (entry) {
+      entry.sites.push(finding.site);
+      entry.config = entry.config || Boolean(finding.config);
+    } else byName.set(finding.name, { sites: [finding.site], config: Boolean(finding.config) });
   }
   if (byName.size === 0) return null;
 
   const vars: EnvVarInfo[] = [...byName.entries()]
-    .map(([name, sites]) => ({
+    .map(([name, { sites, config }]) => ({
       name,
       sites: sites.sort(compareSites),
-      documented: input.signals.envExample.has(name),
+      // A configuration key is documented by the settings files, an environment
+      // variable by `.env.example` — the same question, asked of the file that could
+      // actually answer it (#101).
+      documented: config ? input.signals.appsettingsKeys.has(name) : input.signals.envExample.has(name),
       secret: isSecretName(name),
       platform: isPlatformName(name),
+      ...(config ? { config: true } : {}),
     }))
     .sort((a, b) => a.name.localeCompare(b.name));
 
@@ -1164,7 +1178,15 @@ function collectEnv(input: BuildInput): MergedEndpoint | null {
       writes: false,
       sites,
       vars,
-      envExample: input.signals.envExamplePath,
+      // The file each kind of key was checked against, so "undocumented" is always a
+      // claim about a file the reader can open.
+      envExample:
+        [
+          input.signals.envExamplePath,
+          ...(vars.some((v) => v.config) ? input.signals.appsettingsPaths : []),
+        ]
+          .filter(Boolean)
+          .join(', ') || null,
     },
     handlerIds: new Set(sites.map((site) => makeFileId(site.path))),
     paramTypes: new Set(),
@@ -1305,6 +1327,24 @@ function addWorkerBindings(input: BuildInput, merged: Map<string, MergedStore>):
 function collectStores(input: BuildInput): Map<string, MergedStore> {
   const merged = new Map<string, MergedStore>();
 
+  // The other half of #104's pairing. A `DbSet` declaration is a project-wide fact and
+  // a query on `_db.Orders` is a per-file one; the detector reads one file at a time,
+  // so the two meet here, where every file already has.
+  const declaredTables = new Set<string>();
+  for (const finding of input.findings) {
+    if (finding.type === 'store' && finding.declares && finding.table) declaredTables.add(finding.table);
+  }
+  const resolveTable = (finding: StoreFinding): StoreFinding | null => {
+    if (finding.table || !finding.tableReceiver) return finding.requiresTable && !finding.table ? null : finding;
+    for (const segment of finding.tableReceiver.split('.').reverse()) {
+      if (declaredTables.has(segment.trim())) return { ...finding, table: segment.trim() };
+    }
+    // An ambiguous verb on a receiver that turned out not to be a table is LINQ over
+    // somebody's list; an unambiguous one is still a database call whose table this
+    // project never named on the line.
+    return finding.requiresTable ? null : finding;
+  };
+
   const noteTable = (store: MergedStore, table: string | null, site: CodeSite) => {
     if (!table) return;
     // The database's own catalog is not the app's data model (#86). The read is real
@@ -1328,8 +1368,10 @@ function collectStores(input: BuildInput): Map<string, MergedStore> {
     else store.tableSites.set(name, [site]);
   };
 
-  for (const finding of input.findings) {
-    if (finding.type !== 'store') continue;
+  for (const raw of input.findings) {
+    if (raw.type !== 'store') continue;
+    const finding = resolveTable(raw);
+    if (!finding) continue;
     const id = makeStoreId(finding.key);
     const existing = merged.get(id);
     if (existing) {
@@ -1477,6 +1519,7 @@ const ENDPOINT_ZONES: Record<EndpointKind, Zone> = {
   webhook: 'api',
   cron: 'api',
   queue: 'api',
+  worker: 'api',
   realtime: 'api',
   ipc: 'api',
   cli: 'config',

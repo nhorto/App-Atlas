@@ -227,6 +227,7 @@ function newDef(
     returns: returns ? collapse(returns.text) : '',
     exported: dialect.exported(name.text),
     decorators: [] as string[],
+    bases: [] as string[],
     fields: [] as GField[],
     uses: [] as string[],
     qualifiedUses: [] as string[],
@@ -327,7 +328,15 @@ function argsOf(list: Node | undefined, dialect: Dialect): GValue[] {
     const arg = unwrap(raw, dialect);
     if (dialect.strings.has(arg.type)) out.push({ t: 'str', v: dialect.unquote(arg.text) });
     else if (dialect.numbers.has(arg.type)) out.push({ t: 'num', v: arg.text });
-    else if (dialect.functions.has(arg.type)) out.push({ t: 'func', startIndex: arg.startIndex, endIndex: arg.endIndex });
+    else if (dialect.functions.has(arg.type)) {
+      out.push({
+        t: 'func',
+        startIndex: arg.startIndex,
+        endIndex: arg.endIndex,
+        line: lineOf(arg),
+        endLine: arg.endPosition.row + 1,
+      });
+    }
     else if (dialect.names.has(arg.type)) out.push({ t: 'name', v: collapse(arg.text) });
     else if (dialect.calls.has(arg.type)) {
       const callee = calleeOf(arg, dialect);

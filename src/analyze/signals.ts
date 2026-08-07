@@ -172,6 +172,16 @@ export interface ProjectSignals {
    */
   dotnetOutputTypes: Set<string>;
   /**
+   * Every key path the repo's committed `appsettings*.json` files declare, flattened
+   * with the `:` separator .NET itself uses — `Stripe:Key`, `ConnectionStrings:Shop`,
+   * and every ancestor section on the way down (#101). The .NET side of what
+   * `.env.example` is to the JavaScript side: a configuration key the code reads that
+   * appears in none of these files is the row that deserves attention.
+   */
+  appsettingsKeys: Set<string>;
+  /** The `appsettings*.json` files those keys came from, repo-relative. */
+  appsettingsPaths: string[];
+  /**
    * Whether the project declares itself something other code installs and imports —
    * a `setup.py`, a `[project]` table, a `package.json` with an entry point.
    *
@@ -570,10 +580,14 @@ function readDotnetProjects(root: string): {
   dotnetPackages: Set<string>;
   dotnetSdks: Set<string>;
   dotnetOutputTypes: Set<string>;
+  appsettingsKeys: Set<string>;
+  appsettingsPaths: string[];
 } {
   const packages = new Set<string>();
   const sdks = new Set<string>();
   const outputTypes = new Set<string>();
+  const appsettingsKeys = new Set<string>();
+  const appsettingsPaths: string[] = [];
 
   const files: string[] = [];
   const scan = (dir: string, depth: number) => {
@@ -589,7 +603,11 @@ function readDotnetProjects(root: string): {
       if (entry.isDirectory()) {
         if (/^(node_modules|\.git|bin|obj|packages)$/i.test(entry.name)) continue;
         scan(full, depth + 1);
-      } else if (/\.(cs|fs|vb)proj$/i.test(entry.name) || /^Directory\.(Packages|Build)\.props$/i.test(entry.name)) {
+      } else if (
+        /\.(cs|fs|vb)proj$/i.test(entry.name) ||
+        /^Directory\.(Packages|Build)\.props$/i.test(entry.name) ||
+        /^appsettings(\..+)?\.json$/i.test(entry.name)
+      ) {
         files.push(full);
       }
     }
@@ -598,6 +616,26 @@ function readDotnetProjects(root: string): {
 
   for (const file of files) {
     const text = readText(file);
+    if (/appsettings(\..+)?\.json$/i.test(file)) {
+      // Flattened with the `:` .NET itself uses, and every ancestor kept: the code
+      // reads `GetSection("PowerFab")` and `Configuration["PowerFab:BaseUrl"]` alike,
+      // and both are documented by the same JSON object.
+      try {
+        const flatten = (value: unknown, prefix: string) => {
+          if (value === null || typeof value !== 'object' || Array.isArray(value)) return;
+          for (const [key, child] of Object.entries(value)) {
+            const full = prefix ? `${prefix}:${key}` : key;
+            appsettingsKeys.add(full);
+            flatten(child, full);
+          }
+        };
+        flatten(JSON.parse(text), '');
+        appsettingsPaths.push(path.relative(root, file).split(path.sep).join('/'));
+      } catch {
+        // A settings file that is not JSON documents nothing.
+      }
+      continue;
+    }
     for (const match of text.matchAll(/<(?:PackageReference|PackageVersion|FrameworkReference)\s[^>]*Include\s*=\s*"([^"]+)"/gi)) {
       packages.add(match[1]);
     }
@@ -610,7 +648,13 @@ function readDotnetProjects(root: string): {
     }
   }
 
-  return { dotnetPackages: packages, dotnetSdks: sdks, dotnetOutputTypes: outputTypes };
+  return {
+    dotnetPackages: packages,
+    dotnetSdks: sdks,
+    dotnetOutputTypes: outputTypes,
+    appsettingsKeys,
+    appsettingsPaths: appsettingsPaths.sort(),
+  };
 }
 
 /**

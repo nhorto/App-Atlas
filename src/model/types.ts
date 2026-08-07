@@ -76,7 +76,13 @@ export type EndpointKind =
   // map (it is how anything reaches the engine), and kept out of the auth-coverage
   // count for the reason `screen` is: the caller is the app's own interface, not a
   // stranger, and "no auth check" on one would be a false alarm.
-  | 'ipc';
+  | 'ipc'
+  // Code that starts with the application and runs on its own — a .NET
+  // `BackgroundService`, a hosted service. Not `cron`, because it declared no schedule
+  // and inventing one would put a time on the screen nobody wrote; not `queue`, because
+  // nothing enqueues to it. Kept out of the auth-coverage count like both of them: a
+  // stranger cannot knock on it.
+  | 'worker';
 
 /** What a third party does for you — drives the grouping in the boundary view. */
 export type ServiceCategory =
@@ -259,6 +265,13 @@ export interface EnvVarInfo {
    * meant to say "you forgot to write this down" into noise the reader learns to skip.
    */
   platform: boolean;
+  /**
+   * A configuration key, not an environment variable (#101): read through .NET's
+   * provider stack, documented (or not) by `appsettings*.json` rather than
+   * `.env.example`. The distinction is the whole reason the old rule refused to report
+   * these at all — a JSON settings key must never appear as a name a deployment sets.
+   */
+  config?: boolean;
 }
 
 /** meta for kind === 'endpoint' */

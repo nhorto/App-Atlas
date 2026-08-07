@@ -16,7 +16,7 @@
  * SDK and no ASP.NET reference cannot have a route detected in it, however many methods
  * somebody has called `Get`.
  */
-import type { CodeSite, GuardInfo } from '../../../model/types.js';
+import type { CodeSite, GuardInfo, SignInKind } from '../../../model/types.js';
 import { isInternalHost, serviceForHost } from '../../boundaries/catalog.js';
 import type { BoundaryFinding } from '../../boundaries/types.js';
 import { isSqlStatement, readSqlStatement } from '../../sql.js';
@@ -202,7 +202,9 @@ export function detectCSharpBoundaries(input: BoundaryInput): BoundaryFinding[] 
     detectControllers(input, findings, at);
     detectMinimalApis(input, findings, at);
     detectCheckers(input, findings);
+    detectSignInCalls(input, findings, at);
   }
+  if (isDotnetHost(input)) detectHostedServices(input, findings, at);
   detectStores(input, findings, at);
   detectOutbound(input, findings, at);
   detectEnv(input, findings, at);
@@ -449,6 +451,11 @@ function detectMinimalApis(
     // another statement, in this same file, which is where the evidence has to be.
     const chain = chainedOnto(file, call);
     const inherited = groupChains.get(call.receiver ?? '');
+    // The handler is the argument, not the method the registration sits in (#99). A
+    // method-group handler — `app.MapGet("/x", handler.GetX)` — is a real definition
+    // and the door points at it; a lambda has no node yet, so its range rides on the
+    // finding for the plugin to turn into one.
+    const handler = handlerOf(call, input);
     findings.push({
       type: 'endpoint',
       endpointKind: 'http-route',
@@ -461,9 +468,33 @@ function detectMinimalApis(
       guards: [...chain.guards, ...(inherited?.guards ?? [])],
       paramTypes: [...chain.filters, ...(inherited?.filters ?? [])],
       site: at(call, `${call.callee}("${first.v}")`),
-      handlerId: input.nodeIdForScope(call.scope),
+      handlerId: handler.id ?? input.nodeIdForScope(call.scope),
+      ...(handler.span ? { handlerSpan: handler.span } : {}),
     });
   }
+}
+
+/**
+ * The handler argument of a minimal-API registration, walked from the end because the
+ * route string comes first. A named handler that this file declares is answered with
+ * its node; one it does not declare (an instance method group on an injected service)
+ * resolves to nothing, and the door falls back to what it always did.
+ */
+function handlerOf(
+  call: GCall,
+  input: BoundaryInput,
+): { id?: string | null; span?: { startIndex: number; endIndex: number; line: number; endLine: number } } {
+  for (let i = call.args.length - 1; i >= 0; i--) {
+    const arg = call.args[i]!;
+    if (arg.t === 'func') {
+      return { span: { startIndex: arg.startIndex, endIndex: arg.endIndex, line: arg.line, endLine: arg.endLine } };
+    }
+    if (arg.t === 'name') {
+      const id = input.nodeIdForName(arg.v) ?? input.nodeIdForName(arg.v.split('.').pop() ?? arg.v);
+      return id ? { id } : {};
+    }
+  }
+  return {};
 }
 
 /** `app.MapMethods("/x", new[] { "GET", "POST" }, h)` — the verb is in the array. */
@@ -636,6 +667,183 @@ function detectCheckers(input: BoundaryInput, findings: BoundaryFinding[]): void
 }
 
 // ---------------------------------------------------------------------------
+// The door people sign in through
+// ---------------------------------------------------------------------------
+
+/**
+ * The calls that hand a session out, which is #40's rule in .NET: a door whose handler
+ * issues the session cannot demand one first, and without this finding a login route is
+ * indistinguishable from a route somebody forgot to lock.
+ *
+ * A closed list of the framework's own methods, not a pattern. Identity's sign-in
+ * surface all ends in `SignInAsync`, but matching that suffix would also excuse a door
+ * because somebody *named* a method `KioskSignInAsync` — and `/api/auth/setup` staying
+ * on the worry list is exactly as important as `/api/auth/login` leaving it. A .NET app
+ * with a hand-rolled scheme gets nothing from this table, which is the honest limit of
+ * a list: under-excusing leaves a deliberate door on the list, over-excusing silences a
+ * real one.
+ */
+const SIGN_IN_CALLS: Record<string, SignInKind> = {
+  SignInAsync: 'sign-in',
+  PasswordSignInAsync: 'sign-in',
+  CheckPasswordSignInAsync: 'sign-in',
+  RefreshSignInAsync: 'sign-in',
+  TwoFactorSignInAsync: 'sign-in',
+  TwoFactorAuthenticatorSignInAsync: 'sign-in',
+  TwoFactorRecoveryCodeSignInAsync: 'sign-in',
+  ExternalLoginSignInAsync: 'sign-in',
+  SignOutAsync: 'sign-out',
+};
+
+/** The methods only ASP.NET Core Identity spells; the rest are the cookie middleware's. */
+const IDENTITY_ONLY = /^(Password|CheckPassword|Refresh|TwoFactor|ExternalLogin)/;
+
+function detectSignInCalls(
+  input: BoundaryInput,
+  findings: BoundaryFinding[],
+  at: (call: GCall, snippet?: string) => CodeSite,
+): void {
+  const { file } = input;
+  for (const call of file.calls) {
+    const method = bareMethod(call);
+    const what = SIGN_IN_CALLS[method];
+    // A bare `SignInAsync()` with no receiver is not the framework's — every real call
+    // site is `HttpContext.SignInAsync` or `_signInManager.PasswordSignInAsync`.
+    if (!what || !call.receiver || !call.scope) continue;
+    findings.push({
+      type: 'sign-in-call',
+      provider: IDENTITY_ONLY.test(method) ? 'ASP.NET Core Identity' : 'ASP.NET Core',
+      what,
+      call: `${call.callee}(…)`,
+      nodeId: input.nodeIdForScope(call.scope),
+      site: at(call, `${call.callee}(…)`),
+    });
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Doors: hosted services, which run without anybody knocking
+// ---------------------------------------------------------------------------
+
+/**
+ * The types whose whole meaning is "this runs with the app".
+ *
+ * `BackgroundService` is an abstract class with one method to override and no second
+ * reason to inherit it; the two interfaces are the same idea in older code. Nothing here
+ * matches by the *name of the app's own class* — `SyncWorker` could be anything, and the
+ * evidence is the base list, not the word Worker.
+ */
+const HOSTED_BASES = new Set(['BackgroundService', 'IHostedService', 'IHostedLifecycleService']);
+
+/**
+ * Hosting ships inside every ASP.NET runtime and inside `Microsoft.NET.Sdk.Worker`, so —
+ * exactly as with the web SDK — a real service can declare no hosting package at all.
+ */
+function isDotnetHost(input: BoundaryInput): boolean {
+  if (isAspNet(input)) return true;
+  if (input.signals.dotnetSdks?.has('Microsoft.NET.Sdk.Worker')) return true;
+  for (const id of input.signals.dotnetPackages ?? []) {
+    if (id.startsWith('Microsoft.Extensions.Hosting')) return true;
+  }
+  return input.file.imports.some((imp) => imp.module.startsWith('Microsoft.Extensions.Hosting'));
+}
+
+/**
+ * `class Sync : BackgroundService`, and `builder.Services.AddHostedService<Sync>()`.
+ *
+ * The .NET equivalent of a cron job or a queue worker: it starts with the application
+ * and touches the database and the network without any request arriving. On the repo
+ * that filed #100, one of these is what actually pushes time records to the vendor —
+ * the most consequential code in the app, and the one thing the map did not mention.
+ *
+ * Both pieces of evidence are declarations, either is enough on its own, and both emit
+ * under the same key, so a class in one file and its registration in another merge into
+ * one door that names the type and the place it was wired in.
+ */
+function detectHostedServices(
+  input: BoundaryInput,
+  findings: BoundaryFinding[],
+  at: (call: GCall, snippet?: string) => CodeSite,
+): void {
+  const { file } = input;
+
+  const worker = (className: string, schedule: string | null, site: CodeSite) => {
+    findings.push({
+      type: 'endpoint',
+      endpointKind: 'worker',
+      key: `worker ${className}`,
+      name: className,
+      method: 'RUNS',
+      route: null,
+      framework: '.NET Generic Host',
+      writes: true,
+      guards: [],
+      ...(schedule ? { schedule } : {}),
+      site,
+      // `ExecuteAsync` is the method the framework calls, so it is the handler; the
+      // class is the fallback when the override is named something older.
+      handlerId: input.nodeIdForName(`${className}.ExecuteAsync`) ?? input.nodeIdForName(className),
+      handlerOwner: className,
+    });
+  };
+
+  for (const def of file.defs) {
+    if (def.kind !== 'type' || !def.bases.some((base) => HOSTED_BASES.has(base))) continue;
+    worker(def.name, workerSchedule(file, def), {
+      path: file.path,
+      line: def.line,
+      nodeId: input.nodeIdForName(def.name) ?? input.fileId,
+      snippet: `class ${def.name} : ${def.bases.join(', ')}`,
+    });
+  }
+
+  for (const call of file.calls) {
+    if (bareMethod(call) !== 'AddHostedService') continue;
+    const typeArg = /^AddHostedService<\s*([\w.]+)\s*>$/.exec(call.method ?? '');
+    if (!typeArg) continue;
+    const className = typeArg[1].split('.').pop()!;
+    worker(className, null, at(call, `AddHostedService<${className}>()`));
+  }
+}
+
+/**
+ * The interval the class itself wrote down, or null.
+ *
+ * A `BackgroundService` usually loops on a `PeriodicTimer` or a `Task.Delay`, and the
+ * interval is sometimes a literal and sometimes configuration. Where it is a literal —
+ * `new PeriodicTimer(TimeSpan.FromMinutes(5))` — it is read; where it is not, this
+ * returns null and the door says nothing, because "runs continuously" is true and
+ * "every 5 minutes" would be invented.
+ */
+const TIMESPAN_UNITS: Record<string, string> = {
+  FromMilliseconds: 'ms',
+  FromSeconds: 'second',
+  FromMinutes: 'minute',
+  FromHours: 'hour',
+  FromDays: 'day',
+};
+
+function workerSchedule(file: GenericFile, def: GDef): string | null {
+  for (const timer of file.calls) {
+    if (timer.startIndex < def.startIndex || timer.endIndex > def.endIndex) continue;
+    const callee = timer.callee;
+    if (callee !== 'PeriodicTimer' && !/(^|\.)Task\.Delay$/.test(callee)) continue;
+
+    // The TimeSpan call is an argument, so its range sits inside the timer's.
+    for (const span of file.calls) {
+      if (span.startIndex < timer.startIndex || span.endIndex > timer.endIndex || span === timer) continue;
+      const unit = TIMESPAN_UNITS[bareMethod(span)];
+      if (!unit || !/(^|\.)TimeSpan\.\w+$/.test(span.callee)) continue;
+      const amount = span.args.find((arg) => arg.t === 'num');
+      if (!amount || amount.t !== 'num') continue;
+      if (unit === 'ms') return `every ${amount.v} ms`;
+      return amount.v === '1' ? `every ${unit}` : `every ${amount.v} ${unit}s`;
+    }
+  }
+  return null;
+}
+
+// ---------------------------------------------------------------------------
 // Where data goes
 // ---------------------------------------------------------------------------
 
@@ -673,6 +881,8 @@ function detectStores(
         // the data moves is what the queries below say, and inventing a direction here
         // would put a write on a screen somebody reads to find out what writes.
         operation: null,
+        // …and it is the half of #104's pairing every other file resolves against.
+        declares: true,
         site: { path: file.path, line: def.line, nodeId: input.nodeIdForName(def.name) ?? input.fileId },
       });
     }
@@ -756,25 +966,47 @@ function detectStores(
     const table = tableOfReceiver(call.receiver, tables);
 
     // Two tiers of evidence. An EF-only method is proof on its own; a LINQ verb is proof
-    // only when it is written on a table this file declared. The table itself is a third
-    // thing again — a `DbContext` usually lives in its own file, so a controller's
-    // `_db.Orders.ToListAsync()` is a database read whose table this file cannot name.
-    // `null` says exactly that, and is a great deal better than either silence or a guess.
+    // only when it is written on a table — this file's own `DbSet`, or one declared in
+    // another file, which is #104's whole problem: a `DbContext` usually lives alone,
+    // so a controller's `_db.Orders.ToListAsync()` is a read whose table this file
+    // cannot name. The receiver is carried instead, and the merge layer matches it
+    // against the tables the project declared once every file has been read.
     const efOnly = EF_ONLY_WRITES.has(method) ? 'write' : EF_ONLY_READS.has(method) ? 'read' : null;
-    const viaTable = table ? (LINQ_WRITES.has(method) ? 'write' : LINQ_READS.has(method) ? 'read' : null) : null;
-    const operation = efOnly ?? viaTable;
-    if (!operation) continue;
+    const linq = LINQ_WRITES.has(method) ? 'write' : LINQ_READS.has(method) ? 'read' : null;
+    const operation = efOnly ?? (table ? linq : null);
+    // A dotted receiver — `_db.Orders`, never a bare `items` — is the shape a DbSet
+    // reached through a context has. A single name stays what it always was: a list.
+    const deferred = !table && call.receiver?.includes('.') ? call.receiver : null;
 
-    findings.push({
-      type: 'store',
-      key: 'efcore',
-      name: 'Database',
-      client: 'Entity Framework Core',
-      storeKind: 'sql',
-      table,
-      operation,
-      site: at(call, `${call.callee}(…)`),
-    });
+    if (operation) {
+      findings.push({
+        type: 'store',
+        key: 'efcore',
+        name: 'Database',
+        client: 'Entity Framework Core',
+        storeKind: 'sql',
+        table,
+        operation,
+        ...(deferred ? { tableReceiver: deferred } : {}),
+        site: at(call, `${call.callee}(…)`),
+      });
+    } else if (linq && deferred) {
+      findings.push({
+        type: 'store',
+        key: 'efcore',
+        name: 'Database',
+        client: 'Entity Framework Core',
+        storeKind: 'sql',
+        table: null,
+        operation: linq,
+        tableReceiver: deferred,
+        // A LINQ verb is only evidence if the receiver turns out to be a table. If it
+        // does not, this finding must vanish rather than survive with a null table —
+        // kept, it would count somebody's list as a database.
+        requiresTable: true,
+        site: at(call, `${call.callee}(…)`),
+      });
+    }
   }
 }
 
@@ -919,22 +1151,51 @@ function hostOf(url: string): string | null {
 // ---------------------------------------------------------------------------
 
 /**
- * `Environment.GetEnvironmentVariable("STRIPE_KEY")`.
+ * `Environment.GetEnvironmentVariable("STRIPE_KEY")` — and the configuration stack,
+ * which is where a .NET app keeps nearly everything (#101).
  *
- * Only the environment, deliberately. `builder.Configuration["Stripe:Key"]` reads from a
- * stack of providers — appsettings.json, user secrets, key vault, and the environment
- * last — and reporting a JSON settings key as an environment variable would put names in
- * the env list that no deployment has ever set.
+ * The old rule read only the environment, deliberately: `builder.Configuration[…]`
+ * resolves through appsettings.json, user secrets, key vault, and the environment last,
+ * and reporting a JSON settings key as an environment variable would put names in the
+ * env list that no deployment has ever set. That reasoning holds and is kept — as the
+ * `config` flag on the finding, so the key is reported (the question on the screen is
+ * *what does this app need configured*) without ever being presented as an env var.
+ * Which file documents it travels the same way: appsettings for a config key,
+ * `.env.example` for an environment one.
  */
+const CONFIG_READS = new Set(['GetSection', 'GetRequiredSection', 'GetConnectionString']);
+
 function detectEnv(
   input: BoundaryInput,
   findings: BoundaryFinding[],
   at: (call: GCall, snippet?: string) => CodeSite,
 ): void {
   for (const call of input.file.calls) {
-    if (bareMethod(call) !== 'GetEnvironmentVariable') continue;
+    const method = bareMethod(call);
     const name = call.args.find((arg) => arg.t === 'str');
-    if (!name || name.t !== 'str') continue;
-    findings.push({ type: 'env', name: name.v, site: at(call, `${call.callee}("${name.v}")`) });
+    if (!name || name.t !== 'str' || !name.v) continue;
+
+    if (method === 'GetEnvironmentVariable') {
+      findings.push({ type: 'env', name: name.v, site: at(call, `${call.callee}("${name.v}")`) });
+      continue;
+    }
+
+    // `GetSection`/`GetConnectionString` are Microsoft.Extensions.Configuration's own
+    // vocabulary and mean nothing else. The indexer and `GetValue` exist on too many
+    // other types — a JSON library spells `GetValue` too — so they count only when
+    // read off the property the framework itself calls `Configuration`:
+    // `builder.Configuration["Stripe:Key"]` (an indexer arrives as a call whose method
+    // *is* `Configuration`), or `builder.Configuration.GetValue<int>("X")`. A field
+    // somebody named `_config` is the honest limit of this rule.
+    const isConfigRead =
+      CONFIG_READS.has(method) ||
+      method === 'Configuration' ||
+      (method === 'GetValue' && (call.receiver ?? '').split('.').includes('Configuration'));
+    if (!isConfigRead) continue;
+
+    // .NET's own spelling for a connection string's full key — and a credential by
+    // construction, which the secret rule knows.
+    const key = method === 'GetConnectionString' ? `ConnectionStrings:${name.v}` : name.v;
+    findings.push({ type: 'env', name: key, config: true, site: at(call, `${call.callee}("${name.v}")`) });
   }
 }

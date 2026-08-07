@@ -81,7 +81,8 @@ export async function analyzeGeneric(language: GenericLanguage, ctx: PluginConte
   }
 
   if (stale.length === 0) {
-    return { nodes, edges: [...edges.values()], boundaries, warnings, timings, slices, reused };
+    const mergedNodes = mergePartialTypes(nodes, edges, boundaries, namespaceOf);
+    return { nodes: mergedNodes, edges: [...edges.values()], boundaries, warnings, timings, slices, reused };
   }
 
   // ---- is the parser actually here ------------------------------------------
@@ -171,6 +172,7 @@ export async function analyzeGeneric(language: GenericLanguage, ctx: PluginConte
           signals: project.signals,
         }),
       );
+      synthesizeRouteHandlers(bucket, ref, dialect.id);
     }
   }
   timings.references = Date.now() - t3;
@@ -194,7 +196,225 @@ export async function analyzeGeneric(language: GenericLanguage, ctx: PluginConte
     });
   }
 
-  return { nodes, edges: [...edges.values()], boundaries, warnings, timings, slices, reused };
+  const mergedNodes = mergePartialTypes(nodes, edges, boundaries, namespaceOf);
+  return { nodes: mergedNodes, edges: [...edges.values()], boundaries, warnings, timings, slices, reused };
+}
+
+/**
+ * A `partial` class is one type, however many files declare it (#97).
+ *
+ * The rule is three facts, all written down: same name, same namespace, and *every*
+ * declaration carries `partial` — a class without the keyword cannot be split, so two
+ * types that merely share a name are never merged. `Glance.App.App` and
+ * `Glance.Core.Entities.App` stay two, because the namespaces differ; that direction of
+ * error would be worse than the doubling this fixes.
+ *
+ * Runs project-wide after every file is read — a per-file pass cannot know how many
+ * parts exist — and on the *assembled* node list, never on the slices, so the per-file
+ * cache stays raw and the merge is recomputed identically on incremental runs.
+ *
+ * The merged node keeps the part with the most members as its face: a reader who opens
+ * it should land on the half that holds what they searched for. The other files are not
+ * dropped silently — `meta.declaredIn` names every one, because a type that lives in
+ * two files is a real shape and picking one file without saying so would send a reader
+ * to the wrong half.
+ */
+function mergePartialTypes(
+  nodes: AtlasNode[],
+  edges: Map<string, AtlasEdge>,
+  boundaries: BoundaryFinding[],
+  namespaceOf: Map<string, string>,
+): AtlasNode[] {
+  const groups = new Map<string, AtlasNode[]>();
+  for (const node of nodes) {
+    if (node.kind !== 'type' || node.meta.partialType !== true) continue;
+    const key = `${namespaceOf.get(node.path ?? '') ?? ''}|${node.name}`;
+    const list = groups.get(key);
+    if (list) list.push(node);
+    else groups.set(key, [node]);
+  }
+
+  const replaced = new Map<string, string>();
+  for (const parts of groups.values()) {
+    if (parts.length < 2) continue;
+    // The face of the merged type is its canonical part. C# names the parts by
+    // convention and the convention is written down in the file name: `Window.cs` and
+    // `Window.xaml.cs` declare the type, `Window.Render.cs` declares a facet of it —
+    // and the facet's docstring describes the facet, which must not become the card.
+    const canonical = (node: AtlasNode): number => {
+      const base = (node.path ?? '').split('/').pop() ?? '';
+      return base === `${node.name}.cs` || base === `${node.name}.xaml.cs` ? 0 : 1;
+    };
+    parts.sort(
+      (a, b) =>
+        canonical(a) - canonical(b) ||
+        fieldsOf(b).length - fieldsOf(a).length ||
+        (a.path ?? '').localeCompare(b.path ?? ''),
+    );
+    const survivor = parts[0]!;
+
+    const fields = fieldsOf(survivor);
+    const seenFields = new Set(fields.map((f) => f.name));
+    const bases = new Set(extendsOf(survivor));
+    let loc = 0;
+    for (const part of parts) {
+      loc += typeof part.meta.loc === 'number' ? part.meta.loc : 0;
+      if (part === survivor) continue;
+      for (const field of fieldsOf(part)) {
+        if (seenFields.has(field.name)) continue;
+        seenFields.add(field.name);
+        fields.push(field);
+      }
+      for (const base of extendsOf(part)) bases.add(base);
+      // The docstring is wherever somebody wrote it, which for a designer-split class
+      // is usually the hand-written half.
+      if (!survivor.summary && part.summary) {
+        survivor.summary = part.summary;
+        survivor.summarySource = part.summarySource;
+        survivor.docHash = part.docHash;
+        survivor.provenance = part.provenance;
+      }
+      replaced.set(part.id, survivor.id);
+    }
+    survivor.meta.extends = [...bases];
+    survivor.meta.loc = loc;
+    survivor.meta.declaredIn = parts.map((part) => part.path).sort();
+    // The hash must move when any part does, or the words layer would keep a summary
+    // written about half the class.
+    survivor.hash = hashParts(...parts.map((part) => part.hash).sort());
+    survivor.bodyHash = hashParts(...parts.map((part) => part.bodyHash ?? '').sort());
+  }
+  if (replaced.size === 0) return nodes;
+
+  const out = nodes.filter((node) => !replaced.has(node.id));
+  for (const node of out) {
+    if (node.parentId && replaced.has(node.parentId)) node.parentId = replaced.get(node.parentId)!;
+  }
+
+  for (const [id, edge] of [...edges]) {
+    const fromId = replaced.get(edge.fromId) ?? edge.fromId;
+    const toId = replaced.get(edge.toId) ?? edge.toId;
+    if (fromId === edge.fromId && toId === edge.toId) continue;
+    edges.delete(id);
+    // An edge between two parts of one class was never saying anything a reader needs.
+    if (fromId === toId) continue;
+    const newId = makeEdgeId(edge.kind, fromId, toId);
+    if (!edges.has(newId)) edges.set(newId, { ...edge, id: newId, fromId, toId });
+  }
+
+  // A finding written against a removed part follows it — a door whose handler is one
+  // half of a split class must not dangle.
+  for (const finding of boundaries) {
+    const record = finding as unknown as Record<string, unknown>;
+    for (const key of ['nodeId', 'handlerId', 'sourceId']) {
+      const value = record[key];
+      if (typeof value === 'string' && replaced.has(value)) record[key] = replaced.get(value)!;
+    }
+    const site = record.site as { nodeId?: string | null } | undefined;
+    if (site?.nodeId && replaced.has(site.nodeId)) site.nodeId = replaced.get(site.nodeId)!;
+  }
+
+  return out;
+}
+
+/**
+ * A node for the lambda that answers a door, named after the door (#99).
+ *
+ * `app.MapGet("/api/admin/employees", () => …)` twenty times in one method gave every
+ * one of those doors the same handler: the 200-line method that registered them. The
+ * lambda is a real unit of code with a real range; what it lacked was a node to point
+ * at, and a name. The door's own name is the honest one — it is what a reader clicking
+ * the door is looking for — and `synthesized` on the meta says the source never wrote
+ * it, the same debt every generated name on the map already owes.
+ *
+ * Findings whose site sits inside the lambda move onto its node, so a database call
+ * written in the handler hangs off the door that reaches it rather than off the
+ * registration method. Runs per file, so the synthesized nodes land in the slice cache
+ * like anything else and incremental runs restore them for free.
+ */
+function synthesizeRouteHandlers(
+  bucket: { nodes: AtlasNode[]; boundaries: BoundaryFinding[] },
+  ref: SourceFileRef,
+  language: string,
+): void {
+  const used = new Set(bucket.nodes.map((node) => node.id));
+  const spans: { id: string; startIndex: number; endIndex: number; line: number; endLine: number }[] = [];
+
+  for (const finding of bucket.boundaries) {
+    if (finding.type !== 'endpoint' || !finding.handlerSpan) continue;
+    const span = finding.handlerSpan;
+    const name = `${finding.name} handler`;
+    const id = unique(makeFunctionId(ref.relPath, name), used);
+    const fileId = makeFileId(ref.relPath);
+    bucket.nodes.push({
+      id,
+      kind: 'function',
+      name,
+      label: null,
+      // Structurally the lambda sits inside whatever the old attribution named — the
+      // registering method, or the file when registration is top-level.
+      parentId: finding.handlerId && !finding.handlerId.startsWith('file:') ? finding.handlerId : fileId,
+      language,
+      path: ref.relPath,
+      startLine: span.line,
+      endLine: span.endLine,
+      zone: ref.zone,
+      summary: null,
+      summarySource: null,
+      docHash: null,
+      bodyHash: hashParts(String(span.startIndex), String(span.endIndex - span.startIndex)),
+      hash: hashParts(name, String(span.endIndex - span.startIndex)),
+      provenance: 'static',
+      meta: {
+        signature: `${name}`,
+        params: [] as ParamInfo[],
+        returnType: 'void',
+        isAsync: false,
+        isExported: false,
+        isMethod: false,
+        loc: span.endLine - span.line + 1,
+        tier: TIER,
+        // The source never named this. Every screen that marks generated names can
+        // mark this one by the same flag.
+        synthesized: 'route-handler',
+      },
+    });
+    finding.handlerId = id;
+    spans.push({ id, ...span });
+  }
+  if (spans.length === 0) return;
+
+  // A finding written inside the lambda belongs to it. Sites carry lines, not offsets,
+  // so containment is by line — and the smallest containing lambda wins, since a
+  // one-line handler shares its line with the registration around it.
+  const owner = (line: number): string | null => {
+    let best: (typeof spans)[number] | null = null;
+    for (const span of spans) {
+      if (line < span.line || line > span.endLine) continue;
+      if (!best || span.endLine - span.line < best.endLine - best.line) best = span;
+    }
+    return best?.id ?? null;
+  };
+  for (const finding of bucket.boundaries) {
+    if (finding.type === 'store' || finding.type === 'service' || finding.type === 'env') {
+      const id = owner(finding.site.line);
+      if (id) finding.site.nodeId = id;
+    } else if (finding.type === 'sign-in-call') {
+      const id = owner(finding.site.line);
+      if (id) {
+        finding.nodeId = id;
+        finding.site.nodeId = id;
+      }
+    }
+  }
+}
+
+function fieldsOf(node: AtlasNode): FieldInfo[] {
+  return Array.isArray(node.meta.fields) ? (node.meta.fields as FieldInfo[]) : [];
+}
+
+function extendsOf(node: AtlasNode): string[] {
+  return Array.isArray(node.meta.extends) ? (node.meta.extends as string[]) : [];
 }
 
 // ---------------------------------------------------------------------------
@@ -357,7 +577,10 @@ function typeNode(id: string, fileId: string, ref: SourceFileRef, def: GDef, lan
       typeKind: 'class',
       fields,
       isExported: def.exported,
-      extends: [] as string[],
+      extends: def.bases,
+      // One part of a split type. The merge into one node happens project-wide, once
+      // every file has been read — a per-file pass cannot know how many parts exist.
+      ...(def.partial ? { partialType: true } : {}),
       loc: def.endLine - def.line + 1,
       tier: TIER,
     },
