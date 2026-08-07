@@ -472,6 +472,16 @@ export interface AtlasStats {
   publicRoutes: number;
   /** Unchecked, but a file they import could not be read — unknown, not open (#36). */
   unreadableRoutes: number;
+  /**
+   * Guarded routes whose every guard is below `certain` — a check matched through a
+   * pattern, a policy read out of a migration, a filter reached one hop away.
+   *
+   * The grade is carried faithfully on every card, and the headline used to drop it:
+   * a real app whose 21 doors are all behind `likely`-grade RLS policies was told
+   * "every one of the 21 routes has an auth check", which reads as proven and is the
+   * one direction this tool must never be wrong in (#116).
+   */
+  likelyOnlyRoutes: number;
   /** Files that could not be parsed at all. Every count above is short by their contents. */
   unreadFiles: number;
   services: number;

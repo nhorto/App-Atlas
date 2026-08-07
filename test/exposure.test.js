@@ -156,6 +156,75 @@ test('nothing to protect means nothing to say', () => {
   assert.equal(authHeadline({ routes: 0, unprotectedRoutes: 0, publicRoutes: 0, unreadableRoutes: 0, unreadFiles: 0 }), null);
 });
 
+// ---------------------------------------------------------------------------
+// The clean sweep does not read greener than the evidence (#116)
+
+test('a headline where nothing was proven says so', () => {
+  // Found on a real Expo app: 21 doors, every check an RLS policy read out of a
+  // migration — real evidence, honestly graded `likely` on every card, and the
+  // headline told its owner the app was fully locked. The cards keep the grade M2
+  // promised; the sentence people repeat in a meeting was dropping it.
+  const line = authHeadline({
+    routes: 4,
+    unprotectedRoutes: 0,
+    publicRoutes: 0,
+    unreadableRoutes: 0,
+    unreadFiles: 0,
+    likelyOnlyRoutes: 4,
+  });
+  assert.equal(line.headline, 'every one of the 4 routes has an auth check — all matched, none proven');
+  assert.match(line.caveats.join(' '), /matched by a pattern rather than proven/);
+});
+
+test('a headline where some were proven counts the ones that were not', () => {
+  // The real shape of that app: 20 doors behind policies, one behind a call the
+  // analyzer could point at. "None proven" would be as wrong in the other direction.
+  const line = authHeadline({
+    routes: 21,
+    unprotectedRoutes: 0,
+    publicRoutes: 0,
+    unreadableRoutes: 0,
+    unreadFiles: 0,
+    likelyOnlyRoutes: 20,
+  });
+  assert.match(line.headline, /^every one of the 21 routes has an auth check, though 20 of those were matched/);
+});
+
+test('a proven sweep keeps the clean sentence it earned', () => {
+  const line = authHeadline({
+    routes: 4,
+    unprotectedRoutes: 0,
+    publicRoutes: 0,
+    unreadableRoutes: 0,
+    unreadFiles: 0,
+    likelyOnlyRoutes: 0,
+  });
+  assert.equal(line.headline, 'every one of the 4 routes has an auth check');
+  assert.deepEqual(line.caveats, []);
+});
+
+test('the hedge never lands on a headline that already has worse news', () => {
+  // A count of unprotected doors is the more urgent fact and carries "App Atlas can
+  // see" already. Two hedges in one sentence is a sentence nobody finishes.
+  const line = authHeadline({
+    routes: 10,
+    unprotectedRoutes: 3,
+    publicRoutes: 0,
+    unreadableRoutes: 0,
+    unreadFiles: 0,
+    likelyOnlyRoutes: 7,
+  });
+  assert.equal(line.headline, '3 of 10 routes have no auth check App Atlas can see');
+  assert.doesNotMatch(line.caveats.join(' '), /matched by a pattern/);
+});
+
+test('an atlas from before this stat existed still produces a sentence', () => {
+  // `likelyOnlyRoutes` is absent from every atlas written by an earlier version, and a
+  // missing number must read as "nothing to add" rather than as a hedge or a crash.
+  const line = authHeadline({ routes: 4, unprotectedRoutes: 0, publicRoutes: 0, unreadableRoutes: 0, unreadFiles: 0 });
+  assert.equal(line.headline, 'every one of the 4 routes has an auth check');
+});
+
 /**
  * Issue #58. A Python project analyzed on a machine whose interpreter never answered has
  * no doors for the same reason a blindfolded person has no traffic to report, and every
