@@ -21,7 +21,7 @@ import assert from 'node:assert/strict';
 import path from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
-import { analyzeProject, AtlasGraph, grammarTier } from '../dist/node/index.js';
+import { analyzeProject, AtlasGraph, findScopes, grammarTier } from '../dist/node/index.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const result = await analyzeProject(path.join(here, 'fixtures', 'csharpapi'), {
@@ -445,6 +445,31 @@ test('a connection string is a credential by construction', () => {
   const env = nodes.find((node) => node.kind === 'endpoint' && node.meta.endpointKind === 'env');
   const conn = env.meta.vars.find((v) => v.name === 'ConnectionStrings:Shop');
   assert.equal(conn.secret, true, 'no word in the name matches the secret pattern, and it must not need to');
+});
+
+// ---------------------------------------------------------------------------
+// A solution is a monorepo (#98)
+// ---------------------------------------------------------------------------
+
+const slnScopes = await findScopes(path.join(here, 'fixtures', 'csharpsln'));
+
+test('every project in a .sln is a scope, and the service leads', () => {
+  // The split *is* the architecture — Api → Core, arrows one way, enforced by the
+  // compiler — and flattened into one map that is the one thing you cannot see. It
+  // also mixes archetypes: one merged map had to pick a single verdict for a service,
+  // a CLI and a library, and whichever it picked was wrong for the other two.
+  assert.deepEqual(
+    slnScopes.map((s) => `${s.name} (${s.kind})`),
+    ['Fab.Api (app)', 'Fab.Cli (app)', 'Fab.Core (library)'],
+  );
+  assert.equal(slnScopes[0].dir, 'src/Fab.Api', 'the web service is what somebody calls the project');
+});
+
+test('a single-project repo does not gain a switcher it has no use for', async () => {
+  // Shop.sln declares one project; the console fixture has one .csproj at the root.
+  // "No scopes" and "one scope" mean the same thing everywhere: analyze the root.
+  assert.deepEqual(await findScopes(path.join(here, 'fixtures', 'csharpapi')), []);
+  assert.deepEqual(await findScopes(path.join(here, 'fixtures', 'csharpconsole')), []);
 });
 
 // ---------------------------------------------------------------------------
