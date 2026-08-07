@@ -116,11 +116,13 @@ export function agentCliById(id: string, options: AgentCliOptions = {}): EnrichB
 }
 
 function makeBackend(spec: CliSpec, options: AgentCliOptions): EnrichBackend {
-  return {
+  const backend: EnrichBackend = {
     id: spec.id,
     label: spec.label,
-    // The user is already paying a flat fee for this tool. Nothing we send adds to
-    // a bill, which is why this backend never triggers the consent prompt.
+    // Usually right: the user is paying a flat fee for this tool, and nothing we send
+    // adds to a bill. But an agent CLI can equally be authenticated with an API key,
+    // and then every call is billed per token — so this is the *assumption*, and the
+    // probe below is allowed to overturn it before anything real is spent.
     billing: 'subscription',
     model: options.model,
     concurrency: CONCURRENCY,
@@ -132,6 +134,11 @@ function makeBackend(spec: CliSpec, options: AgentCliOptions): EnrichBackend {
           `Reply with exactly this word and nothing else: ${PROBE_TOKEN}`,
           PROBE_TIMEOUT_MS,
         );
+        // The probe is one real request, and a metered CLI prices it. That number is
+        // evidence and the table above is a guess, so the evidence wins: a Claude Code
+        // signed in with an API key is reclassified here, before the first paid batch,
+        // and gets the same question an API key has always got (#111).
+        if ((reply.usage?.costUsd ?? 0) > 0) backend.billing = 'metered';
         if (reply.text.includes(PROBE_TOKEN)) return { ok: true as const };
         return { ok: false as const, reason: firstLine(reply.text) || 'gave an unexpected answer' };
       } catch (err) {
@@ -143,6 +150,7 @@ function makeBackend(spec: CliSpec, options: AgentCliOptions): EnrichBackend {
       // instructions ride along at the top of the message. One shape for all three.
       invoke(spec, options, `${request.system}\n\n---\n\n${request.user}`, REQUEST_TIMEOUT_MS, signal),
   };
+  return backend;
 }
 
 async function invoke(

@@ -599,6 +599,7 @@ export function computeStats(nodes: AtlasNode[], edges: AtlasEdge[]): AtlasStats
   let aiFiles = 0;
   let endpoints = 0;
   let routes = 0;
+  let likelyOnlyRoutes = 0;
   let unreadFiles = 0;
   let services = 0;
   let externalServices = 0;
@@ -629,7 +630,13 @@ export function computeStats(nodes: AtlasNode[], edges: AtlasEdge[]): AtlasStats
         endpoints++;
         const meta = node.meta as unknown as EndpointMeta;
         if (meta.endpointKind === 'env') envVars += meta.vars?.length ?? 0;
-        if (isAuthRelevant(meta)) routes++;
+        if (isAuthRelevant(meta)) {
+          routes++;
+          // A door with guards, none of which the analyzer could prove. Counted here so
+          // the headline can carry the grade its cards already carry (#116).
+          const guards = meta.guards ?? [];
+          if (guards.length > 0 && guards.every((guard) => guard.confidence !== 'certain')) likelyOnlyRoutes++;
+        }
         break;
       }
       case 'service':
@@ -672,6 +679,7 @@ export function computeStats(nodes: AtlasNode[], edges: AtlasEdge[]): AtlasStats
     endpoints,
     routes,
     unprotectedRoutes: open.worthALook,
+    likelyOnlyRoutes,
     publicRoutes: open.page + open.authMount,
     unreadableRoutes: open.unreadable,
     unreadFiles,

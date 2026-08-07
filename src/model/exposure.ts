@@ -260,6 +260,28 @@ export function authHeadline(stats: AtlasStats): AuthHeadline | null {
       routes === 1 ? 'the one route has an auth check' : `every one of the ${routes} routes has an auth check`;
   }
 
+  // A clean sweep is the one sentence people repeat in a meeting, and it must not read
+  // greener than the evidence under it. Every card carries `likely · Clerk` rather than
+  // rounding up to "protected" (M2); dropping that grade here broke the same promise in
+  // the most quotable place on the page. On a real Expo app, 20 of 21 doors were behind
+  // RLS policies read out of migrations — real evidence, honestly graded `likely` — and
+  // the headline told its owner the app was fully locked (#116).
+  //
+  // The hedge is only ever added to a headline that had nothing else to say. A number
+  // of unprotected doors is the more urgent fact and already carries "App Atlas can
+  // see"; two hedges in one sentence is a sentence nobody finishes.
+  const likelyOnly = stats.likelyOnlyRoutes ?? 0;
+  const clean = open === 0 && unknown === 0;
+  const hedged = clean && likelyOnly > 0;
+  if (hedged) {
+    headline +=
+      likelyOnly === routes - public_
+        ? routes - public_ === 1
+          ? ' — matched, not proven'
+          : ' — all matched, none proven'
+        : `, though ${likelyOnly} of those were matched rather than proven`;
+  }
+
   const caveats: string[] = [];
   if (open > 0 && unknown > 0) {
     caveats.push(
@@ -272,6 +294,13 @@ export function authHeadline(stats: AtlasStats): AuthHeadline | null {
   if (unread > 0) {
     caveats.push(
       `App Atlas could not read ${unread} ${unread === 1 ? 'file' : 'files'}; whatever they declare is missing from every number here`,
+    );
+  }
+  if (hedged) {
+    caveats.push(
+      likelyOnly === routes - public_
+        ? 'every check was matched by a pattern rather than proven — open the doors and read what guards them'
+        : `${likelyOnly} of the checks were matched by a pattern rather than proven — worth reading those doors yourself`,
     );
   }
 
