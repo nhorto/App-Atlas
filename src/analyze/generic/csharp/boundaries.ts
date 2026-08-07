@@ -16,7 +16,7 @@
  * SDK and no ASP.NET reference cannot have a route detected in it, however many methods
  * somebody has called `Get`.
  */
-import type { CodeSite, GuardInfo } from '../../../model/types.js';
+import type { CodeSite, GuardInfo, SignInKind } from '../../../model/types.js';
 import { isInternalHost, serviceForHost } from '../../boundaries/catalog.js';
 import type { BoundaryFinding } from '../../boundaries/types.js';
 import { isSqlStatement, readSqlStatement } from '../../sql.js';
@@ -202,6 +202,7 @@ export function detectCSharpBoundaries(input: BoundaryInput): BoundaryFinding[] 
     detectControllers(input, findings, at);
     detectMinimalApis(input, findings, at);
     detectCheckers(input, findings);
+    detectSignInCalls(input, findings, at);
   }
   if (isDotnetHost(input)) detectHostedServices(input, findings, at);
   detectStores(input, findings, at);
@@ -632,6 +633,61 @@ function detectCheckers(input: BoundaryInput, findings: BoundaryFinding[]): void
         // same thing `likely` means everywhere else in this codebase.
         confidence: 'likely',
       },
+    });
+  }
+}
+
+// ---------------------------------------------------------------------------
+// The door people sign in through
+// ---------------------------------------------------------------------------
+
+/**
+ * The calls that hand a session out, which is #40's rule in .NET: a door whose handler
+ * issues the session cannot demand one first, and without this finding a login route is
+ * indistinguishable from a route somebody forgot to lock.
+ *
+ * A closed list of the framework's own methods, not a pattern. Identity's sign-in
+ * surface all ends in `SignInAsync`, but matching that suffix would also excuse a door
+ * because somebody *named* a method `KioskSignInAsync` — and `/api/auth/setup` staying
+ * on the worry list is exactly as important as `/api/auth/login` leaving it. A .NET app
+ * with a hand-rolled scheme gets nothing from this table, which is the honest limit of
+ * a list: under-excusing leaves a deliberate door on the list, over-excusing silences a
+ * real one.
+ */
+const SIGN_IN_CALLS: Record<string, SignInKind> = {
+  SignInAsync: 'sign-in',
+  PasswordSignInAsync: 'sign-in',
+  CheckPasswordSignInAsync: 'sign-in',
+  RefreshSignInAsync: 'sign-in',
+  TwoFactorSignInAsync: 'sign-in',
+  TwoFactorAuthenticatorSignInAsync: 'sign-in',
+  TwoFactorRecoveryCodeSignInAsync: 'sign-in',
+  ExternalLoginSignInAsync: 'sign-in',
+  SignOutAsync: 'sign-out',
+};
+
+/** The methods only ASP.NET Core Identity spells; the rest are the cookie middleware's. */
+const IDENTITY_ONLY = /^(Password|CheckPassword|Refresh|TwoFactor|ExternalLogin)/;
+
+function detectSignInCalls(
+  input: BoundaryInput,
+  findings: BoundaryFinding[],
+  at: (call: GCall, snippet?: string) => CodeSite,
+): void {
+  const { file } = input;
+  for (const call of file.calls) {
+    const method = bareMethod(call);
+    const what = SIGN_IN_CALLS[method];
+    // A bare `SignInAsync()` with no receiver is not the framework's — every real call
+    // site is `HttpContext.SignInAsync` or `_signInManager.PasswordSignInAsync`.
+    if (!what || !call.receiver || !call.scope) continue;
+    findings.push({
+      type: 'sign-in-call',
+      provider: IDENTITY_ONLY.test(method) ? 'ASP.NET Core Identity' : 'ASP.NET Core',
+      what,
+      call: `${call.callee}(…)`,
+      nodeId: input.nodeIdForScope(call.scope),
+      site: at(call, `${call.callee}(…)`),
     });
   }
 }

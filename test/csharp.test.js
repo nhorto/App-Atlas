@@ -118,6 +118,9 @@ test('the door count is the whole list and nothing else', () => {
     'GET /api/v1/orders/public-status',
     'GET /health',
     'POST /admin/reindex',
+    'POST /api/auth/login',
+    'POST /api/auth/logout',
+    'POST /api/auth/setup',
     'POST /api/kiosk/shift/end',
     'POST /api/kiosk/shift/start',
     'POST /api/v1/orders',
@@ -157,6 +160,34 @@ test('a hop-found lock is likely, never certain', () => {
   const guard = doors.find((d) => d.name === 'GET /api/kiosk/today').meta.guards[0];
   assert.equal(guard.confidence, 'likely');
   assert.equal(guard.provider, 'custom');
+});
+
+// ---------------------------------------------------------------------------
+// The door people sign in through (#102)
+// ---------------------------------------------------------------------------
+
+test('a route whose handler issues the session is public by design, and says why', () => {
+  // `HttpContext.SignInAsync(…)` inside the handler is the evidence — #40's rule, in
+  // .NET. A door that hands out sessions cannot require one, and before this it sat on
+  // the worry list as an unexplained open door.
+  const login = doors.find((d) => d.name === 'POST /api/auth/login');
+  assert.equal(login.meta.signInCall?.what, 'sign-in');
+  assert.equal(login.meta.open?.kind, 'auth-mount');
+  assert.match(login.meta.open?.because ?? '', /ASP\.NET Core/);
+});
+
+test('sign-out is the same fact in the other direction', () => {
+  const logout = doors.find((d) => d.name === 'POST /api/auth/logout');
+  assert.equal(logout.meta.signInCall?.what, 'sign-out');
+});
+
+test('nothing is excused by its address', () => {
+  // `POST /api/auth/setup` lives under `/api/auth/` and hands out no session. It is a
+  // deliberate first-run hole and a reader deserves to see it — the trap #71 documents
+  // is a rule that silences a door because of its name.
+  const setup = doors.find((d) => d.name === 'POST /api/auth/setup');
+  assert.equal(setup.meta.signInCall, undefined);
+  assert.equal(setup.meta.open?.kind, 'worth-a-look');
 });
 
 // ---------------------------------------------------------------------------
