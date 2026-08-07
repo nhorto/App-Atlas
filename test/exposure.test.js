@@ -121,7 +121,10 @@ test('the unreadable file is named on the security screen, not only in a warning
     auth.unread.map((f) => f.path),
     ['app/deps.py'],
   );
-  assert.match(auth.unread[0].because, /parenthesized/);
+  // The reason carries Python's own words for why it refused the file. The fixture's
+  // broken line is a Python 2 `print`, whose message has been stable since 3.6 —
+  // unlike the `except A, B:` message this used to match, which PEP 758 deleted.
+  assert.match(auth.unread[0].because, /[Mm]issing parentheses/);
 });
 
 // ---------------------------------------------------------------------------
