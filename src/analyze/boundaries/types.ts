@@ -135,6 +135,15 @@ export interface StoreFinding {
 export interface EnvFinding {
   type: 'env';
   name: string;
+  /**
+   * The read went through a configuration stack rather than the environment (#101) —
+   * `builder.Configuration["Stripe:Key"]`, where the value may come from
+   * appsettings.json, user secrets, a vault, or the environment last. The key is a
+   * setting this app requires either way; the flag is what keeps it from being
+   * presented as an environment variable no deployment has ever set, and what says
+   * which file — settings or `.env.example` — documents it.
+   */
+  config?: boolean;
   site: CodeSite;
 }
 

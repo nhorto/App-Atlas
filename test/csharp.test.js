@@ -410,6 +410,44 @@ test('where to look first has something to say', () => {
 });
 
 // ---------------------------------------------------------------------------
+// Configuration is in appsettings.json, and now the map reads it (#101)
+// ---------------------------------------------------------------------------
+
+test('the keys the app reads are reported, whatever provider answers them', () => {
+  // The old rule read only `GetEnvironmentVariable`, deliberately — and showed a
+  // configuration surface of three on an app with far more than three settings. The
+  // question on the screen is *what does this app need configured*; where the value
+  // comes from is a deployment question, and it travels on the row instead.
+  const env = nodes.find((node) => node.kind === 'endpoint' && node.meta.endpointKind === 'env');
+  const names = env.meta.vars.map((v) => v.name);
+  for (const key of ['Stripe:Key', 'ConnectionStrings:Shop', 'PowerFab', 'Vendor:ApiToken']) {
+    assert.ok(names.includes(key), `${key} missing from ${names.join(', ')}`);
+  }
+  // …and every one of them is marked as configuration, never as an environment
+  // variable no deployment has ever set — the part of the old rule that was right.
+  for (const key of ['Stripe:Key', 'ConnectionStrings:Shop', 'PowerFab', 'Vendor:ApiToken']) {
+    assert.equal(env.meta.vars.find((v) => v.name === key).config, true);
+  }
+});
+
+test('documented means present in appsettings.json, and the missing key is the finding', () => {
+  const env = nodes.find((node) => node.kind === 'endpoint' && node.meta.endpointKind === 'env');
+  const byName = (name) => env.meta.vars.find((v) => v.name === name);
+  assert.equal(byName('Stripe:Key').documented, true);
+  assert.equal(byName('PowerFab').documented, true);
+  // Read by the code, absent from every settings file — the same distinction
+  // `.env.example` draws for the JavaScript side, and the row a reader acts on.
+  assert.equal(byName('Vendor:ApiToken').documented, false);
+  assert.match(env.meta.envExample, /appsettings\.json/, 'the file it was checked against is named');
+});
+
+test('a connection string is a credential by construction', () => {
+  const env = nodes.find((node) => node.kind === 'endpoint' && node.meta.endpointKind === 'env');
+  const conn = env.meta.vars.find((v) => v.name === 'ConnectionStrings:Shop');
+  assert.equal(conn.secret, true, 'no word in the name matches the secret pattern, and it must not need to');
+});
+
+// ---------------------------------------------------------------------------
 // Visibility, which C# writes as a keyword
 // ---------------------------------------------------------------------------
 

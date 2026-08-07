@@ -97,6 +97,10 @@ const PUBLIC_ENV_PREFIX =
 /** Whether a variable name should be treated as holding a credential. */
 function isSecretName(name: string): boolean {
   if (PUBLIC_ENV_PREFIX.test(name)) return false;
+  // A connection string is a credential by construction (#101), whatever the database
+  // is called — the name pattern below matches words, and `ConnectionStrings:Shop`
+  // contains none of them.
+  if (/^ConnectionStrings(:|$)/i.test(name)) return true;
   return SECRET_PATTERN.test(name);
 }
 
@@ -1135,22 +1139,28 @@ function envRuntime(sites: CodeSite[]): string {
  * variables themselves live in the node's metadata and drive the secrets badge.
  */
 function collectEnv(input: BuildInput): MergedEndpoint | null {
-  const byName = new Map<string, CodeSite[]>();
+  const byName = new Map<string, { sites: CodeSite[]; config: boolean }>();
   for (const finding of input.findings) {
     if (finding.type !== 'env') continue;
-    const list = byName.get(finding.name);
-    if (list) list.push(finding.site);
-    else byName.set(finding.name, [finding.site]);
+    const entry = byName.get(finding.name);
+    if (entry) {
+      entry.sites.push(finding.site);
+      entry.config = entry.config || Boolean(finding.config);
+    } else byName.set(finding.name, { sites: [finding.site], config: Boolean(finding.config) });
   }
   if (byName.size === 0) return null;
 
   const vars: EnvVarInfo[] = [...byName.entries()]
-    .map(([name, sites]) => ({
+    .map(([name, { sites, config }]) => ({
       name,
       sites: sites.sort(compareSites),
-      documented: input.signals.envExample.has(name),
+      // A configuration key is documented by the settings files, an environment
+      // variable by `.env.example` — the same question, asked of the file that could
+      // actually answer it (#101).
+      documented: config ? input.signals.appsettingsKeys.has(name) : input.signals.envExample.has(name),
       secret: isSecretName(name),
       platform: isPlatformName(name),
+      ...(config ? { config: true } : {}),
     }))
     .sort((a, b) => a.name.localeCompare(b.name));
 
@@ -1168,7 +1178,15 @@ function collectEnv(input: BuildInput): MergedEndpoint | null {
       writes: false,
       sites,
       vars,
-      envExample: input.signals.envExamplePath,
+      // The file each kind of key was checked against, so "undocumented" is always a
+      // claim about a file the reader can open.
+      envExample:
+        [
+          input.signals.envExamplePath,
+          ...(vars.some((v) => v.config) ? input.signals.appsettingsPaths : []),
+        ]
+          .filter(Boolean)
+          .join(', ') || null,
     },
     handlerIds: new Set(sites.map((site) => makeFileId(site.path))),
     paramTypes: new Set(),

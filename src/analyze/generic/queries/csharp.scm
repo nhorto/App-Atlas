@@ -136,6 +136,13 @@
   type: (_) @call.fn
   arguments: (argument_list) @call.args) @call
 
+; An indexer, read as a call on what it indexes. `builder.Configuration["Stripe:Key"]`
+; is how most .NET configuration is actually read, and it is the one read shape with no
+; invocation in it anywhere.
+(element_access_expression
+  [(member_access_expression) (identifier)] @call.fn
+  (bracketed_argument_list) @call.args) @call
+
 ; --- names bound to values -------------------------------------------------
 ; `var app = builder.Build();` is the only record that `app` is a web application, and
 ; every route mapped on it afterwards says only `app`.

@@ -1151,22 +1151,51 @@ function hostOf(url: string): string | null {
 // ---------------------------------------------------------------------------
 
 /**
- * `Environment.GetEnvironmentVariable("STRIPE_KEY")`.
+ * `Environment.GetEnvironmentVariable("STRIPE_KEY")` — and the configuration stack,
+ * which is where a .NET app keeps nearly everything (#101).
  *
- * Only the environment, deliberately. `builder.Configuration["Stripe:Key"]` reads from a
- * stack of providers — appsettings.json, user secrets, key vault, and the environment
- * last — and reporting a JSON settings key as an environment variable would put names in
- * the env list that no deployment has ever set.
+ * The old rule read only the environment, deliberately: `builder.Configuration[…]`
+ * resolves through appsettings.json, user secrets, key vault, and the environment last,
+ * and reporting a JSON settings key as an environment variable would put names in the
+ * env list that no deployment has ever set. That reasoning holds and is kept — as the
+ * `config` flag on the finding, so the key is reported (the question on the screen is
+ * *what does this app need configured*) without ever being presented as an env var.
+ * Which file documents it travels the same way: appsettings for a config key,
+ * `.env.example` for an environment one.
  */
+const CONFIG_READS = new Set(['GetSection', 'GetRequiredSection', 'GetConnectionString']);
+
 function detectEnv(
   input: BoundaryInput,
   findings: BoundaryFinding[],
   at: (call: GCall, snippet?: string) => CodeSite,
 ): void {
   for (const call of input.file.calls) {
-    if (bareMethod(call) !== 'GetEnvironmentVariable') continue;
+    const method = bareMethod(call);
     const name = call.args.find((arg) => arg.t === 'str');
-    if (!name || name.t !== 'str') continue;
-    findings.push({ type: 'env', name: name.v, site: at(call, `${call.callee}("${name.v}")`) });
+    if (!name || name.t !== 'str' || !name.v) continue;
+
+    if (method === 'GetEnvironmentVariable') {
+      findings.push({ type: 'env', name: name.v, site: at(call, `${call.callee}("${name.v}")`) });
+      continue;
+    }
+
+    // `GetSection`/`GetConnectionString` are Microsoft.Extensions.Configuration's own
+    // vocabulary and mean nothing else. The indexer and `GetValue` exist on too many
+    // other types — a JSON library spells `GetValue` too — so they count only when
+    // read off the property the framework itself calls `Configuration`:
+    // `builder.Configuration["Stripe:Key"]` (an indexer arrives as a call whose method
+    // *is* `Configuration`), or `builder.Configuration.GetValue<int>("X")`. A field
+    // somebody named `_config` is the honest limit of this rule.
+    const isConfigRead =
+      CONFIG_READS.has(method) ||
+      method === 'Configuration' ||
+      (method === 'GetValue' && (call.receiver ?? '').split('.').includes('Configuration'));
+    if (!isConfigRead) continue;
+
+    // .NET's own spelling for a connection string's full key — and a credential by
+    // construction, which the secret rule knows.
+    const key = method === 'GetConnectionString' ? `ConnectionStrings:${name.v}` : name.v;
+    findings.push({ type: 'env', name: key, config: true, site: at(call, `${call.callee}("${name.v}")`) });
   }
 }

@@ -265,6 +265,13 @@ export interface EnvVarInfo {
    * meant to say "you forgot to write this down" into noise the reader learns to skip.
    */
   platform: boolean;
+  /**
+   * A configuration key, not an environment variable (#101): read through .NET's
+   * provider stack, documented (or not) by `appsettings*.json` rather than
+   * `.env.example`. The distinction is the whole reason the old rule refused to report
+   * these at all — a JSON settings key must never appear as a name a deployment sets.
+   */
+  config?: boolean;
 }
 
 /** meta for kind === 'endpoint' */
