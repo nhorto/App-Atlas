@@ -172,7 +172,14 @@ async function askPermission(estimate: CostEstimate, options: WordsOptions): Pro
     if (!options.quiet) {
       console.log('');
       console.log(pc.yellow('  Explanations need approval and this is not an interactive terminal.'));
-      console.log(pc.dim(`  Re-run with ${pc.cyan('--ai-yes')} to approve ${money(estimate.costUsd)} of ${backend.label} usage.`));
+      console.log(
+        pc.dim(
+          estimate.costUsd === null
+            ? `  ${backend.label} is billing per token here and App Atlas cannot estimate how much.` +
+                ` Re-run with ${pc.cyan('--ai-yes')} to approve it.`
+            : `  Re-run with ${pc.cyan('--ai-yes')} to approve ${money(estimate.costUsd)} of ${backend.label} usage.`,
+        ),
+      );
     }
     return false;
   }
@@ -182,7 +189,14 @@ async function askPermission(estimate: CostEstimate, options: WordsOptions): Pro
   console.log(`  this app that have no docstring of their own.`);
   console.log('');
   console.log(`    ${pc.bold(String(estimate.items))} things to describe, in ${estimate.requests} ${estimate.requests === 1 ? 'request' : 'requests'}`);
-  console.log(`    about ${pc.bold(compact(estimate.inputTokens + estimate.outputTokens))} tokens — ${pc.bold(money(estimate.costUsd))}, once`);
+  console.log(
+    // A CLI reclassified by its own priced probe (#111) bills per token and publishes no
+    // price list, so there is a token count and no dollar figure. Saying "roughly $0.00"
+    // there would be the one thing this prompt exists to prevent.
+    estimate.costUsd === null
+      ? `    about ${pc.bold(compact(estimate.inputTokens + estimate.outputTokens))} tokens — ${pc.bold('billed per token')}, once`
+      : `    about ${pc.bold(compact(estimate.inputTokens + estimate.outputTokens))} tokens — ${pc.bold(money(estimate.costUsd))}, once`,
+  );
   console.log('');
   console.log(pc.dim(`  Using ${backend.label}${backend.model ? ` (${backend.model})` : ''}.`));
   console.log(pc.dim('  Names, paths and exports are sent. File contents are not.'));
