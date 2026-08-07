@@ -16,6 +16,7 @@ import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import { isSqliteExperimentalWarning, nodeIsTooOld } from '../dist/node/preflight.js';
+import { displayPath, ignoreAtlasDirectory } from '../dist/node/index.js';
 
 const run = promisify(execFile);
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -104,4 +105,119 @@ test('the floor is compared as numbers, not as text', () => {
   assert.equal(nodeIsTooOld('22.5.0'), false, 'the floor itself is allowed');
   assert.equal(nodeIsTooOld('24.0.0'), false);
   assert.equal(nodeIsTooOld('100.0.0'), false);
+});
+
+// ---------------------------------------------------------------------------
+// A path somebody can read (#115)
+// ---------------------------------------------------------------------------
+
+test('a path inside where you are standing stays relative', () => {
+  const cwd = path.join(os.tmpdir(), 'here');
+  assert.equal(displayPath(path.join(cwd, '.app-atlas', 'atlas.db'), cwd), path.join('.app-atlas', 'atlas.db'));
+});
+
+test('a sibling reads fine with one dot-dot', () => {
+  const cwd = path.join(os.tmpdir(), 'work', 'web');
+  assert.equal(displayPath(path.join(os.tmpdir(), 'work', 'api', 'atlas.db'), cwd), path.join('..', 'api', 'atlas.db'));
+});
+
+test('once it starts climbing, the absolute path is the honest one', () => {
+  // `app-atlas analyze ~/testProject` from an unrelated directory printed
+  // `../../../Users/nicholashorton/testProject/.app-atlas/atlas.db` — correct,
+  // unreadable, and it looks like a bug even when it is not one.
+  const cwd = path.join(os.tmpdir(), 'a', 'b', 'c');
+  const target = path.join(os.homedir(), 'testProject', '.app-atlas', 'atlas.db');
+  assert.equal(displayPath(target, cwd), target);
+});
+
+test('the directory you are already in is named, not left blank', () => {
+  const cwd = path.join(os.tmpdir(), 'here');
+  assert.equal(displayPath(cwd, cwd), cwd, 'an empty string would print nothing at all');
+});
+
+// ---------------------------------------------------------------------------
+// The map does not clutter somebody's repo (#113)
+// ---------------------------------------------------------------------------
+
+/** A throwaway directory, optionally a git repo, optionally with a .gitignore. */
+function repo({ git = true, gitignore = null } = {}) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'atlas-ign-'));
+  if (git) fs.mkdirSync(path.join(dir, '.git'));
+  if (gitignore !== null) fs.writeFileSync(path.join(dir, '.gitignore'), gitignore);
+  return dir;
+}
+
+test('the first run ignores its own directory, and says it did', () => {
+  // Before this, `analyze` wrote .app-atlas/ into somebody's project and nothing
+  // mentioned it — one more mystery folder for a reader already uneasy about what
+  // their agent did to the repo.
+  const dir = repo();
+  try {
+    assert.equal(ignoreAtlasDirectory(dir), true);
+    assert.match(fs.readFileSync(path.join(dir, '.gitignore'), 'utf8'), /^\.app-atlas\/$/m);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('the second run changes nothing', () => {
+  const dir = repo();
+  try {
+    ignoreAtlasDirectory(dir);
+    const after = fs.readFileSync(path.join(dir, '.gitignore'), 'utf8');
+    assert.equal(ignoreAtlasDirectory(dir), false, 'and it says it did nothing, so nothing is printed');
+    assert.equal(fs.readFileSync(path.join(dir, '.gitignore'), 'utf8'), after);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('an entry the user already wrote is left alone, however they spelled it', () => {
+  for (const spelling of ['.app-atlas', '/.app-atlas/', '.app-atlas/']) {
+    const dir = repo({ gitignore: `node_modules\n${spelling}\n` });
+    try {
+      assert.equal(ignoreAtlasDirectory(dir), false, spelling);
+      assert.equal(fs.readFileSync(path.join(dir, '.gitignore'), 'utf8'), `node_modules\n${spelling}\n`);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  }
+});
+
+test('somebody who deliberately tracks it is not overruled', () => {
+  // `!.app-atlas` means they want it committed. A tool that argued with that would be
+  // worse than one that never wrote anything.
+  const dir = repo({ gitignore: '!.app-atlas\n' });
+  try {
+    assert.equal(ignoreAtlasDirectory(dir), false);
+    assert.equal(fs.readFileSync(path.join(dir, '.gitignore'), 'utf8'), '!.app-atlas\n');
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('an existing file keeps its last line', () => {
+  // Appending to a file with no trailing newline would otherwise glue the entry onto
+  // whatever somebody wrote last, silently changing a rule they rely on.
+  const dir = repo({ gitignore: 'dist' });
+  try {
+    ignoreAtlasDirectory(dir);
+    const lines = fs.readFileSync(path.join(dir, '.gitignore'), 'utf8').split('\n');
+    assert.equal(lines[0], 'dist');
+    assert.ok(lines.includes('.app-atlas/'));
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('a plain folder gets no .gitignore it never had', () => {
+  // Not every directory somebody points this at is a repo, and leaving a `.gitignore`
+  // in one that is not would be litter.
+  const dir = repo({ git: false });
+  try {
+    assert.equal(ignoreAtlasDirectory(dir), false);
+    assert.equal(fs.existsSync(path.join(dir, '.gitignore')), false);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 });

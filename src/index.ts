@@ -85,5 +85,7 @@ export type {
   ToolResult,
 } from './mcp/index.js';
 export { isInteresting, watchProject } from './watch.js';
+export { displayPath } from './util/paths.js';
+export { ignoreAtlasDirectory } from './util/git.js';
 export type { WatchOptions, Watcher } from './watch.js';
 export * from './model/types.js';

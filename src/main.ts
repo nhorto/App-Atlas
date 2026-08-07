@@ -37,7 +37,8 @@ import { AtlasGraph } from './model/graph.js';
 import type { Atlas, DoorChange } from './model/types.js';
 import { markStaleDocs } from './model/staleness.js';
 import { startMcpServer } from './mcp/index.js';
-import { isTrackedByGit } from './util/git.js';
+import { ignoreAtlasDirectory, isTrackedByGit } from './util/git.js';
+import { displayPath } from './util/paths.js';
 import { grammarTier } from './model/tiers.js';
 import { atlasDbPath, atlasJsonPath, loadAtlas, persistAtlas, readScopes, scopesPath, writeScopes } from './model/store.js';
 import { startServer } from './server/index.js';
@@ -187,7 +188,7 @@ program
 
     fs.writeFileSync(target, markdown, 'utf8');
 
-    const relative = path.relative(process.cwd(), target) || target;
+    const relative = displayPath(target);
     const size = Math.round(Buffer.byteLength(markdown) / 102.4) / 10;
     console.log('');
     console.log(`  ${pc.green('wrote')}  ${relative} ${pc.dim(`(${size} KB)`)}`);
@@ -220,7 +221,7 @@ program
 
     console.log('');
     for (const result of results) {
-      const relative = path.relative(root, result.path) || result.path;
+      const relative = displayPath(result.path, root);
       const verb =
         result.action === 'created' ? pc.green('created') : result.action === 'updated' ? pc.cyan('updated') : pc.dim('already up to date');
       console.log(`  ${verb}  ${relative}`);
@@ -251,7 +252,7 @@ async function produceAtlas(
     repoRoot?: string;
     onProgress?: (stage: string, done: number, total: number) => void;
   },
-): Promise<{ atlas: Atlas; words: EnrichReport | null; dbPath: string; jsonPath: string }> {
+): Promise<{ atlas: Atlas; words: EnrichReport | null; dbPath: string; jsonPath: string; ignoredNow: boolean }> {
   const { atlas } = await analyzeProject(root, {
     maxFiles: Number(options.maxFiles ?? 5000) || 5000,
     ignore: options.ignore,
@@ -297,7 +298,10 @@ async function produceAtlas(
   atlas.meta.changes = diffAtlas(previous, atlas);
 
   const { dbPath, jsonPath } = persistAtlas(root, atlas, options.json);
-  return { atlas, words, dbPath, jsonPath };
+  // After the write, not before: a run that failed to produce a map has no business
+  // editing anybody's `.gitignore`.
+  const ignoredNow = ignoreAtlasDirectory(root);
+  return { atlas, words, dbPath, jsonPath, ignoredNow };
 }
 
 interface AnalysisOutcome {
@@ -341,7 +345,7 @@ async function runSingleAnalysis(root: string, options: SharedOptions, repoRoot:
   const interactive = Boolean(process.stdout.isTTY);
   let lastStage = '';
   let hintShown = false;
-  const { atlas, words, dbPath, jsonPath } = await produceAtlas(root, options, {
+  const { atlas, words, dbPath, jsonPath, ignoredNow } = await produceAtlas(root, options, {
     quiet,
     repoRoot,
     onProgress: (stage, done, total) => {
@@ -418,8 +422,11 @@ async function runSingleAnalysis(root: string, options: SharedOptions, repoRoot:
     }
     for (const line of words ? describeRun(words) : []) console.log(pc.dim(line));
     console.log('');
-    console.log(pc.dim(`  atlas    ${path.relative(process.cwd(), dbPath) || dbPath}`));
-    console.log(pc.dim(`  export   ${path.relative(process.cwd(), jsonPath) || jsonPath}`));
+    console.log(pc.dim(`  atlas    ${displayPath(dbPath)}`));
+    console.log(pc.dim(`  export   ${displayPath(jsonPath)}`));
+    // Writing into somebody's repo without saying so is the thing to avoid here, and
+    // that applies to `.gitignore` as much as to `.app-atlas/` (#113).
+    if (ignoredNow) console.log(pc.dim(`  added .app-atlas/ to .gitignore — the map is local to this machine`));
     const pace = atlas.meta.incremental;
     const skipped = pace && pace.reused > 0 ? `, ${pace.reused} unchanged since the last run` : '';
     console.log(pc.dim(`  analyzed in ${((Date.now() - started) / 1000).toFixed(1)}s${skipped}`));
@@ -527,7 +534,7 @@ async function runWorkspaceAnalysis(
 
   if (!quiet) {
     console.log('');
-    console.log(pc.dim(`  atlas    ${path.relative(process.cwd(), scopesPath(root)) || scopesPath(root)}`));
+    console.log(pc.dim(`  atlas    ${displayPath(scopesPath(root))}`));
     console.log(pc.dim(`  analyzed in ${((Date.now() - started) / 1000).toFixed(1)}s`));
     for (const failure of failures) console.log(pc.yellow(`  ! ${failure}`));
     console.log('');
