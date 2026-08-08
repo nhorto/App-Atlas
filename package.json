@@ -37,9 +37,13 @@
     "golang",
     "csharp",
     "dotnet",
+    "rust",
     "documentation",
     "ai-agents",
-    "vibe-coding"
+    "vibe-coding",
+    "mcp",
+    "model-context-protocol",
+    "code-map"
   ],
   "scripts": {
     "build": "npm run build:node && npm run build:web",
