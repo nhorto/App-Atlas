@@ -276,6 +276,38 @@ one is a document nobody can check.
 
 ---
 
+---
+
+# The one this research missed entirely
+
+*Added 8 August 2026, hours after the rest of this document, when npm refused to publish
+the package.*
+
+**There is another project called App Atlas.**
+[`zharmedia386/app-atlas`](https://github.com/zharmedia386/app-atlas), on npm as
+`appatlas`: *"Architecture observability for JS/TS backends — scans NestJS+Prisma code
+into an interactive local dashboard. No AI, no API keys, 100% local."* MIT, TypeScript, a
+website, thirteen versions published between 11 and 15 June 2026 and nothing since — 0
+stars, ~1 download a week.
+
+Same name. Adjacent pitch, down to *no AI* and *100% local*. Far narrower scope: one
+framework pair, no confidence grading, no agent surface.
+
+**Two consequences.** npm compares names with punctuation stripped, so `app-atlas` reads
+as `appatlas` and is refused; this project publishes as `@app-atlas/cli`, and the command
+stays `app-atlas`. And at launch the name is contested in search results by a project that
+looks abandoned but is not gone.
+
+**Why it is filed here rather than quietly fixed.** The four passes above searched by
+*capability* — forty products, four segments, and not one query for the product's own
+name. That is not a subtle gap; it is the first thing anyone checks before naming a thing,
+and it was skipped by research thorough enough to catalogue a graveyard. It stayed
+invisible until a registry said no, which is the same lesson as
+[the artifact rule](../SPEC.md): a claim nobody tried to *use* is a claim nobody has
+tested. Read the confidence of everything above with this in mind.
+
+---
+
 ## What was not done
 
 - **Nothing was installed or run.** No 2026 entrant has been through a

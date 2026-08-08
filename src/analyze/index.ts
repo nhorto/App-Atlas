@@ -84,8 +84,16 @@ import { dominantZone } from './zones.js';
  * unchanged; its cache is discarded anyway, because the version is part of the
  * fingerprint and a fingerprint that special-cased "probably unaffected" would be a
  * cache that can lie.
+ *
+ * 0.20.0 is the ordinary case three times over, and the first one where the old answers
+ * were not merely thinner but wrong. A Stripe webhook verified with `constructEventAsync`
+ * now reads as checked rather than as a data-writing door nobody guards; a Cloudflare
+ * entry a build wrote is set aside from the auth count instead of inflating it; and the
+ * exports of a generated file stop being doors. Every one of those changes what a cached
+ * finding *means*, so a 0.19.0 cache is not stale here — it holds the wrong verdict about
+ * somebody's payment endpoint, and would keep holding it until this number moved.
  */
-export const TOOL_VERSION = '0.19.0';
+export const TOOL_VERSION = '0.20.0';
 
 export interface AnalyzeOptions {
   maxFiles?: number;
