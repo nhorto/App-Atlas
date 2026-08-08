@@ -182,7 +182,15 @@ function detectRoutes(
           handlerId: input.nodeIdForScope(scope),
           // The signature is where FastAPI declares a route's dependencies, and an
           // alias imported from `deps.py` is unresolvable from here.
-          paramTypes: paramTypeNames(def),
+          //
+          // …and so is the decorator, which was read by nothing until #136. A handler
+          // that never touches the user object takes no `CurrentUser` parameter, so
+          // `dependencies=[Depends(get_current_active_superuser)]` is the only place its
+          // lock is written down — the spelling FastAPI's own template uses for every
+          // administrator-only route, and five of them read as doors nobody checks.
+          // Both halves go into the same list because whether a dependency is a *check*
+          // is decided once, in build.ts, against the checkers the project defines.
+          paramTypes: [...paramTypeNames(def), ...decoratorDepends(decorator)],
           routerVar: parts.length > 1 ? parts[0] : null,
           // `AdminBackupController.get_all` — the class is where a class-based view
           // keeps the dependencies it injects into every route on it.
@@ -245,6 +253,21 @@ function guardsFor(def: PyDef, path: string): GuardInfo[] {
   // decided once in `build.ts` against every checker the project defines — which also
   // keeps one route from collecting two names for the same lock.
   return guards;
+}
+
+/**
+ * The `Depends(...)` targets written on the route decorator itself (#136).
+ *
+ * `@router.get("/", dependencies=[Depends(get_current_active_superuser)])` is how
+ * FastAPI guards a route whose handler has no use for the user object, and it is the
+ * only place that lock appears — the signature has nothing in it to find. Reusing
+ * `dependsTargets` rather than re-reading the list keeps this the same idea as the one
+ * already applied to `APIRouter(...)` and `include_router(...)`.
+ */
+function decoratorDepends(decorator: PyCall): string[] {
+  const listed = decorator.kwargs.dependencies;
+  if (!listed) return [];
+  return dependsTargets({ ...decorator, args: [listed], kwargs: {} });
 }
 
 /** Every bare name a signature's annotations mention, alias candidates included. */
