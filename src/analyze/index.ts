@@ -617,6 +617,7 @@ export function computeStats(nodes: AtlasNode[], edges: AtlasEdge[]): AtlasStats
   let routes = 0;
   let likelyOnlyRoutes = 0;
   let unreadFiles = 0;
+  let unreadTestFiles = 0;
   let services = 0;
   let externalServices = 0;
   let stores = 0;
@@ -628,7 +629,15 @@ export function computeStats(nodes: AtlasNode[], edges: AtlasEdge[]): AtlasStats
       case 'file':
         files++;
         linesOfCode += Number(node.meta.loc ?? 0);
-        if (node.meta.unread) unreadFiles++;
+        if (node.meta.unread) {
+          unreadFiles++;
+          // Counted apart so the auth headline can leave it out (#132). bat's
+          // `tests/syntax-tests/highlighted/Python/battest.py` is a syntax-highlighting
+          // fixture full of ANSI escapes: refusing to parse it is right, and hedging the
+          // auth claim with it is not, because no production route's guard is declared
+          // in one. Still reported, still counted here — only the hedge changes.
+          if (node.zone === 'test') unreadTestFiles++;
+        }
         // Counted apart, not skipped: a generated file is still a file on the map, and
         // still lines of code somebody's build produces. What it is not is a file
         // anybody can be asked to document (#126).
@@ -704,6 +713,7 @@ export function computeStats(nodes: AtlasNode[], edges: AtlasEdge[]): AtlasStats
     publicRoutes: open.page + open.authMount + open.generated,
     unreadableRoutes: open.unreadable,
     unreadFiles,
+    unreadTestFiles,
     services,
     externalServices,
     stores,

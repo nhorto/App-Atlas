@@ -281,3 +281,40 @@ test('the brief an agent reads is caveated before its numbers, not after them', 
   assert.ok(caveat > numbers, 'the caveat sits inside the section it qualifies');
   assert.ok(caveat < markdown.indexOf('## Ways in'), 'and before anything derived from those numbers');
 });
+
+/**
+ * Issue #132, found on sharkdp/bat. Its `tests/syntax-tests/highlighted/Python/battest.py`
+ * is a syntax-*highlighting* fixture full of ANSI escapes, in a project whose whole job is
+ * colourising files. Refusing to parse it is right; hedging the auth claim with it is not.
+ *
+ * The hedge says "a check may live in there", and a guard for a production route does not
+ * live in a highlighting fixture — so the caveat was bought with a fact that could never
+ * have changed the answer. A hedge that fires when nothing is uncertain teaches a reader
+ * to skip hedges, which is #116's failure arriving from the other side.
+ */
+test('an unreadable test fixture does not soften a claim it could not affect', () => {
+  const line = authHeadline({
+    routes: 0,
+    unprotectedRoutes: 0,
+    publicRoutes: 0,
+    unreadableRoutes: 0,
+    unreadFiles: 1,
+    unreadTestFiles: 1,
+  });
+  assert.equal(line, null, 'no routes and nothing genuinely unseen is simply no routes');
+});
+
+test('…but an unreadable source file still does', () => {
+  // The other half. #58 exists because zero doors on a repo nobody could read is the most
+  // confidently wrong sentence this tool can print, and that must keep working.
+  const line = authHeadline({
+    routes: 0,
+    unprotectedRoutes: 0,
+    publicRoutes: 0,
+    unreadableRoutes: 0,
+    unreadFiles: 3,
+    unreadTestFiles: 1,
+  });
+  assert.equal(line.tone, 'warn');
+  assert.match(line.headline, /could not read 2 files/, 'the two outside the test zone are what counts');
+});

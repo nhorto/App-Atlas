@@ -465,7 +465,7 @@ function detectMinimalApis(
       route,
       framework: 'ASP.NET Core',
       writes: WRITE_METHODS.has(verb),
-      guards: [...chain.guards, ...(inherited?.guards ?? [])],
+      guards: [...chain.guards, ...(inherited?.guards ?? []), ...attributedInside(file, call)],
       paramTypes: [...chain.filters, ...(inherited?.filters ?? [])],
       site: at(call, `${call.callee}("${first.v}")`),
       handlerId: handler.id ?? input.nodeIdForScope(call.scope),
@@ -589,6 +589,39 @@ interface Chain {
  * has it; whether it is a check is settled by whether some file declares a method of that
  * name that answers 401, which is a fact about that method rather than about its name.
  */
+/**
+ * `[Authorize]` written on the lambda a minimal-API registration is handed (#131).
+ *
+ *     app.MapPost("api/catalog-items",
+ *         [Authorize(Roles = ADMINISTRATORS)] async (CreateCatalogItemRequest r) => …)
+ *
+ * eShopOnWeb spells every administrator-only route this way, and all three read as doors
+ * nothing checks — the three that write data, in the tool's most alarming words, on
+ * Microsoft's own reference app.
+ *
+ * Position is the whole answer, and it has to be. `attributesByScope` groups attributes
+ * by enclosing *definition*, and here the attribute and both registrations share one
+ * method: the guarded `MapPost` and a genuinely public `MapGet` sit side by side inside
+ * `AddRoute`. Attaching by scope would badge the public one as protected, which is the
+ * single error this tool must never make. Containment tells them apart — this attribute
+ * is written inside *this* registration's parentheses and no other's.
+ *
+ * The mirror of `chainedOnto`, which looks for calls that contain this one; this looks
+ * for the ones it contains.
+ */
+function attributedInside(file: GenericFile, call: GCall): GuardInfo[] {
+  const out: GuardInfo[] = [];
+  for (const other of file.calls) {
+    if (other === call || other.receiver) continue;
+    if (other.startIndex < call.startIndex || other.endIndex > call.endIndex) continue;
+    // An opt-out written in the same place beats the attribute beside it, exactly as it
+    // does on a controller and exactly as it does chained on the registration.
+    if (other.callee === ALLOW_ANONYMOUS) return [];
+    if (other.callee === AUTHORIZE) out.push(authorizeGuard(file, other, 'the handler'));
+  }
+  return out;
+}
+
 function chainedOnto(file: GenericFile, call: GCall): Chain {
   const out: Chain = { guards: [], filters: [] };
 
