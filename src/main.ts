@@ -407,11 +407,14 @@ async function runSingleAnalysis(root: string, options: SharedOptions, repoRoot:
     }
     console.log('');
     const documented = s.files > 0 ? Math.round((s.documentedFiles / s.files) * 100) : 0;
+    // The percentage is worth printing at every level; the instruction is not. A repo
+    // that documents every file was told to go and learn how to document files (#124),
+    // which is the tool failing to read its own number directly under the auth headline
+    // — the one sentence here that most needs believing. Silence is the reward.
+    const nudge =
+      s.documentedFiles < s.files ? ` Run ${pc.cyan('app-atlas init')} to teach your agent to write them.` : '';
     console.log(
-      pc.dim(
-        `  ${documented}% of files have a docstring App Atlas can read (${s.documentedFiles}/${s.files}). ` +
-          `Run ${pc.cyan('app-atlas init')} to teach your agent to write them.`,
-      ),
+      pc.dim(`  ${documented}% of files have a docstring App Atlas can read (${s.documentedFiles}/${s.files}).${nudge}`),
     );
     if (s.staleDocs > 0) {
       console.log(

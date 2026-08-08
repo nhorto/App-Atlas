@@ -680,7 +680,7 @@ export function computeStats(nodes: AtlasNode[], edges: AtlasEdge[]): AtlasStats
     routes,
     unprotectedRoutes: open.worthALook,
     likelyOnlyRoutes,
-    publicRoutes: open.page + open.authMount,
+    publicRoutes: open.page + open.authMount + open.generated,
     unreadableRoutes: open.unreadable,
     unreadFiles,
     services,

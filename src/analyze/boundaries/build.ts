@@ -431,6 +431,7 @@ function collectEndpoints(input: BuildInput): Map<string, MergedEndpoint> {
         guards: [...finding.guards],
         writes: finding.writes,
         ...(finding.schedule ? { schedule: finding.schedule } : {}),
+        ...(finding.generatedEntry ? { generatedEntry: true } : {}),
         sites: [finding.site],
       },
       handlerIds: new Set(finding.handlerId ? [finding.handlerId] : []),
@@ -584,6 +585,32 @@ function bindPhrase(bind: string | null): string {
   return `on ${bind} only`;
 }
 
+/** Directories a build writes into, and nobody writes a request handler in by hand. */
+const BUILT_ENTRY = /(^|\/)\.?(open-next|svelte-kit|vercel|next|nuxt|output|dist|build)\//;
+
+/**
+ * Whether a Worker's entry is something a build produced rather than something a person
+ * wrote (#123).
+ *
+ * `wrangler.jsonc` with `main: ".open-next/worker.js"` is a Next.js app deployed to the
+ * edge, not a hand-written Worker: the adapter re-serves routes the framework detectors
+ * have already found and graded one by one. The door stays on the map — #29 is the bug
+ * where a Worker repo was told in writing that nothing answers a URL, and that must not
+ * come back — but it stops counting as a route nobody protects, because a catch-all
+ * generated at build time cannot carry a check and its contents are already graded
+ * individually. See `classifyOpenDoors`.
+ *
+ * The test is deliberately the entry path and nothing else. The tempting rule — "exempt
+ * the catch-all when the repo has other routes" — is wrong, and dogfooding proved it:
+ * a repo with two real Workers (`main: "src/worker.ts"`) and no other doors reported
+ * `2 of 2 routes have no auth check`, which was **true**. Excusing those would have
+ * hidden two genuinely open doors on the edge. A hand-written entry is a real door
+ * however few of them there are; a generated one never was.
+ */
+function isBuiltAdapter(main: string): boolean {
+  return BUILT_ENTRY.test(main.replace(/\\/g, '/'));
+}
+
 /**
  * A Cloudflare Worker answers requests on the open internet, and nothing in the repo
  * calls it — the platform does, which is why only `wrangler.toml` knows it exists.
@@ -614,6 +641,7 @@ function addWorkerDoors(input: BuildInput, add: (finding: EndpointFinding) => vo
       framework: 'Cloudflare Workers',
       writes: true,
       guards: [],
+      generatedEntry: isBuiltAdapter(main),
       site: {
         path: worker.configPath,
         line: 1,

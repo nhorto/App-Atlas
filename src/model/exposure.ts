@@ -165,6 +165,18 @@ export function classifyOpenDoors(nodes: AtlasNode[], edges: AtlasEdge[]): Map<s
       continue;
     }
 
+    // A catch-all a build generated (#123). The adapter re-serves routes this atlas has
+    // already found and graded one at a time, so counting it says "a route nobody
+    // protects" about an app whose routes are all accounted for — and there is nowhere
+    // to put a check in a file nobody wrote. Kept on the map, taken out of the count.
+    if (meta.generatedEntry) {
+      verdicts.set(node.id, {
+        kind: 'generated',
+        because: 'a build wrote this entry — the routes it serves are on the map already, checked one by one',
+      });
+      continue;
+    }
+
     // A page that writes data is not the harmless marketing page this rule is about,
     // so it keeps its place in the list that gets read.
     if (meta.method === 'PAGE' && !meta.writes) {
@@ -187,14 +199,17 @@ export interface OpenTally {
   page: number;
   authMount: number;
   unreadable: number;
+  /** Catch-alls a build wrote, whose real routes are counted individually (#123). */
+  generated: number;
 }
 
 export function tallyOpenDoors(verdicts: Iterable<OpenVerdict>): OpenTally {
-  const tally: OpenTally = { worthALook: 0, page: 0, authMount: 0, unreadable: 0 };
+  const tally: OpenTally = { worthALook: 0, page: 0, authMount: 0, unreadable: 0, generated: 0 };
   for (const verdict of verdicts) {
     if (verdict.kind === 'page') tally.page++;
     else if (verdict.kind === 'auth-mount') tally.authMount++;
     else if (verdict.kind === 'unreadable') tally.unreadable++;
+    else if (verdict.kind === 'generated') tally.generated++;
     else tally.worthALook++;
   }
   return tally;

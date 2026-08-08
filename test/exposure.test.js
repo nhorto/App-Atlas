@@ -37,10 +37,44 @@ const door = (route) => atlas.nodes.find((n) => n.kind === 'endpoint' && n.meta.
 const why = (route) => door(route)?.meta.open?.kind ?? null;
 
 test('the headline counts only the doors nothing explains', () => {
-  // Six doors, none of them checked. The old headline said six.
+  // Six doors, none of them checked. The old headline said six. The Stripe webhook the
+  // fixture also carries is not among them: a verified webhook is not a route with no
+  // auth, it is a route whose auth is a signature.
   assert.equal(atlas.meta.stats.routes, 6);
   assert.equal(atlas.meta.stats.unprotectedRoutes, 3);
   assert.equal(atlas.meta.stats.publicRoutes, 3);
+});
+
+/**
+ * Issue #122, found by running the published package over a real repo.
+ *
+ * A payment webhook was reported in the tool's most alarming words — "nothing checks
+ * these, and nothing explains why" — while its handler verified an HMAC of the raw body
+ * against the endpoint secret. Nothing gets past that without the shared secret, which
+ * makes it a stronger check than a session cookie, not the absence of one.
+ *
+ * The machinery to say so was already here: a `webhook` finding promotes the door and
+ * marks it verified. What was missing was one spelling. The detector matched
+ * `constructEvent` and not `constructEventAsync` — and the async form is the only one
+ * that works on an edge runtime, where there is no synchronous crypto. So the repos most
+ * likely to have a Stripe webhook at all were exactly the ones it could not see.
+ */
+test('a signature is a check, even though it never mentions a user', () => {
+  const webhook = door('/api/stripe/webhook');
+  assert.ok(webhook, 'the webhook is on the map');
+  assert.equal(webhook.meta.endpointKind, 'webhook', 'the verification is what makes it one');
+  assert.equal(webhook.meta.verified, true);
+
+  const guards = webhook.meta.guards ?? [];
+  assert.equal(guards.length, 1);
+  assert.equal(guards[0].name, 'Stripe signature check');
+  assert.equal(guards[0].provider, 'Stripe');
+  assert.equal(
+    guards[0].confidence,
+    'certain',
+    'the call cannot succeed without the secret, so it is graded like a check inside the handler',
+  );
+  assert.equal(why('/api/stripe/webhook'), null, 'and it never reaches the unchecked-door classification at all');
 });
 
 test('the buckets account for every door, so nothing is quietly dropped', () => {
