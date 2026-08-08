@@ -8,9 +8,9 @@ exist until somebody other than the author runs this tool.*
 
 ## Where things stand
 
-**Published, 8 August 2026.** `@appatlas/cli` is on npm with a SLSA provenance
+**Published, 8 August 2026.** `@app-atlas/cli` is on npm with a SLSA provenance
 attestation, and issue [#38](https://github.com/nhorto/App-Atlas/issues/38) — the last one
-open — is closed. The install is `npx @appatlas/cli`; the command is still `app-atlas`.
+open — is closed. The install is `npx @app-atlas/cli`; the command is still `app-atlas`.
 
 Everything below the line is now dogfooding, which is the part that cannot be rushed and
 the part that decides what gets built next.
@@ -36,7 +36,7 @@ attempts were needed, and none of the first three reached the registry:**
    punctuation stripped, and [`appatlas`](https://github.com/zharmedia386/app-atlas) is an
    unrelated project that happens to share this one's name.
 4. **Published under a scope.** First as `@nick5757/app-atlas`, then moved to the
-   organization scope `@appatlas/cli`, which reads as a project rather than a person.
+   organization scope `@app-atlas/cli`, which reads as a project rather than a person.
 
 Three lessons worth carrying:
 
@@ -56,7 +56,7 @@ without asking.
 
 So after the workflow goes green:
 
-- `npm install -g @appatlas/cli` (or `npx @appatlas/cli`) into a clean
+- `npm install -g @app-atlas/cli` (or `npx @app-atlas/cli`) into a clean
   environment — **from the registry**, not from the working tree.
 - Run every command end to end.
 - Run it on a real repository, not a fixture.
@@ -88,7 +88,7 @@ them.
 
 Make the ask small and specific. Not *"check out my project"* but:
 
-> Run `npx @appatlas/cli` on one of your repos and tell me one place where the map
+> Run `npx @app-atlas/cli` on one of your repos and tell me one place where the map
 > is wrong.
 
 The framing is the point. "It's cool" teaches nothing. **A wrong-map report is the entire
