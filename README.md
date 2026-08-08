@@ -46,7 +46,7 @@ nothing to compile). Python projects also need **Python 3.9 or newer** on the ma
 — App Atlas reads Python with Python's own parser rather than guessing at the grammar.
 
 ```bash
-npx app-atlas .
+npx @nick5757/app-atlas .
 ```
 
 That is the whole install. The analyzer runs, writes the atlas into `.app-atlas/`
@@ -55,12 +55,15 @@ inside that project, and opens the map in your browser.
 It also takes a path, so you never have to leave the directory you are in:
 
 ```bash
-npx app-atlas ~/code/the-thing-my-agent-built
+npx @nick5757/app-atlas ~/code/the-thing-my-agent-built
 ```
 
-If you would rather have the command permanently, `npm install -g app-atlas` puts
-`app-atlas` on your `PATH`. To work on App Atlas itself, see
-[Development](#development).
+If you would rather have the command permanently, `npm install -g @nick5757/app-atlas`
+puts `app-atlas` — the short name, without the scope — on your `PATH`. To work on App
+Atlas itself, see [Development](#development).
+
+<sub>The npm package is scoped because the unscoped name is blocked by an unrelated
+package called `appatlas`. The command you type is still `app-atlas`.</sub>
 
 ### Commands
 
@@ -325,7 +328,7 @@ client can start it. In an `.mcp.json`, `mcp.json` or Cursor's config:
 ```json
 {
   "mcpServers": {
-    "app-atlas": { "command": "npx", "args": ["-y", "app-atlas", "mcp", "."] }
+    "app-atlas": { "command": "npx", "args": ["-y", "@nick5757/app-atlas", "mcp", "."] }
   }
 }
 ```

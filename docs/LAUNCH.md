@@ -55,8 +55,8 @@ without asking.
 
 So after the workflow goes green:
 
-- `npm install -g app-atlas` (or `npx app-atlas`) into a clean environment — **from the
-  registry**, not from the working tree.
+- `npm install -g @nick5757/app-atlas` (or `npx @nick5757/app-atlas`) into a clean
+  environment — **from the registry**, not from the working tree.
 - Run every command end to end.
 - Run it on a real repository, not a fixture.
 - Only then tell anyone it exists.
@@ -82,7 +82,8 @@ them.
 
 Make the ask small and specific. Not *"check out my project"* but:
 
-> Run `npx app-atlas` on one of your repos and tell me one place where the map is wrong.
+> Run `npx @nick5757/app-atlas` on one of your repos and tell me one place where the map
+> is wrong.
 
 The framing is the point. "It's cool" teaches nothing. **A wrong-map report is the entire
 game** — it is simultaneously a bug report, a coverage gap, and the exact trigger
