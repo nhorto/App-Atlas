@@ -1,5 +1,5 @@
 {
-  "name": "@nick5757/app-atlas",
+  "name": "@appatlas/cli",
   "version": "0.19.0",
   "description": "Understand any app - including the one your AI built. An interactive, always-accurate atlas of your application.",
   "license": "MIT",
