@@ -92,8 +92,18 @@ import { dominantZone } from './zones.js';
  * exports of a generated file stop being doors. Every one of those changes what a cached
  * finding *means*, so a 0.19.0 cache is not stale here — it holds the wrong verdict about
  * somebody's payment endpoint, and would keep holding it until this number moved.
+ *
+ * 0.21.0 is 0.20.0's case again, and the two halves show why this number is not
+ * bookkeeping. A Go service whose router is a struct field went from zero routes to ten,
+ * so a 0.20.0 cache holds an *absence* that was never true; and `[Authorize]` written on
+ * a minimal-API lambda is now a guard, so a cache from before it holds three
+ * administrator-only write routes recorded as doors nobody checks. Both are the analyzer
+ * having learned to read a shape, which is exactly the case the paragraph at the top of
+ * this comment is about. The third change — an unreadable *test* file no longer hedging
+ * the auth sentence — touches no cached finding at all, and would not have moved this on
+ * its own.
  */
-export const TOOL_VERSION = '0.20.0';
+export const TOOL_VERSION = '0.21.0';
 
 export interface AnalyzeOptions {
   maxFiles?: number;
