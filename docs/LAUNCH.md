@@ -8,45 +8,46 @@ exist until somebody other than the author runs this tool.*
 
 ## Where things stand
 
-Everything mechanical is done and verified:
+**Published, 8 August 2026.** `@app-atlas/cli` is on npm with a SLSA provenance
+attestation, and issue [#38](https://github.com/nhorto/App-Atlas/issues/38) — the last one
+open — is closed. The install is `npx @app-atlas/cli`; the command is still `app-atlas`.
 
-| Check | State |
-|---|---|
-| The name `app-atlas` on npm | **Free** — registry returns 404 |
-| Repo visibility | **Public** (`--provenance` requires it) |
-| `package.json` version | 0.19.0, `bin` → `dist/node/cli.js` |
-| Release workflow | `.github/workflows/release.yml`, fires on `v*` tags |
-| Tag/version agreement | Enforced by the workflow — a mismatched tag fails the job |
-| Test suite in the release path | `npm test` runs before publish, and again as `prepublishOnly` |
-| `npm pack` | Clean, ~1.6 MB |
-| CI | Green on Ubuntu + Windows × Node 22 + 24 |
-
-**The one missing thing is a credential.** Issue
-[#38](https://github.com/nhorto/App-Atlas/issues/38) is blocked on a person, not on code.
+Everything below the line is now dogfooding, which is the part that cannot be rushed and
+the part that decides what gets built next.
 
 ---
 
-## Publishing
+## Publishing — what it actually took
 
-**Steps 1–3 require the maintainer's npm account and cannot be done by an agent.**
+Kept because the failure modes are not obvious and the next release will meet some of
+them again.
 
-1. **An npm account with 2FA**, if there isn't one already.
-2. **A granular access token** — npmjs.com → *Access Tokens* → *Generate New Token* →
-   Granular Access Token. *Packages and scopes*: **Read and write**. Because `app-atlas`
-   does not exist yet, scope it to all packages for the first publish, then narrow it to
-   the single package afterwards. Short expiry; it is only needed at release time.
-3. **Give it to the repo:**
-   ```
-   gh secret set NPM_TOKEN --repo nhorto/App-Atlas
-   ```
-   Paste the token at the prompt. It goes to GitHub and nowhere else.
-4. **Tag and push** — `v0.19.0`, matching `package.json`. The workflow checks out, runs the
-   suite, and publishes with `--provenance`, which records on the package page which commit
-   and which workflow produced the tarball. That matters more than usual here: App Atlas
-   asks people to run it over source they have not published, so "this is the code that was
-   audited" is worth the extra file.
+The tag/version guard, the test run and `--provenance` all worked first time. **Four
+attempts were needed, and none of the first three reached the registry:**
 
-### Then verify the published artifact, not the workflow
+1. **Token scoped to a user scope, not all packages.** A granular token limited to
+   `@nick5757` cannot create an unscoped package. npm's message is the generic *"You may
+   not perform that action with these credentials,"* which reads like a bad token rather
+   than a bad scope.
+2. **"Bypass two-factor authentication" unchecked.** A CI runner cannot answer a 2FA
+   prompt. npm names this one clearly once the scope is right.
+3. **The name was refused.** *"Package name too similar to existing package `appatlas`;
+   try renaming your package to '@nick5757/app-atlas'."* npm compares names with
+   punctuation stripped, and [`appatlas`](https://github.com/zharmedia386/app-atlas) is an
+   unrelated project that happens to share this one's name.
+4. **Published under a scope.** First as `@nick5757/app-atlas`, then moved to the
+   organization scope `@app-atlas/cli`, which reads as a project rather than a person.
+
+Three lessons worth carrying:
+
+- **Editing a token preserves its value; creating one does not.** Every fresh token means
+  updating the `NPM_TOKEN` repo secret too, which turned one fix into two round trips.
+- **Check your own name on the registry before writing positioning copy.** Four rounds of
+  competitive research searched by capability and never searched by name, so a project
+  with this exact name went unnoticed until npm refused the publish.
+- **Narrow the token now.** "All packages" was only needed to create the package.
+
+### Verify the published artifact, not the workflow
 
 Non-negotiable, and the reason is in [SPEC.md](../SPEC.md) M11: six real defects
 (issues #111–#116) were found by cold-installing a tarball while 612 tests were green, and
@@ -55,11 +56,16 @@ without asking.
 
 So after the workflow goes green:
 
-- `npm install -g @nick5757/app-atlas` (or `npx @nick5757/app-atlas`) into a clean
+- `npm install -g @app-atlas/cli` (or `npx @app-atlas/cli`) into a clean
   environment — **from the registry**, not from the working tree.
 - Run every command end to end.
 - Run it on a real repository, not a fixture.
 - Only then tell anyone it exists.
+
+**Done for 0.19.0**, and it earned its keep immediately: `--version`, `analyze` on a real
+96-file project, `export --stdout`, the `mcp` server over stdio and the `npx` path from
+the README all behaved — and reading the live tool list against the README caught that the
+README advertised six MCP tools when the server serves seven.
 
 ---
 
@@ -82,7 +88,7 @@ them.
 
 Make the ask small and specific. Not *"check out my project"* but:
 
-> Run `npx @nick5757/app-atlas` on one of your repos and tell me one place where the map
+> Run `npx @app-atlas/cli` on one of your repos and tell me one place where the map
 > is wrong.
 
 The framing is the point. "It's cool" teaches nothing. **A wrong-map report is the entire
