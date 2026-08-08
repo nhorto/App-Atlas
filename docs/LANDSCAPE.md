@@ -10,6 +10,13 @@ SPEC §2 claims were checked. Two entries changed materially: **OpenVisio** is l
 positioning collision than it looked, and **CodeAtlas** — filed in July under "naming" —
 is the closest competitor in this document. Corrections are made in place and marked.*
 
+*Superseded in part, 8 August 2026. A second pass — [LANDSCAPE-2026-08.md](LANDSCAPE-2026-08.md) —
+was run at v0.19.0 across four segments, and found a lane that barely existed when this was
+written: free, local, MCP-served code graphs at 25k–47k stars each. **This document is left
+exactly as it was.** Read it for the July position and the reasoning; read the second pass
+for who is out there now. The four places the two disagree are listed at the end of that
+document, unreconciled on purpose.*
+
 Every number here is what the source reported on the day it was read. Vendor comparison
 pages are marked as such — a lot of the writing in this space is SEO published by
 competitors about each other, and it should not be trusted about anything except the
