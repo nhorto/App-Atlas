@@ -284,7 +284,7 @@ export interface EnvVarInfo {
  * mounted on, and a handler that calls the provider's own sign-in routine. Both are
  * "the door people sign in through", which is what every screen already calls this.
  */
-export type OpenKind = 'worth-a-look' | 'page' | 'auth-mount' | 'unreadable';
+export type OpenKind = 'worth-a-look' | 'page' | 'auth-mount' | 'unreadable' | 'generated';
 
 export interface OpenVerdict {
   kind: OpenKind;
@@ -353,6 +353,17 @@ export interface EndpointMeta {
    * webhook does not.
    */
   verified?: boolean;
+  /**
+   * This door's handler is a file a build wrote, not a file a person did — a Cloudflare
+   * Worker whose `main` is `.open-next/worker.js` is a Next.js app on the edge, and the
+   * routes it serves are already on the map one by one, graded individually (#123).
+   *
+   * The door stays: #29 is the bug where a Worker repo was told nothing answers a URL.
+   * It is only excused from the auth count, because a catch-all generated at build time
+   * has nowhere to put a check and counting it says "a route nobody protects" about an
+   * app whose routes are all accounted for.
+   */
+  generatedEntry?: boolean;
   /** Cron expression, when a scheduler is what knocks. */
   schedule?: string;
   /** Only on the single `env` endpoint. */

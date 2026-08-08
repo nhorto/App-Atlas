@@ -39,6 +39,8 @@ export interface EndpointFinding {
    * is true and "every 5 minutes" would be invented.
    */
   schedule?: string;
+  /** The handler is a build output rather than source somebody wrote — see EndpointMeta. */
+  generatedEntry?: boolean;
   site: CodeSite;
   /** The atlas node that answers this door. */
   handlerId: string | null;

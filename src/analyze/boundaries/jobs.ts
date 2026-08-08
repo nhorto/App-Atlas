@@ -51,7 +51,12 @@ function callExpression(call: CallExpression, ctx: DetectorContext): void {
   }
 
   // --- webhook signature verification ---
-  if (/webhooks\.constructEvent$/.test(dotted) || last === 'constructEvent') {
+  // `constructEventAsync` is not a variant worth skipping: it is the *only* one that
+  // works on an edge runtime, where there is no synchronous crypto to hash the body
+  // with. Matching the sync spelling alone meant every Stripe webhook deployed to
+  // Cloudflare or Vercel Edge — the exact repos most likely to have one — was reported
+  // as a data-writing door that nothing checks (#122).
+  if (/webhooks\.constructEvent(Async)?$/.test(dotted) || last === 'constructEvent' || last === 'constructEventAsync') {
     return ctx.emit({ type: 'webhook', provider: 'Stripe', site: ctx.site(call) });
   }
   if (last === 'verify' && isFrom(root, ctx, 'svix')) {
