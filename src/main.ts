@@ -406,15 +406,23 @@ async function runSingleAnalysis(root: string, options: SharedOptions, repoRoot:
       for (const caveat of auth.caveats) console.log(pc.dim(`  ${caveat}`));
     }
     console.log('');
-    const documented = s.files > 0 ? Math.round((s.documentedFiles / s.files) * 100) : 0;
+    // Nobody writes a docstring in a file a generator rewrites, so counting those in the
+    // denominator scores a repo on work it must not do (#126). One package read 0% while
+    // its hand-written files were a small minority of the count.
+    const generated = s.generatedFiles ?? 0;
+    const ownFiles = Math.max(0, s.files - generated);
+    const documented = ownFiles > 0 ? Math.round((s.documentedFiles / ownFiles) * 100) : 0;
     // The percentage is worth printing at every level; the instruction is not. A repo
     // that documents every file was told to go and learn how to document files (#124),
     // which is the tool failing to read its own number directly under the auth headline
     // — the one sentence here that most needs believing. Silence is the reward.
     const nudge =
-      s.documentedFiles < s.files ? ` Run ${pc.cyan('app-atlas init')} to teach your agent to write them.` : '';
+      s.documentedFiles < ownFiles ? ` Run ${pc.cyan('app-atlas init')} to teach your agent to write them.` : '';
+    const aside = generated > 0 ? `, ${generated} generated ${plural(generated, 'file', 'files')} aside` : '';
     console.log(
-      pc.dim(`  ${documented}% of files have a docstring App Atlas can read (${s.documentedFiles}/${s.files}).${nudge}`),
+      pc.dim(
+        `  ${documented}% of files have a docstring App Atlas can read (${s.documentedFiles}/${ownFiles}${aside}).${nudge}`,
+      ),
     );
     if (s.staleDocs > 0) {
       console.log(

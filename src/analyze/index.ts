@@ -32,6 +32,7 @@ import { declaredEntryFor, frameworkOwnerOf } from './owned.js';
 import { buildSchemaNodes, buildSqlSchemaNodes } from './schema.js';
 import type { FileSlice, LanguagePlugin } from './plugin.js';
 import { discoverProject } from './project.js';
+import { markGeneratedFiles } from './generated.js';
 import { markRetiredFiles } from './retired.js';
 import { buildMarkupNodes, readMarkupFiles } from './markup.js';
 import type { ProjectInfo } from './project.js';
@@ -232,6 +233,12 @@ export async function analyzeProject(rootDir: string, options: AnalyzeOptions = 
   // "DEPRECATED — do not run as part of the pipeline" is not part of it (#87). Marked
   // in place: dropping it would hide a backstop somebody still runs by hand.
   const retiredCount = markRetiredFiles(nodes);
+
+  // --- code a generator wrote ---
+  // Beside the pass above and for the same reason: this is a fact about a file that
+  // every later answer depends on, and it must be settled before the boundary is built,
+  // because an exported name in a generated file is not a commitment anybody made (#126).
+  const generatedFiles = markGeneratedFiles(nodes).files;
 
   // --- the database schema ---
   // Read before the containment tree is built, because the schema file has to be in
@@ -594,6 +601,7 @@ export function computeStats(nodes: AtlasNode[], edges: AtlasEdge[]): AtlasStats
   let modules = 0;
   let linesOfCode = 0;
   let documentedFiles = 0;
+  let generatedFiles = 0;
   let documentedFunctions = 0;
   let aiSummaries = 0;
   let aiFiles = 0;
@@ -613,6 +621,10 @@ export function computeStats(nodes: AtlasNode[], edges: AtlasEdge[]): AtlasStats
         files++;
         linesOfCode += Number(node.meta.loc ?? 0);
         if (node.meta.unread) unreadFiles++;
+        // Counted apart, not skipped: a generated file is still a file on the map, and
+        // still lines of code somebody's build produces. What it is not is a file
+        // anybody can be asked to document (#126).
+        if (node.meta.generated) generatedFiles++;
         if (node.summarySource === 'docs') documentedFiles++;
         else if (node.summarySource === 'ai') aiFiles++;
         break;
@@ -672,6 +684,7 @@ export function computeStats(nodes: AtlasNode[], edges: AtlasEdge[]): AtlasStats
     references,
     linesOfCode,
     documentedFiles,
+    generatedFiles,
     documentedFunctions,
     staleDocs: countStaleDocs(nodes),
     aiSummaries,

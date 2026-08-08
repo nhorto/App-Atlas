@@ -481,6 +481,8 @@ export interface AtlasStats {
   unprotectedRoutes: number;
   /** Unchecked, with a reason: a page the browser renders, or the sign-in door. */
   publicRoutes: number;
+  /** Files a code generator wrote. Counted apart from docstring coverage (#126). */
+  generatedFiles?: number;
   /** Unchecked, but a file they import could not be read — unknown, not open (#36). */
   unreadableRoutes: number;
   /**
