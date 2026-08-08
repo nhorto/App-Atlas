@@ -112,6 +112,8 @@ test('a group prefix composes, and a chained RequireAuthorization locks', () => 
 
 test('the door count is the whole list and nothing else', () => {
   assert.deepEqual(doors.map((door) => door.name), [
+    'DELETE /api/catalog-items/{id}',
+    'GET /api/catalog-items',
     'GET /api/kiosk/ping',
     'GET /api/kiosk/roster',
     'GET /api/kiosk/today',
@@ -122,6 +124,7 @@ test('the door count is the whole list and nothing else', () => {
     'POST /api/auth/login',
     'POST /api/auth/logout',
     'POST /api/auth/setup',
+    'POST /api/catalog-items',
     'POST /api/kiosk/shift/end',
     'POST /api/kiosk/shift/start',
     'POST /api/v1/orders',
@@ -500,4 +503,37 @@ test('the map has the shape of the code', () => {
     assert.ok(types.some((type) => type.name === expected), `${expected} is missing`);
   }
   assert.ok(graph.getOverview().app, 'and the app node exists');
+});
+
+// ---------------------------------------------------------------------------
+// `[Authorize]` written on the lambda (#131)
+// ---------------------------------------------------------------------------
+
+/**
+ * Found on Microsoft's own eShopOnWeb, which reported `7 of 7 routes unprotected`. Three
+ * of those seven are administrator-only, and all three write data — the tool's most
+ * alarming sentence, aimed at the three rows that would have mattered most.
+ *
+ * `attributesByScope` groups attributes by enclosing definition, and that is no help
+ * here: the guarded registration and a genuinely public one sit side by side inside the
+ * same method. Attaching by scope would have badged the public route as protected, which
+ * is the single direction this tool must never be wrong in. Containment is what tells
+ * them apart.
+ */
+test('an attribute on the lambda guards that route and not its neighbour', () => {
+  assert.deepEqual(guardsOf('POST /api/catalog-items'), ['[Authorize] on the handler']);
+  assert.deepEqual(guardsOf('GET /api/catalog-items'), [], 'same scope, same method, no attribute of its own');
+});
+
+test('the guard is certain, because the framework runs it', () => {
+  const guard = doors.find((d) => d.name === 'POST /api/catalog-items').meta.guards[0];
+  assert.equal(guard.confidence, 'certain');
+  assert.equal(guard.how, 'decorator');
+  assert.equal(guard.provider, 'ASP.NET Core');
+});
+
+test('an opt-out in the same position still beats it', () => {
+  // `[AllowAnonymous]` is not the absence of `[Authorize]`, it overrides one — the rule
+  // this file already applies to controllers, applied where the attribute now also lands.
+  assert.deepEqual(guardsOf('DELETE /api/catalog-items/{id}'), []);
 });

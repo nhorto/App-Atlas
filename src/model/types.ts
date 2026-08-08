@@ -483,6 +483,8 @@ export interface AtlasStats {
   publicRoutes: number;
   /** Files a code generator wrote. Counted apart from docstring coverage (#126). */
   generatedFiles?: number;
+  /** Of those, the ones in the test zone — excluded from the auth hedge (#132). */
+  unreadTestFiles?: number;
   /** Unchecked, but a file they import could not be read — unknown, not open (#36). */
   unreadableRoutes: number;
   /**

@@ -241,7 +241,13 @@ export function authHeadline(stats: AtlasStats): AuthHeadline | null {
   const open = stats.unprotectedRoutes;
   const unknown = stats.unreadableRoutes ?? 0;
   const public_ = stats.publicRoutes ?? 0;
-  const unread = stats.unreadFiles ?? 0;
+  // Test files excluded (#132). The hedge means "a check may live in there", and a check
+  // for a production route does not live in a test fixture — bat's unparseable
+  // syntax-highlighting asset was softening a claim it could never have changed. A hedge
+  // that fires when nothing is actually uncertain teaches a reader to skip hedges, which
+  // is #116's failure arriving from the other side. The file is still reported and still
+  // counted in `unreadFiles`; only this sentence stops leaning on it.
+  const unread = Math.max(0, (stats.unreadFiles ?? 0) - (stats.unreadTestFiles ?? 0));
 
   // Zero doors reads as good news, and it is only good news when the analyzer could see.
   // A Python project mapped on a machine whose interpreter never answered has zero doors

@@ -44,6 +44,15 @@ kiosk.MapPost("/end", () => Results.Accepted());
 // door should point at it directly rather than at anything synthesized.
 app.MapGet("/api/kiosk/roster", Roster);
 
+// The attribute goes on the lambda, not on a declaration (#131). This is how
+// eShopOnWeb spells every administrator-only route, and both of the next two lines
+// live in the same scope — so only position can tell the guarded one from the open one.
+app.MapPost("/api/catalog-items", [Authorize(Roles = "ADMINISTRATORS")] async (CatalogItem item) => Results.Created());
+app.MapGet("/api/catalog-items", async () => Results.Ok(new[] { "one" }));
+
+// An opt-out written in the same place still wins, exactly as it does on a controller.
+app.MapDelete("/api/catalog-items/{id}", [AllowAnonymous] async (int id) => Results.NoContent());
+
 app.Run();
 
 static IResult Roster()
