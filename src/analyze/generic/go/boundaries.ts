@@ -243,6 +243,48 @@ function detectRoutes(
     }
   }
 
+  // Routers held in a struct field, which is how a config object carries one (#129):
+  //
+  //   type Config struct { Mux *http.ServeMux }
+  //   func New(ctx context.Context, cfg Config) { cfg.Mux.HandleFunc("/api/get", …) }
+  //
+  // The receiver of that call is `cfg.Mux`, which is neither a local nor a parameter, so
+  // the lookup above misses it and a secrets server reports no doors at all.
+  //
+  // Resolved the same way a parameter is — through the field's *written type*, never its
+  // name. The shortcut is to accept any receiver ending in `.Mux`, and it would invent
+  // doors on any field somebody happened to call that. This tier already tells the reader
+  // its links are likely rather than certain; guessing at routers would spend the little
+  // credit that leaves.
+  const routerFieldsOf = new Map<string, { field: string; framework: string }[]>();
+  for (const def of file.defs) {
+    if (def.kind !== 'type') continue;
+    for (const field of def.fields) {
+      const type = bareType(field.type);
+      if (!ROUTER_TYPE.test(type)) continue;
+      const pkg = type.includes('.') ? type.slice(0, type.indexOf('.')) : null;
+      const module = pkg ? imports.get(pkg) : null;
+      const list = routerFieldsOf.get(def.name) ?? [];
+      // `net/http` names itself, so a mux on a field reads the same as `http.HandleFunc`
+      // does two blocks up rather than as the type it happens to be written as.
+      const framework = module === 'net/http' ? 'net/http' : ((module && goFrameworkFor(module)) ?? type);
+      list.push({ field: field.name, framework });
+      routerFieldsOf.set(def.name, list);
+    }
+  }
+  if (routerFieldsOf.size > 0) {
+    for (const def of file.defs) {
+      for (const param of def.params) {
+        const fields = routerFieldsOf.get(bareType(param.type));
+        if (!fields) continue;
+        for (const { field, framework } of fields) {
+          const held = `${param.name}.${field}`;
+          if (!routers.has(held)) routers.set(held, framework);
+        }
+      }
+    }
+  }
+
   const frameworkOfPackage = (local: string): string | null => {
     const module = imports.get(local);
     if (!module) return null;
