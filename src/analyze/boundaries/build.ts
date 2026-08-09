@@ -863,9 +863,21 @@ function applyGuards(
   for (const endpoint of endpoints.values()) {
     for (const site of endpoint.meta.sites) {
       for (const guard of byFile.get(site.path) ?? []) {
-        const confidence = guardConfidence(endpoint, guard);
-        if (!confidence) continue;
-        pushGuard(endpoint, { ...guard.guard, confidence });
+        const reach = guardConfidence(endpoint, guard);
+        if (!reach) continue;
+        // Two questions, and only one of them was being asked. `guardConfidence` answers
+        // *does this check cover this route* — certain when the check is written on the
+        // handler the router named. The detector's own grade answers *is this a check at
+        // all*, and the Go tier deliberately says `likely`, because a function that
+        // writes a 401 is one function's behaviour standing in for a decision no
+        // framework confirmed.
+        //
+        // Overwriting the second with the first made weak evidence certain by being
+        // pointed at the right route, and Gin's `POST /login` — which answers a wrong
+        // *password* with a 401 — came out certainly protected (#147). A framework's own
+        // vocabulary is unaffected: `[Authorize]` and a NextAuth decorator arrive
+        // `certain` and stay it.
+        pushGuard(endpoint, { ...guard.guard, confidence: weaker(guard.guard.confidence, reach) });
       }
     }
 
@@ -1099,6 +1111,19 @@ function firstCheck(names: string[] | undefined, byName: Map<string, GuardInfo>)
     if (guard) return guard;
   }
   return null;
+}
+
+/**
+ * The lower of two grades, because a claim is as strong as its weakest half.
+ *
+ * Being certain a check *reaches* a route says nothing about whether it is a check, and
+ * a door only reads as proven when both hold. Rounding up here is #116's mistake in the
+ * place a reader is least able to catch it — inside a green sentence.
+ */
+const CONFIDENCE_RANK: Record<Confidence, number> = { possible: 0, likely: 1, certain: 2 };
+
+function weaker(a: Confidence, b: Confidence): Confidence {
+  return CONFIDENCE_RANK[a] <= CONFIDENCE_RANK[b] ? a : b;
 }
 
 function guardConfidence(endpoint: MergedEndpoint, guard: GuardFinding): Confidence | null {

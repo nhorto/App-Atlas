@@ -302,10 +302,20 @@ test('a check written on one route reaches only that route', () => {
   assert.deepEqual(guardNames(door(atlas, 'GET /orders/')), [], 'and the GET beside it is open');
 });
 
-test('a handler wrapped in a check is checked', () => {
+test('a handler wrapped in a check is checked, and the grade says how we know', () => {
   const guarded = door(std, 'POST /widgets');
   assert.deepEqual(guardNames(guarded), ['requireToken']);
-  assert.equal(guarded.meta.guards[0].confidence, 'certain', 'the wrapper is named on the same line as the route');
+  // `certain` until #147, on the grounds that the wrapper is named on the same line as
+  // the route. That is certainty about *reach*, and it was standing in for certainty
+  // about *evidence*: the only reason `requireToken` is known to be a check rather than
+  // a logger is that it writes a 401, which the Go detector itself grades `likely` —
+  // "one function's behaviour standing in for a decision made by a framework we did not
+  // run", in its own words.
+  //
+  // Keeping the two apart is what stopped Gin's `POST /login`, which answers a wrong
+  // password with a 401, from reading as certainly protected. A framework's own
+  // vocabulary still arrives `certain` and still leaves that way.
+  assert.equal(guarded.meta.guards[0].confidence, 'likely');
 });
 
 test('a door whose handler we could not find inherits nothing', () => {
