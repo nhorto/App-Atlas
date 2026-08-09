@@ -433,6 +433,7 @@ function collectEndpoints(input: BuildInput): Map<string, MergedEndpoint> {
         ...(finding.schedule ? { schedule: finding.schedule } : {}),
         ...(finding.generatedEntry ? { generatedEntry: true } : {}),
         ...(finding.handlerUnlinked ? { handlerUnlinked: true } : {}),
+        ...(finding.declaredPublic ? { declaredPublic: true } : {}),
         sites: [finding.site],
       },
       handlerIds: new Set(finding.handlerId ? [finding.handlerId] : []),

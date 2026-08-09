@@ -742,7 +742,10 @@ export function computeStats(nodes: AtlasNode[], edges: AtlasEdge[]): AtlasStats
     routes,
     unprotectedRoutes: open.worthALook,
     likelyOnlyRoutes,
-    publicRoutes: open.page + open.authMount + open.generated,
+    // "Unchecked, with a reason." A door the code declares open belongs here beside the
+    // marketing page and the sign-in mount — it is the most explicit reason of the three,
+    // being one somebody wrote down on purpose (#152).
+    publicRoutes: open.page + open.authMount + open.generated + open.declaredPublic,
     unreadableRoutes: open.unreadable,
     unlinkedRoutes: open.unlinked,
     unreadFiles,

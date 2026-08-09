@@ -43,6 +43,8 @@ export interface EndpointFinding {
   generatedEntry?: boolean;
   /** The handler was named in a routing table but never located — see EndpointMeta. */
   handlerUnlinked?: boolean;
+  /** The code says in as many words that this door is open on purpose — see EndpointMeta. */
+  declaredPublic?: boolean;
   site: CodeSite;
   /** The atlas node that answers this door. */
   handlerId: string | null;
