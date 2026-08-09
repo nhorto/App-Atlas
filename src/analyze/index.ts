@@ -102,8 +102,22 @@ import { dominantZone } from './zones.js';
  * this comment is about. The third change — an unreadable *test* file no longer hedging
  * the auth sentence — touches no cached finding at all, and would not have moved this on
  * its own.
+ * 0.22.0 is the strongest case yet for this number existing, and it came with its own
+ * demonstration. Three of the four changes alter what a cached finding *means*: a Django
+ * project's routes went from absent to present (#139), a Rust workspace's thousand `pub`
+ * items went from doors to internals (#140), and a FastAPI route's decorator dependencies
+ * became readable (#136). A 0.21.0 cache does not hold thinner answers about any of those
+ * — it holds an empty routing table, a front door made of private helpers, and five
+ * administrator-only endpoints recorded as doors nobody checks.
+ *
+ * The demonstration: during this release's own verification, fastapi-template reported
+ * `11 of 23 routes unprotected` where a clean run gives 6. Nothing was wrong with the
+ * code. A per-scope `.app-atlas` written before #136 had survived — only the repo-root
+ * cache was cleared — and it answered with the verdict of an analyzer that could not yet
+ * read `dependencies=[Depends(...)]`. That is this comment's first paragraph happening in
+ * front of us, and it is what the number moving prevents for everybody else.
  */
-export const TOOL_VERSION = '0.21.0';
+export const TOOL_VERSION = '0.22.0';
 
 export interface AnalyzeOptions {
   maxFiles?: number;
