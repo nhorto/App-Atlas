@@ -130,7 +130,17 @@ import { dominantZone } from './zones.js';
  * everything went from lock to declared-public (#152). Old caches answer every one of
  * those questions with the wrong side of the trade this tool exists to get right.
  */
-export const TOOL_VERSION = '0.23.0';
+/*
+ * 0.24.0 moves it for six fixes, and three of them are whole categories of answer
+ * changing at once. A NestJS app guarded by APP_GUARD goes from "269 of 270 routes
+ * unprotected" to all-covered-at-likely (#172) — a cache from 0.23.0 holds the largest
+ * false alarm this tool ever produced, about the best-guarded server it ever read. A
+ * DRF project's registration table becomes its API (#170): the cached absence was
+ * never true. And a repository whose backbone is a language nothing here reads now
+ * says so on every surface (#171) — the cached version presents the sliver as the app,
+ * which is the confident wrong answer this number exists to expire.
+ */
+export const TOOL_VERSION = '0.24.0';
 
 export interface AnalyzeOptions {
   maxFiles?: number;
