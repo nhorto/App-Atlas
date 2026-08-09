@@ -3,12 +3,36 @@
  *
  * The tool is an atlas, so it is set like one: warm paper, dark ink, serif display
  * type, and a terracotta accent used the way a printed map uses red — to mark the
- * route, and nothing else. Every face here ships with the operating system, because
- * the app must look the same offline as on.
+ * route, and nothing else. The display face is Literata, and it ships *inside*
+ * dist/web rather than being fetched from a font service, because the app must
+ * look the same offline as on. The body and mono faces still come with the
+ * operating system.
  *
  * Colour still means one thing only: which zone something belongs to. Everything
  * else is ink on paper, so a coloured card always carries information.
  */
+
+/*
+ * Literata (SIL Open Font License — see fonts/OFL.txt), as a variable font: the
+ * optical-size axis is the reason it was chosen. One file is a graceful book face
+ * at the 31px page heading and a sturdy, open one at the 14px card names — the
+ * two sizes this app actually sets its serif at. Latin subset only, ~85KB a style.
+ */
+@font-face {
+  font-family: 'Literata';
+  font-style: normal;
+  font-weight: 400 700;
+  font-display: swap;
+  src: url('./fonts/literata-var.woff2') format('woff2');
+}
+
+@font-face {
+  font-family: 'Literata';
+  font-style: italic;
+  font-weight: 400 700;
+  font-display: swap;
+  src: url('./fonts/literata-var-italic.woff2') format('woff2');
+}
 
 :root {
   --bg: #f4f1e9;
@@ -33,12 +57,22 @@
   --zone-test: #b04f7c;
   --zone-unknown: #a49c8a;
 
-  --radius: 8px;
-  --shadow: 0 1px 2px rgba(64, 54, 32, 0.05), 0 4px 14px rgba(64, 54, 32, 0.06);
+  --radius: 3px;
+  --shadow: 1px 1px 0 rgba(64, 54, 32, 0.08);
   --font: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
-  --font-display: 'Iowan Old Style', 'Palatino Linotype', Palatino, Georgia, 'Times New Roman', serif;
+  --font-display: 'Literata', 'Iowan Old Style', 'Palatino Linotype', Palatino, Georgia, serif;
   --mono: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace;
 }
+
+/* Zone colour, resolved once. Anything with a zone class can paint its legend
+   mark with var(--zc) instead of carrying its own set of per-zone rules. */
+.zone-ui { --zc: var(--zone-ui); }
+.zone-api { --zc: var(--zone-api); }
+.zone-logic { --zc: var(--zone-logic); }
+.zone-data { --zc: var(--zone-data); }
+.zone-config { --zc: var(--zone-config); }
+.zone-test { --zc: var(--zone-test); }
+.zone-unknown { --zc: var(--zone-unknown); }
 
 * {
   box-sizing: border-box;
@@ -198,9 +232,9 @@ code {
   max-width: calc(100% - 130px);
   padding: 5px 10px;
   background: var(--surface);
-  border: 1px solid var(--line);
-  border-radius: 10px;
-  box-shadow: 0 2px 10px rgba(60, 50, 30, 0.08);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
 }
 
 .map-tree-toggle {
@@ -290,7 +324,7 @@ code {
   color: var(--ink);
   background: var(--surface);
   border: 1px solid var(--line-strong);
-  border-radius: 7px;
+  border-radius: 2px;
   padding: 4px 8px;
   cursor: pointer;
   max-width: 200px;
@@ -302,16 +336,24 @@ code {
 
 /* Shown for a couple of seconds after --watch rebuilds, then it gets out of the way. */
 .live-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   align-self: center;
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0.02em;
+  font-size: 10.5px;
+  font-weight: 650;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
   color: #266344;
-  background: rgba(55, 132, 90, 0.16);
-  border-radius: 999px;
-  padding: 3px 9px;
   white-space: nowrap;
   animation: live-badge-in 180ms ease-out;
+}
+
+.live-badge::before {
+  content: '';
+  width: 7px;
+  height: 7px;
+  background: currentColor;
 }
 
 @keyframes live-badge-in {
@@ -335,12 +377,11 @@ kbd {
 
 /* ---------- cards on the canvas ---------- */
 
-/* Every card in the app is set as a specimen label out of a naturalist's field
-   kit: slightly warmer paper than the page, a clipped top-right corner, a
-   perforated inner rule, and the zone color as the label's binding strip along
-   the top. Sharp corners and a 1px offset shadow — nothing floats, nothing
-   glows. The clip means box-shadow would be cut off, so depth and selection
-   both travel through drop-shadow filters instead. */
+/* Every card in the app is a flat paper label, the way a printed atlas labels a
+   place: the name set in the display serif, the detail in small mono, a hairline
+   ink frame, and the zone shown as a small square swatch — the same mark the
+   legend uses, so the card and the key literally share a vocabulary. No icon
+   tiles, no colour strips, no floating shadows: ink on paper carries it. */
 
 .card {
   position: relative;
@@ -348,47 +389,20 @@ kbd {
   height: 100%;
   background: var(--label);
   border: 1px solid var(--line-strong);
-  border-top: 4px solid var(--zone-unknown);
-  clip-path: polygon(0 0, calc(100% - 14px) 0, 100% 14px, 100% 100%, 0 100%);
-  filter: drop-shadow(1px 2px 0 rgba(64, 54, 32, 0.09));
-  padding: 8px 12px 9px;
+  padding: 9px 12px 9px;
   overflow: hidden;
-  transition: opacity 140ms ease, border-color 140ms ease, filter 140ms ease;
+  transition: opacity 140ms ease, border-color 140ms ease, box-shadow 140ms ease;
 }
-
-.card::before {
-  content: '';
-  position: absolute;
-  inset: 3px;
-  border: 1px dashed var(--line);
-  clip-path: polygon(0 0, calc(100% - 11px) 0, 100% 11px, 100% 100%, 0 100%);
-  pointer-events: none;
-}
-
-.card.zone-ui { border-top-color: var(--zone-ui); }
-.card.zone-api { border-top-color: var(--zone-api); }
-.card.zone-logic { border-top-color: var(--zone-logic); }
-.card.zone-data { border-top-color: var(--zone-data); }
-.card.zone-config { border-top-color: var(--zone-config); }
-.card.zone-test { border-top-color: var(--zone-test); }
 
 .card.is-dim {
   opacity: 0.18;
 }
 
-/* The zone strip stays; the other three sides and the perforation turn
-   terracotta, like a label somebody circled in red pencil. */
+/* Circled in red pencil: the frame doubles in the accent ink. */
 .card.is-selected,
 .card.is-focus {
-  border-left-color: var(--accent);
-  border-right-color: var(--accent);
-  border-bottom-color: var(--accent);
-  filter: drop-shadow(1px 2px 0 rgba(176, 69, 43, 0.3));
-}
-
-.card.is-selected::before,
-.card.is-focus::before {
-  border-color: rgba(176, 69, 43, 0.5);
+  border-color: var(--accent);
+  box-shadow: inset 0 0 0 1px var(--accent);
 }
 
 .card-head {
@@ -398,15 +412,28 @@ kbd {
   min-width: 0;
 }
 
+/* The legend mark, on the card itself. */
+.card-head::before {
+  content: '';
+  flex: none;
+  width: 7px;
+  height: 7px;
+  background: var(--zc, var(--zone-unknown));
+}
+
 .card-kind {
   color: var(--ink-faint);
   font-size: 12px;
   flex: none;
 }
 
+/* Monospace, because since #94 this is the file or folder's real name — the string
+   somebody pastes into a search. The display serif belongs to the generated caption
+   below it, so the two kinds of words are told apart by their faces. */
 .card-name {
-  font-weight: 600;
-  font-size: 13.5px;
+  font-family: var(--mono);
+  font-weight: 650;
+  font-size: 13px;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -580,7 +607,7 @@ kbd {
   gap: 5px;
   background: rgba(253, 252, 247, 0.94);
   border: 1px solid var(--line-strong);
-  border-radius: 6px;
+  border-radius: var(--radius);
   padding: 7px 11px;
   font-size: 10px;
   text-transform: uppercase;
@@ -676,7 +703,8 @@ button.legend-item:hover {
 
 /* Along the top, between the breadcrumb and the way into the folder tree. It used to
    sit at the bottom centre, where the key — now three rows and a filter rather than a
-   row of dots — grew out from under it and read as one overlapping block. */
+   row of dots — grew out from under it and read as one overlapping block. Set as a
+   caption under the figure, not a floating pill. */
 .hint {
   position: absolute;
   left: 50%;
@@ -684,29 +712,20 @@ button.legend-item:hover {
   top: 20px;
   font-size: 11.5px;
   color: var(--ink-faint);
-  background: rgba(253, 252, 247, 0.92);
-  border-radius: 999px;
-  padding: 5px 14px;
-  border: 1px solid var(--line);
+  background: rgba(244, 241, 233, 0.9);
+  padding: 4px 10px;
   z-index: 4;
   pointer-events: none;
 }
 
+/* Square, like the swatches in a printed key — and the same mark the cards wear. */
 .dot {
   width: 8px;
   height: 8px;
-  border-radius: 50%;
-  background: var(--zone-unknown);
+  background: var(--zc, var(--zone-unknown));
   flex: none;
   display: inline-block;
 }
-
-.dot.zone-ui { background: var(--zone-ui); }
-.dot.zone-api { background: var(--zone-api); }
-.dot.zone-logic { background: var(--zone-logic); }
-.dot.zone-data { background: var(--zone-data); }
-.dot.zone-config { background: var(--zone-config); }
-.dot.zone-test { background: var(--zone-test); }
 
 /* ---------- detail panel ---------- */
 
@@ -781,7 +800,7 @@ button.legend-item:hover {
   flex-direction: column;
   background: var(--surface);
   border: 1px solid var(--line-strong);
-  border-radius: 10px;
+  border-radius: var(--radius);
   box-shadow: 0 6px 24px rgba(60, 50, 30, 0.14);
   overflow: hidden;
 }
@@ -887,24 +906,33 @@ button.legend-item:hover {
   color: var(--ink-faint);
 }
 
+/* Labels are set the way a map sets its keys: small capitals in ink, with the
+   zone's square swatch where one applies. No lozenge, no wash behind them. */
 .chip {
-  display: inline-block;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   font-size: 10.5px;
-  font-weight: 600;
-  letter-spacing: 0.02em;
+  font-weight: 650;
+  letter-spacing: 0.07em;
   text-transform: uppercase;
-  padding: 2px 7px;
-  border-radius: 999px;
-  background: var(--surface-press);
   color: var(--ink-soft);
 }
 
-.zone-chip.zone-ui { background: rgba(106, 85, 196, 0.13); color: #503aa8; }
-.zone-chip.zone-api { background: rgba(45, 126, 163, 0.13); color: #205e7c; }
-.zone-chip.zone-logic { background: rgba(196, 136, 28, 0.15); color: #8f6210; }
-.zone-chip.zone-data { background: rgba(55, 132, 90, 0.15); color: #266344; }
-.zone-chip.zone-config { background: rgba(133, 124, 104, 0.16); color: #5f594b; }
-.zone-chip.zone-test { background: rgba(176, 79, 124, 0.13); color: #8c3a60; }
+.zone-chip::before {
+  content: '';
+  width: 7px;
+  height: 7px;
+  flex: none;
+  background: var(--zc, var(--zone-unknown));
+}
+
+.zone-chip.zone-ui { color: #503aa8; }
+.zone-chip.zone-api { color: #205e7c; }
+.zone-chip.zone-logic { color: #8f6210; }
+.zone-chip.zone-data { color: #266344; }
+.zone-chip.zone-config { color: #5f594b; }
+.zone-chip.zone-test { color: #8c3a60; }
 
 .panel-section {
   padding: 16px 20px;
@@ -926,28 +954,33 @@ button.legend-item:hover {
 }
 
 .trust {
-  display: inline-block;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   font-size: 10px;
-  font-weight: 600;
-  letter-spacing: 0.03em;
+  font-weight: 650;
+  letter-spacing: 0.06em;
   text-transform: uppercase;
-  padding: 2px 7px;
-  border-radius: 4px;
   margin-bottom: 8px;
 }
 
+.trust::before {
+  content: '';
+  width: 6px;
+  height: 6px;
+  flex: none;
+  background: currentColor;
+}
+
 .trust-facts {
-  background: rgba(106, 85, 196, 0.12);
   color: #503aa8;
 }
 
 .trust-docs {
-  background: rgba(55, 132, 90, 0.14);
   color: #266344;
 }
 
 .trust-ai {
-  background: rgba(196, 136, 28, 0.16);
   color: #8f6210;
 }
 
@@ -1086,25 +1119,27 @@ button.legend-item:hover {
   gap: 6px;
   max-width: 100%;
   border: 1px solid var(--line);
-  border-left: 3px solid var(--zone-unknown);
   background: var(--surface);
-  border-radius: 6px;
+  border-radius: var(--radius);
   padding: 4px 9px;
   font-size: 12.5px;
   color: var(--ink);
   cursor: pointer;
 }
 
-.type-chip:hover {
-  background: var(--surface-press);
+.type-chip::before {
+  content: '';
+  align-self: center;
+  flex: none;
+  width: 6px;
+  height: 6px;
+  background: var(--zc, var(--zone-unknown));
 }
 
-.type-chip.zone-ui { border-left-color: var(--zone-ui); }
-.type-chip.zone-api { border-left-color: var(--zone-api); }
-.type-chip.zone-logic { border-left-color: var(--zone-logic); }
-.type-chip.zone-data { border-left-color: var(--zone-data); }
-.type-chip.zone-config { border-left-color: var(--zone-config); }
-.type-chip.zone-test { border-left-color: var(--zone-test); }
+.type-chip:hover {
+  border-color: var(--line-strong);
+  background: var(--surface-press);
+}
 
 .type-chip-glyph {
   color: var(--ink-faint);
@@ -1138,11 +1173,11 @@ button.legend-item:hover {
 
 .btn-primary {
   margin-top: 12px;
-  border: 0;
+  border: 1px solid var(--accent-deep);
   background: var(--accent);
   color: #fff;
-  border-radius: 7px;
-  padding: 7px 12px;
+  border-radius: 2px;
+  padding: 6px 12px;
   font-size: 13px;
   font-weight: 500;
 }
@@ -1154,7 +1189,7 @@ button.legend-item:hover {
 .btn-ghost {
   border: 1px solid var(--line-strong);
   background: var(--surface);
-  border-radius: 7px;
+  border-radius: 2px;
   padding: 5px 10px;
   font-size: 12.5px;
   color: var(--ink-soft);
@@ -1186,7 +1221,7 @@ button.legend-item:hover {
   max-height: 62vh;
   background: var(--surface);
   border: 1px solid var(--line-strong);
-  border-radius: 10px;
+  border-radius: 4px;
   box-shadow: 0 20px 60px rgba(38, 35, 28, 0.3);
   overflow: hidden;
   display: flex;
@@ -1266,7 +1301,7 @@ button.legend-item:hover {
 .react-flow__controls {
   box-shadow: var(--shadow);
   border: 1px solid var(--line-strong);
-  border-radius: 7px;
+  border-radius: var(--radius);
   overflow: hidden;
 }
 
@@ -1286,7 +1321,7 @@ button.legend-item:hover {
 
 .react-flow__minimap {
   border: 1px solid var(--line-strong);
-  border-radius: 7px;
+  border-radius: var(--radius);
   --xy-minimap-background-color: var(--surface);
 }
 

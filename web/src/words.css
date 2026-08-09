@@ -18,7 +18,7 @@
   width: max-content;
   max-width: 320px;
   padding: 9px 11px;
-  border-radius: 8px;
+  border-radius: 2px;
   background: #2a2620;
   color: #f7f4ec;
   box-shadow: 0 6px 22px rgba(38, 35, 28, 0.3);
@@ -103,10 +103,8 @@
 
 .stale-warning {
   margin: 8px 0 0;
-  padding: 7px 9px;
-  border-radius: 6px;
-  background: rgba(196, 136, 28, 0.09);
-  border: 1px solid rgba(196, 136, 28, 0.35);
+  padding: 2px 0 2px 12px;
+  border-left: 2px solid #c4881c;
   font-size: 12px;
   line-height: 1.5;
   color: #8f6210;
@@ -314,11 +312,9 @@
    allowed to interrupt the line. */
 .changes-door-writes {
   flex: none;
-  padding: 1px 6px;
-  border-radius: 999px;
-  background: var(--accent-soft);
   font-size: 10.5px;
-  letter-spacing: 0.04em;
+  font-weight: 650;
+  letter-spacing: 0.05em;
   text-transform: uppercase;
   color: var(--accent-deep);
 }
@@ -332,30 +328,26 @@
   color: var(--ink-faint);
 }
 
+/* The tally of what changed, written as a line of figures, not a row of pills. */
 .changes-badges {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
+  gap: 4px 18px;
   margin-top: 12px;
 }
 
 .change-badge {
-  padding: 2px 8px;
-  border: 1px solid var(--line-strong);
-  border-radius: 999px;
-  font-size: 11.5px;
+  font-size: 12px;
   font-variant-numeric: tabular-nums;
   color: var(--ink-soft);
   cursor: default;
 }
 
 .change-badge.is-added {
-  border-color: rgba(55, 132, 90, 0.4);
   color: #2c6a48;
 }
 
 .change-badge.is-removed {
-  border-color: rgba(176, 69, 43, 0.35);
   color: var(--accent-deep);
 }
 
@@ -458,8 +450,8 @@
   gap: 12px;
 }
 
-/* The parts are specimen labels too — zone strip on top, clipped corner,
-   perforated rule. Hover lifts the label a hair off the page. */
+/* The parts are flat paper labels like every card in the app: hairline frame,
+   serif name behind the zone's legend swatch, mono path underneath. */
 .part-card {
   position: relative;
   display: flex;
@@ -467,47 +459,37 @@
   gap: 4px;
   padding: 12px 15px 13px;
   border: 1px solid var(--line-strong);
-  border-top: 4px solid var(--zone-unknown);
   background: var(--label);
-  clip-path: polygon(0 0, calc(100% - 14px) 0, 100% 14px, 100% 100%, 0 100%);
-  filter: drop-shadow(1px 2px 0 rgba(64, 54, 32, 0.09));
   text-align: left;
   font: inherit;
   color: inherit;
   cursor: pointer;
-  transition: filter 120ms ease, border-color 120ms ease, transform 120ms ease;
-}
-
-.part-card::before {
-  content: '';
-  position: absolute;
-  inset: 3px;
-  border: 1px dashed var(--line);
-  clip-path: polygon(0 0, calc(100% - 11px) 0, 100% 11px, 100% 100%, 0 100%);
-  pointer-events: none;
+  transition: border-color 120ms ease, background 120ms ease;
 }
 
 .part-card:hover {
-  border-left-color: var(--ink-faint);
-  border-right-color: var(--ink-faint);
-  border-bottom-color: var(--ink-faint);
-  transform: translateY(-1px);
-  filter: drop-shadow(1px 3px 0 rgba(64, 54, 32, 0.13));
+  border-color: var(--ink-faint);
+  background: var(--surface);
 }
 
-.part-card.zone-ui { border-top-color: var(--zone-ui); }
-.part-card.zone-api { border-top-color: var(--zone-api); }
-.part-card.zone-logic { border-top-color: var(--zone-logic); }
-.part-card.zone-data { border-top-color: var(--zone-data); }
-.part-card.zone-config { border-top-color: var(--zone-config); }
-.part-card.zone-test { border-top-color: var(--zone-test); }
-
 /* Monospace, because it is the folder's real name and somebody is going to paste it
-   into a file search. */
+   into a file search. The zone's legend swatch sits beside it — the same square
+   the map key uses. */
 .part-name {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   font-family: var(--mono);
   font-size: 13.5px;
   font-weight: 650;
+}
+
+.part-name::before {
+  content: '';
+  flex: none;
+  width: 7px;
+  height: 7px;
+  background: var(--zc, var(--zone-unknown));
 }
 
 /* The generated name, marked, under the folder's own — the Map's card does the same
@@ -611,7 +593,6 @@
 
 .prov-track {
   height: 7px;
-  border-radius: 4px;
   background: var(--line);
   overflow: hidden;
 }
@@ -619,7 +600,6 @@
 .prov-fill {
   display: block;
   height: 100%;
-  border-radius: 4px;
 }
 
 .prov-fill.prov-docs {

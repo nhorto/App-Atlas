@@ -108,13 +108,16 @@
   margin: 0 8px;
 }
 
+/* A cross-reference, set like one: "see page 12", not a button dressed as a pill. */
 .pill {
   border: 1px solid var(--line-strong);
   background: var(--surface);
-  border-radius: 999px;
-  padding: 5px 14px;
-  font-size: 12.5px;
-  font-weight: 500;
+  border-radius: 2px;
+  padding: 4px 11px;
+  font-size: 11px;
+  font-weight: 650;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
   color: var(--ink-soft);
 }
 
@@ -124,8 +127,7 @@
 }
 
 .pill-warn {
-  border-color: rgba(179, 55, 42, 0.4);
-  background: rgba(179, 55, 42, 0.07);
+  border-color: rgba(179, 55, 42, 0.5);
   color: #a03325;
 }
 
@@ -186,7 +188,7 @@
 .boundary-appbox {
   position: absolute;
   border: 1px solid var(--line-strong);
-  border-radius: 14px;
+  border-radius: 3px;
   background: rgba(253, 252, 247, 0.6);
 }
 
@@ -226,39 +228,42 @@
   white-space: nowrap;
 }
 
+/* The zones inside the app box, ruled like the lines of a printed key: swatch,
+   name, count — the same three columns the map legend reads in. */
 .bzone {
   position: absolute;
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 8px;
+  gap: 9px;
   padding: 0 12px;
   border: 1px solid var(--line);
-  border-left-width: 4px;
-  border-radius: 8px;
+  border-radius: 2px;
   background: var(--surface);
   font-size: 13px;
 }
 
-.bzone.zone-ui { border-left-color: var(--zone-ui); }
-.bzone.zone-api { border-left-color: var(--zone-api); }
-.bzone.zone-logic { border-left-color: var(--zone-logic); }
-.bzone.zone-data { border-left-color: var(--zone-data); }
-.bzone.zone-config { border-left-color: var(--zone-config); }
-.bzone.zone-test { border-left-color: var(--zone-test); }
-.bzone.zone-unknown { border-left-color: var(--zone-unknown); }
+.bzone::before {
+  content: '';
+  flex: none;
+  width: 8px;
+  height: 8px;
+  background: var(--zc, var(--zone-unknown));
+}
 
 .bzone-name {
   font-weight: 500;
 }
 
 .bzone-count {
+  margin-left: auto;
   font-size: 12px;
+  font-variant-numeric: tabular-nums;
   color: var(--ink-faint);
 }
 
-/* Boundary cards wear the same specimen-label cut as the map cards. No zone
-   strip here — a door or a store is not a zone — the glyph carries the color. */
+/* Boundary cards are flat paper labels, like the map's: hairline frame, serif
+   name, mono detail. The glyph is a printed character in the margin — inked, not
+   boxed in a tile — and its ink says which way the data moves. */
 .bcard {
   position: absolute;
   display: flex;
@@ -268,19 +273,17 @@
   text-align: left;
   border: 1px solid var(--line-strong);
   background: var(--label);
-  clip-path: polygon(0 0, calc(100% - 12px) 0, 100% 12px, 100% 100%, 0 100%);
-  filter: drop-shadow(1px 2px 0 rgba(64, 54, 32, 0.09));
-  transition: opacity 120ms ease, border-color 120ms ease, transform 120ms ease, filter 120ms ease;
+  transition: opacity 120ms ease, border-color 120ms ease, background 120ms ease, box-shadow 120ms ease;
 }
 
 .bcard:hover {
   border-color: var(--ink-faint);
-  transform: translateY(-1px);
+  background: var(--surface);
 }
 
 .bcard.is-selected {
   border-color: var(--accent);
-  filter: drop-shadow(1px 2px 0 rgba(176, 69, 43, 0.3));
+  box-shadow: inset 0 0 0 1px var(--accent);
 }
 
 .bcard.is-dim {
@@ -289,23 +292,16 @@
 
 .bcard-glyph {
   flex: none;
-  display: grid;
-  place-items: center;
-  width: 30px;
-  height: 30px;
-  border-radius: 2px;
-  background: var(--surface-press);
-  color: var(--ink-soft);
-  font-size: 14px;
+  color: var(--ink-faint);
+  font-size: 15px;
+  line-height: 1;
 }
 
 .bcard-in .bcard-glyph {
-  background: rgba(45, 126, 163, 0.13);
   color: #205e7c;
 }
 
 .bcard-out .bcard-glyph {
-  background: rgba(55, 132, 90, 0.15);
   color: #266344;
 }
 
@@ -318,7 +314,8 @@
 }
 
 .bcard-name {
-  font-size: 13.5px;
+  font-family: var(--font-display);
+  font-size: 14px;
   font-weight: 600;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -326,20 +323,22 @@
 }
 
 .bcard-detail {
-  font-size: 11.5px;
+  font-size: 11px;
+  font-family: var(--mono);
   color: var(--ink-faint);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
+/* A count in red ink, not a lozenge: "3 open" written the way a proofreader
+   marks a fault in the margin. */
 .bcard-warn {
   flex: none;
-  padding: 2px 6px;
-  border-radius: 999px;
   font-size: 10.5px;
-  font-weight: 600;
-  background: rgba(179, 55, 42, 0.12);
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
   color: #a03325;
 }
 
@@ -362,7 +361,7 @@
   max-height: 240px;
   overflow-y: auto;
   border: 1px solid var(--line-strong);
-  border-radius: 8px;
+  border-radius: 3px;
   background: var(--surface);
   box-shadow: 0 8px 22px rgba(64, 54, 32, 0.16);
 }
@@ -413,17 +412,18 @@
 .insights {
   display: flex;
   flex-direction: column;
-  gap: 18px;
+  gap: 30px;
   max-width: 880px;
   margin: 0 auto;
   padding: 24px 24px 40px;
 }
 
-/* Full-width sections read as pages, not labels: flat, sharp, hairline-ruled. */
+/* Sections of a printed report: a heavy rule, a serif heading, then the table.
+   No boxes around them — the page itself is the container. */
 .insight-card {
-  padding: 20px 22px;
-  border: 1px solid var(--line-strong);
-  background: var(--label);
+  padding: 16px 0 6px;
+  border-top: 2px solid var(--ink);
+  background: none;
 }
 
 .insight-card header {
@@ -455,8 +455,7 @@
   display: flex;
   flex: 1;
   min-width: 200px;
-  height: 8px;
-  border-radius: 999px;
+  height: 7px;
   overflow: hidden;
   background: var(--line);
 }
@@ -488,7 +487,6 @@
 .swatch {
   width: 8px;
   height: 8px;
-  border-radius: 2px;
 }
 
 .swatch-ok { background: #37845a; }
@@ -545,27 +543,25 @@
   text-decoration: underline;
 }
 
+/* The verb column of a printed route index: inked mono capitals, aligned, no
+   coloured lozenge behind them. The ink alone carries the verb's weight. */
 .method {
   flex: none;
   min-width: 56px;
-  padding: 3px 6px;
-  border-radius: 5px;
-  text-align: center;
   font-family: var(--mono);
   font-size: 10.5px;
   font-weight: 700;
-  letter-spacing: 0.02em;
-  background: var(--surface-press);
+  letter-spacing: 0.03em;
   color: var(--ink-soft);
 }
 
-.method-get { background: rgba(45, 126, 163, 0.14); color: #205e7c; }
+.method-get { color: #205e7c; }
 .method-post,
 .method-put,
-.method-patch { background: rgba(196, 136, 28, 0.17); color: #8f6210; }
-.method-delete { background: rgba(179, 55, 42, 0.13); color: #a03325; }
-.method-page { background: rgba(106, 85, 196, 0.14); color: #503aa8; }
-.method-action { background: rgba(176, 79, 124, 0.14); color: #8c3a60; }
+.method-patch { color: #8f6210; }
+.method-delete { color: #a03325; }
+.method-page { color: #503aa8; }
+.method-action { color: #8c3a60; }
 
 .route-name,
 .service-name {
@@ -583,6 +579,7 @@
   display: block;
   padding-left: 65px;
   font-size: 11.5px;
+  font-family: var(--mono);
   color: var(--ink-faint);
   word-break: break-all;
 }
@@ -600,50 +597,74 @@
   color: var(--ink-faint);
 }
 
+/* Attributes written as marginal notes: small capitals in ink, no lozenges. */
 .tag {
   flex: none;
-  padding: 2px 7px;
-  border-radius: 999px;
-  font-size: 10.5px;
-  font-weight: 600;
-  background: var(--surface-press);
+  font-size: 10px;
+  font-weight: 650;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
   color: var(--ink-soft);
 }
 
-.tag-write { background: rgba(196, 136, 28, 0.16); color: #8f6210; }
-.tag-send { background: rgba(179, 55, 42, 0.11); color: #a03325; }
-.tag-secret { background: rgba(133, 124, 104, 0.18); color: #4a4436; }
+.tag-write { color: #8f6210; }
+.tag-send { color: #a03325; }
+.tag-secret { color: #4a4436; }
 
+/* Protection status reads like the meter's own key: the square swatch in the
+   status ink, then the words. Same mark above the list, same mark on each row. */
 .badge {
   flex: none;
-  padding: 2px 8px;
-  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   font-size: 10.5px;
-  font-weight: 600;
+  font-weight: 650;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
   white-space: nowrap;
 }
 
-.badge-protected { background: rgba(55, 132, 90, 0.15); color: #266344; }
-.badge-likely { background: rgba(196, 136, 28, 0.16); color: #8f6210; }
-.badge-open { background: rgba(179, 55, 42, 0.12); color: #a03325; }
-.badge-public { background: rgba(122, 131, 145, 0.16); color: #5c6472; }
-.badge-unknown { background: rgba(107, 90, 168, 0.14); color: #574899; }
+.badge::before {
+  content: '';
+  flex: none;
+  width: 8px;
+  height: 8px;
+  background: currentColor;
+}
+
+.badge-protected { color: #266344; }
+.badge-likely { color: #8f6210; }
+.badge-open { color: #a03325; }
+.badge-public { color: #5c6472; }
+.badge-unknown { color: #574899; }
 
 .card-badge {
   align-self: flex-start;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
   margin-top: 5px;
-  padding: 1px 7px;
-  border-radius: 999px;
   font-size: 10px;
-  font-weight: 600;
+  font-weight: 650;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
 }
 
+.card-badge::before {
+  content: '';
+  flex: none;
+  width: 6px;
+  height: 6px;
+  background: currentColor;
+}
+
+/* An editor's aside in the margin: a single rule and the note, no tinted panel. */
 .note {
   margin: 12px 0 0;
-  padding: 9px 12px;
-  border-left: 3px solid var(--line-strong);
-  border-radius: 0 6px 6px 0;
-  background: var(--surface-press);
+  padding: 2px 0 2px 12px;
+  border-left: 2px solid var(--line-strong);
+  background: none;
   font-size: 12.5px;
   line-height: 1.5;
   color: var(--ink-soft);
@@ -651,19 +672,16 @@
 
 .note-warn {
   border-left-color: #b3372a;
-  background: rgba(179, 55, 42, 0.08);
   color: #8c2c20;
 }
 
 .note-ok {
   border-left-color: #37845a;
-  background: rgba(55, 132, 90, 0.1);
   color: #245c3e;
 }
 
 .note-unknown {
   border-left-color: #6b5aa8;
-  background: rgba(107, 90, 168, 0.09);
   color: #4d4189;
 }
 
@@ -740,7 +758,7 @@
   display: block;
   margin-top: 2px;
   padding: 3px 6px;
-  border-radius: 4px;
+  border-radius: 2px;
   background: var(--surface-press);
   font-size: 11px;
   color: var(--ink-faint);

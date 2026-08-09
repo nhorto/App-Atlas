@@ -63,28 +63,18 @@
 
 /* --- one card ------------------------------------------------------------ */
 
-/* The same specimen label as the map, minus the perforation — these cards are
-   ruled inside already, and two kinds of dashes would argue with each other. */
+/* The same flat paper label as the map, ruled inside like a printed table. The
+   zone's legend swatch sits beside the name in the header row. */
 .tcard {
   display: flex;
   flex-direction: column;
   width: 100%;
   height: 100%;
   border: 1px solid var(--line-strong);
-  border-top: 4px solid var(--zone-unknown);
   background: var(--label);
-  clip-path: polygon(0 0, calc(100% - 14px) 0, 100% 14px, 100% 100%, 0 100%);
-  filter: drop-shadow(1px 2px 0 rgba(64, 54, 32, 0.09));
   overflow: hidden;
-  transition: filter 120ms ease, opacity 120ms ease, border-color 120ms ease;
+  transition: opacity 120ms ease, border-color 120ms ease, box-shadow 120ms ease;
 }
-
-.tcard.zone-ui { border-top-color: var(--zone-ui); }
-.tcard.zone-api { border-top-color: var(--zone-api); }
-.tcard.zone-logic { border-top-color: var(--zone-logic); }
-.tcard.zone-data { border-top-color: var(--zone-data); }
-.tcard.zone-config { border-top-color: var(--zone-config); }
-.tcard.zone-test { border-top-color: var(--zone-test); }
 
 /* A table is not a shape someone wrote in the app — it is the database itself. */
 .tcard-table {
@@ -98,25 +88,35 @@
 }
 
 .tcard.is-selected {
-  border-left-color: var(--accent);
-  border-right-color: var(--accent);
-  border-bottom-color: var(--accent);
-  filter: drop-shadow(1px 2px 0 rgba(176, 69, 43, 0.3));
+  border-color: var(--accent);
+  box-shadow: inset 0 0 0 1px var(--accent);
 }
 
 .tcard-head {
   display: flex;
   align-items: baseline;
-  justify-content: space-between;
   gap: 8px;
   padding: 8px 11px 7px;
   border-bottom: 1px solid var(--line);
 }
 
+.tcard-head::before {
+  content: '';
+  flex: none;
+  align-self: center;
+  width: 7px;
+  height: 7px;
+  background: var(--zc, var(--zone-unknown));
+}
+
 .tcard-name {
-  font-size: 13.5px;
-  font-weight: 650;
-  letter-spacing: -0.01em;
+  margin-right: auto;
+  font-family: var(--font-display);
+  font-size: 14px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .tcard-kind {
@@ -193,22 +193,19 @@
  */
 .tfield-personal {
   margin-left: 6px;
-  padding: 0 4px;
-  border-radius: 3px;
   font-size: 9px;
-  letter-spacing: 0.02em;
+  font-weight: 700;
+  letter-spacing: 0.05em;
   text-transform: uppercase;
   vertical-align: 1px;
   cursor: help;
 }
 
 .tfield-personal.is-direct {
-  background: #f3e3c8;
   color: #7a5410;
 }
 
 .tfield-personal.is-ambiguous {
-  background: var(--wash, #eee);
   color: var(--ink-faint);
 }
 
@@ -240,7 +237,7 @@
 }
 
 /* Row handles are anchors for the lines, not controls — never visible, never clickable.
-   Kept fully inside the card: the clip-path would slice anything that overhangs. */
+   Kept fully inside the card so overflow:hidden never slices them. */
 .tcard .handle-row {
   right: 0;
   top: 50%;
