@@ -40,6 +40,18 @@ const SUBROUTERS = new Set(['Group', 'Route', 'Subrouter', 'Party', 'PathPrefix'
  */
 const ROUTER_TYPE = /(^|\.)(Router|RouterGroup|ServeMux|Mux|Engine|Echo|Party)$/;
 
+/**
+ * The router types that are *definitionally* a slice of something bigger (#151).
+ *
+ * A `*gin.RouterGroup` or an iris `Party` only ever comes from a `Group(...)` call, so
+ * when one arrives as a function parameter its prefix was decided by the caller and is
+ * genuinely unknowable from this file. A `ServeMux`, `Router` or `Engine` parameter is
+ * different — passing the *root* around is how gomount-style repos register complete
+ * addresses on it — and treating those as unresolved would take correct doors off the
+ * map, which is a worse bug than the collision this exists to prevent.
+ */
+const CALLER_PREFIXED_TYPE = /(^|\.)(RouterGroup|Party)$/;
+
 /** Everything an HTTP method can be spelled as on a router: `Get`, `GET`, `Post`. */
 const METHODS = new Set(['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS', 'CONNECT', 'TRACE']);
 
@@ -274,6 +286,8 @@ function detectRoutes(
 
   /** Router variable → the framework that built it. */
   const routers = new Map<string, string>();
+  /** Parameters whose type says "a slice of something bigger" — see CALLER_PREFIXED_TYPE. */
+  const callerPrefixed = new Set<string>();
   const scopes: Scope[] = [];
   const aliases: RouterAlias[] = [];
   /** Functions that have already lent their name to a router, so the first one keeps it. */
@@ -295,6 +309,7 @@ function detectRoutes(
       // A known library gets its own name; anything else is named after the type it is,
       // which is what a reader would have to go and look at anyway.
       routers.set(param.name, (module && goFrameworkFor(module)) ?? type);
+      if (CALLER_PREFIXED_TYPE.test(type)) callerPrefixed.add(param.name);
     }
   }
 
@@ -609,6 +624,10 @@ function detectRoutes(
       site: at(call, `${call.callee}("${door.route}")`),
       handlerId: handlerScope ? input.nodeIdForName(handlerScope) : null,
       routerVar: host.varName,
+      // The group came in as a parameter, so its prefix belongs to whoever called this
+      // function. If the mount chain resolves it anyway, this flag changes nothing —
+      // it only speaks when composition has already failed (#151).
+      ...(callerPrefixed.has(host.varName) ? { prefixFromCaller: true } : {}),
       // Every name on the line except the handler. Whether any of them is really a check
       // is decided in the merge, against what the project's functions actually do.
       paramTypes: middleware.map((name) => name.split('.').pop() ?? name),
