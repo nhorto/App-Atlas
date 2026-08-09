@@ -565,11 +565,21 @@ function scopeLine(atlas: Atlas): string {
   if (s.routes === 0) return line;
   // Short enough for a table, and never greener than the truth: a repo whose checks
   // are hidden in a file we could not parse must not read as a clean bill of health.
+  const unlinked = s.unlinkedRoutes ?? 0;
+  const assessed = Math.max(0, s.routes - unlinked);
+  // …nor one whose handlers were never followed. With every route set aside, all three
+  // counts below are zero and the green sentence would be the only one left (#139).
+  if (assessed === 0) {
+    return `${line}  ${pc.yellow(`${s.routes} ${plural(s.routes, 'route', 'routes')} not followed to a handler`)}`;
+  }
   if (s.unprotectedRoutes > 0) {
-    return `${line}  ${pc.yellow(`${s.unprotectedRoutes} of ${s.routes} routes unprotected`)}`;
+    return `${line}  ${pc.yellow(`${s.unprotectedRoutes} of ${assessed} routes unprotected`)}`;
   }
   if (s.unreadableRoutes > 0) {
-    return `${line}  ${pc.yellow(`${s.unreadableRoutes} of ${s.routes} routes behind a file I could not read`)}`;
+    return `${line}  ${pc.yellow(`${s.unreadableRoutes} of ${assessed} routes behind a file I could not read`)}`;
+  }
+  if (unlinked > 0) {
+    return `${line}  ${pc.yellow(`${unlinked} of ${s.routes} routes not followed to a handler`)}`;
   }
   return s.publicRoutes > 0
     ? `${line}  ${pc.green('every route is checked or public on purpose')}`

@@ -41,6 +41,8 @@ export interface EndpointFinding {
   schedule?: string;
   /** The handler is a build output rather than source somebody wrote — see EndpointMeta. */
   generatedEntry?: boolean;
+  /** The handler was named in a routing table but never located — see EndpointMeta. */
+  handlerUnlinked?: boolean;
   site: CodeSite;
   /** The atlas node that answers this door. */
   handlerId: string | null;

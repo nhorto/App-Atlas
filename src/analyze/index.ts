@@ -722,6 +722,7 @@ export function computeStats(nodes: AtlasNode[], edges: AtlasEdge[]): AtlasStats
     likelyOnlyRoutes,
     publicRoutes: open.page + open.authMount + open.generated,
     unreadableRoutes: open.unreadable,
+    unlinkedRoutes: open.unlinked,
     unreadFiles,
     unreadTestFiles,
     services,
