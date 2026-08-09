@@ -923,8 +923,18 @@ function applyDependencyGuards(
 
   // An alias inherits the check it stands for, and says so, because a reader looking
   // for `get_current_user` will not find one in their route file.
+  //
+  // Unless the name is declared more than once. Two classes in a repo sharing a name is
+  // ordinary — a v1/v2 split writes `UsersController` twice — and promoting either
+  // attributes one team's lock to the other's door (#162). `checkInherited` below has
+  // held this rule all along; it only works when every class *says* it exists, which is
+  // why the detectors now declare the guardless ones too. When neither speaks, the door
+  // under-claims, which is the side of the trade this tool lives on.
+  const declaredTimes = new Map<string, number>();
+  for (const alias of aliases) declaredTimes.set(alias.name, (declaredTimes.get(alias.name) ?? 0) + 1);
   for (const alias of aliases) {
     if (byName.has(alias.name)) continue;
+    if ((declaredTimes.get(alias.name) ?? 0) > 1) continue;
     const target = alias.depends.find((name) => byName.has(name));
     if (!target) continue;
     const inherited = byName.get(target) as GuardInfo;
@@ -968,7 +978,10 @@ function applyDependencyGuards(
     }
 
     for (const owner of endpoint.owners) {
-      const guard = inherited(owner);
+      const guard = inherited(
+        owner,
+        endpoint.meta.sites.map((site) => site.path),
+      );
       // Never `certain`, however certain the declaration was. A check written on a class
       // this file does not name reaches here through the framework's own inheritance
       // rules, and a subclass that declares guards of its own replaces them rather than
@@ -988,13 +1001,23 @@ function applyDependencyGuards(
  *
  * Exactly one declaration of a name or nothing: two classes in a repo sharing a name is
  * ordinary, and following either would be attributing one team's lock to another's door.
+ *
+ * With one exception that is not an exception (#162): the class that owns a route is
+ * declared in the route's own file, so *that* hop is never ambiguous — the alias whose
+ * name and file both match is the class, whatever its namesakes elsewhere are wearing.
+ * Resolving it file-locally is what lets a guarded `ApiController` keep its lock while
+ * its guardless namesake in another file gets nothing, instead of the tie silencing
+ * both. The walk up the *bases* stays name-global and unique-or-nothing, because
+ * `extends BaseController` really is just a name from here.
  */
 function checkInherited(
   aliases: AuthAliasFinding[],
   byName: Map<string, GuardInfo>,
-): (className: string) => GuardInfo | null {
+): (className: string, sitePaths: string[]) => GuardInfo | null {
   const declared = new Map<string, AuthAliasFinding[]>();
+  const atFile = new Map<string, AuthAliasFinding>();
   for (const alias of aliases) {
+    atFile.set(`${alias.path}#${alias.name}`, alias);
     if (!alias.bases) continue;
     const list = declared.get(alias.name);
     if (list) list.push(alias);
@@ -1024,7 +1047,23 @@ function checkInherited(
     return found;
   };
 
-  return (className: string) => walk(className, new Set());
+  const fromAlias = (alias: AuthAliasFinding): GuardInfo | null => {
+    const target = alias.depends.find((name) => byName.has(name));
+    if (target) return byName.get(target) as GuardInfo;
+    for (const base of alias.bases ?? []) {
+      const found = walk(base, new Set([alias.name]));
+      if (found) return found;
+    }
+    return null;
+  };
+
+  return (className: string, sitePaths: string[]) => {
+    for (const sitePath of sitePaths) {
+      const local = atFile.get(`${sitePath}#${className}`);
+      if (local) return fromAlias(local);
+    }
+    return walk(className, new Set());
+  };
 }
 
 /**
