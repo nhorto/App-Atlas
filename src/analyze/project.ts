@@ -56,6 +56,8 @@ export interface ProjectInfo {
    * `ViewFileTreeStore.ts` is imported by two `.vue` files and by nothing else.
    */
   unreadFormats: { ext: string; count: number }[];
+  /** Whole languages no tier reads, counted for the backbone hedge (#171). */
+  unreadLanguages: { ext: string; count: number }[];
   /** Repo-relative paths of markup files `markup.ts` will read. */
   markupFiles: string[];
   warnings: string[];
@@ -108,6 +110,19 @@ export const SOURCE_GLOB = '**/*.{ts,tsx,mts,cts,js,jsx,mjs,cjs,py,pyi,ipynb,go,
  * opens. `.xaml` used to be on this list and has come off it — see `MARKUP_GLOB`.
  */
 const UNREAD_FORMAT_GLOB = '**/*.{vue,svelte,astro,razor,cshtml}';
+
+/**
+ * Whole languages no tier here reads — the repository's possible backbone, counted so
+ * the map can say when it is standing on the wrong one (#171).
+ *
+ * huginn is 469 `.rb` files and was mapped as "18 files, 1 way in": every count true,
+ * the whole thing the most misleading map this tool has produced, because nothing said
+ * the application itself was never in view. These files are counted, never parsed, and
+ * the counts exist for one sentence — "most of this repository is written in a language
+ * App Atlas cannot read" — said wherever a reader forms their picture.
+ */
+const UNREAD_LANGUAGE_GLOB =
+  '**/*.{rb,php,java,kt,kts,scala,groovy,ex,exs,erl,swift,m,mm,dart,clj,cljs,hs,lua,pl,pm,jl,zig,nim,cr,fs,vb}';
 
 /**
  * Markup that App Atlas reads (#103).
@@ -231,6 +246,17 @@ export async function discoverProject(rootInput: string, options: DiscoverOption
   });
   const unreadFormats = countByExtension(applyGitignore(root, components.map(toPosix)));
 
+  const backbone = await fg(UNREAD_LANGUAGE_GLOB, {
+    cwd: root,
+    absolute: false,
+    dot: false,
+    onlyFiles: true,
+    followSymbolicLinks: false,
+    suppressErrors: true,
+    ignore: [...DEFAULT_IGNORES, ...(options.extraIgnores ?? [])],
+  });
+  const unreadLanguages = countByExtension(applyGitignore(root, backbone.map(toPosix)));
+
   const markup = await fg(MARKUP_GLOB, {
     cwd: root,
     absolute: false,
@@ -267,6 +293,7 @@ export async function discoverProject(rootInput: string, options: DiscoverOption
     workspaces,
     ignored: options.extraIgnores ?? [],
     unreadFormats,
+    unreadLanguages,
     markupFiles,
     warnings,
   };

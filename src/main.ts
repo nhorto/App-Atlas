@@ -22,6 +22,7 @@ import path from 'node:path';
 import { Command } from 'commander';
 import pc from 'picocolors';
 import open from 'open';
+import { backbonePhrase, unreadBackbone } from './model/coverage.js';
 import { analyzeProject, computeStats, TOOL_VERSION } from './analyze/index.js';
 import { readComposePorts } from './analyze/boundaries/compose.js';
 import type { PublishedPort } from './analyze/signals.js';
@@ -293,8 +294,15 @@ async function produceAtlas(
   });
 
   // Descriptions were written and stale docstrings flagged after the counting was
-  // done, so the numbers are counted again rather than left subtly wrong.
-  atlas.meta.stats = computeStats(atlas.nodes, atlas.edges);
+  // done, so the numbers are counted again rather than left subtly wrong. Counted from
+  // the nodes — which is why the one stat that is *about the files that never became
+  // nodes* has to be carried over by hand, or the recount silently drops the backbone
+  // hedge (#171): it did, and huginn printed its unhedged sliver again.
+  const unreadLanguages = atlas.meta.stats.unreadLanguages;
+  atlas.meta.stats = {
+    ...computeStats(atlas.nodes, atlas.edges),
+    ...(unreadLanguages && unreadLanguages.length > 0 ? { unreadLanguages } : {}),
+  };
 
   // Worked out here and stamped onto the atlas rather than recomputed by each screen,
   // because `export` and `serve` run in later processes by which time the baseline has
@@ -393,6 +401,19 @@ async function runSingleAnalysis(root: string, options: SharedOptions, repoRoot:
     // them are worth.
     const tier = grammarTier(atlas.nodes);
     if (tier) console.log(pc.dim(`  ${tier.display} read by grammar, not by a compiler — links between files are likely, not certain.`));
+    // Louder than dim and above everything it discredits (#171): huginn's 469 Ruby
+    // files were mapped as "18 files, 1 way in", every count true and the whole thing
+    // a lie of omission. When most of a repository is in a language App Atlas cannot
+    // read, the counts below describe the sliver, and saying so is the map's first job.
+    const backbone = unreadBackbone(s.unreadLanguages, s.files);
+    if (backbone) {
+      console.log(
+        pc.yellow(
+          `  most of this repository is ${backbonePhrase(backbone)}, which App Atlas cannot read — ` +
+            `the numbers below cover only the ${s.files} ${s.files === 1 ? 'file' : 'files'} it can`,
+        ),
+      );
+    }
     // Above the counts, because "what did it do to my app since Tuesday" is the question
     // somebody who let an agent write code all weekend came here with. The counts are
     // the answer to a question they already know the shape of.

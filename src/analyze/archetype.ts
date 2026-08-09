@@ -19,6 +19,7 @@
  * the thing this is designed to avoid — one atlas, one set of lenses, different
  * emphasis.
  */
+import { backbonePhrase, unreadBackbone } from '../model/coverage.js';
 import type { Archetype, ArchetypeVerdict, AtlasNode, EndpointMeta } from '../model/types.js';
 import type { ProjectInfo } from './project.js';
 
@@ -62,6 +63,23 @@ export interface ArchetypeInput {
 }
 
 export function classifyArchetype({ project, nodes }: ArchetypeInput): ArchetypeVerdict {
+  // Before every other rule, because every other rule reads the files we parsed — and
+  // when most of the repository is in a language nothing here parses, those rules are
+  // classifying the sliver, not the app. huginn (469 Ruby files, 18 read) was filed
+  // under "A collection of code — no doors and nothing exported", which is true of the
+  // sliver and wildly false of the Rails application it belongs to (#171).
+  const backbone = unreadBackbone(project.unreadLanguages, project.files.length);
+  if (backbone) {
+    return {
+      archetype: 'unknown',
+      label: 'Mostly a language App Atlas cannot read',
+      because: [
+        `${backbonePhrase(backbone)} this tool does not parse`,
+        `only ${project.files.length} ${project.files.length === 1 ? 'file' : 'files'} could be read`,
+      ],
+    };
+  }
+
   const doors = countDoors(nodes);
   const uiFrameworks = project.frameworks.filter((name) => UI_FRAMEWORKS.has(name));
   const hasUiFiles = project.files.some((file) => file.zone === 'ui');
