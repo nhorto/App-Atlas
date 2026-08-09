@@ -438,6 +438,11 @@ async function runSingleAnalysis(root: string, options: SharedOptions, repoRoot:
     const generated = s.generatedFiles ?? 0;
     const ownFiles = Math.max(0, s.files - generated);
     const documented = ownFiles > 0 ? Math.round((s.documentedFiles / ownFiles) * 100) : 0;
+    // Nothing to score is not a score of nothing (#184). spring-petclinic printed
+    // `0% of files have a docstring (0/0)` one line under the sentence explaining that
+    // its 49 Java files were never read — the honest admission contradicted by a grade,
+    // and `0%` is the worst mark on the scale. Also reachable on a package whose files
+    // are all generated, which #126 says nobody should be documenting anyway.
     // The percentage is worth printing at every level; the instruction is not. A repo
     // that documents every file was told to go and learn how to document files (#124),
     // which is the tool failing to read its own number directly under the auth headline
@@ -445,11 +450,13 @@ async function runSingleAnalysis(root: string, options: SharedOptions, repoRoot:
     const nudge =
       s.documentedFiles < ownFiles ? ` Run ${pc.cyan('app-atlas init')} to teach your agent to write them.` : '';
     const aside = generated > 0 ? `, ${generated} generated ${plural(generated, 'file', 'files')} aside` : '';
-    console.log(
-      pc.dim(
-        `  ${documented}% of files have a docstring App Atlas can read (${s.documentedFiles}/${ownFiles}${aside}).${nudge}`,
-      ),
-    );
+    if (ownFiles > 0) {
+      console.log(
+        pc.dim(
+          `  ${documented}% of files have a docstring App Atlas can read (${s.documentedFiles}/${ownFiles}${aside}).${nudge}`,
+        ),
+      );
+    }
     if (s.staleDocs > 0) {
       console.log(
         pc.yellow(

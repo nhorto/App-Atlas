@@ -107,10 +107,16 @@ export function renderAtlasMarkdown(graph: AtlasGraph, options: MarkdownOptions 
     `- ${n(stats.endpoints)} ways in · ${n(stats.externalServices)} outside ${plural(stats.externalServices, 'service')} · ${n(stats.stores)} data ${plural(stats.stores, 'store')} · ${n(stats.envVars)} env vars`,
   );
   if (meta.frameworks.length > 0) out.push(`- Built with ${meta.frameworks.join(', ')}`);
+  // An empty denominator gets a sentence, not a mark (#184). This file is read by
+  // agents, and `0% of files carry a docstring` is a fact about the repository's
+  // authors; "no files App Atlas could read" is a fact about this tool, which is the
+  // true one on a Java or Ruby project.
   out.push(
-    `- ${percent(stats.documentedFiles, stats.files)} of files carry a docstring App Atlas reads verbatim${
-      stats.staleDocs > 0 ? ` · ${stats.staleDocs} describe code that has since changed` : ''
-    }`,
+    stats.files === 0
+      ? '- No files App Atlas could read, so nothing here is scored for documentation'
+      : `- ${percent(stats.documentedFiles, stats.files)} of files carry a docstring App Atlas reads verbatim${
+          stats.staleDocs > 0 ? ` · ${stats.staleDocs} describe code that has since changed` : ''
+        }`,
   );
   // An agent reading this file needs the caveat before the numbers it qualifies, not in
   // a footnote. Every count above is a lower bound when a file went unread, and the
