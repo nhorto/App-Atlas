@@ -89,6 +89,42 @@ export function guardFromName(dotted: string, ctx: DetectorContext): GuardInfo |
   };
 }
 
+/**
+ * Cookie names that are somebody's session, as opposed to somebody's preference.
+ *
+ * Read the *cookie's* name and never the handler's: `logout` as a function name proves
+ * nothing (#147's rule), and deleting `theme` is not signing out. Anchored on the whole
+ * name with the usual host-prefix and dot/underscore-namespaced spellings allowed, so
+ * `__Secure-session`, `next-auth.session-token` and `sid` all count and `sidebar` does
+ * not.
+ */
+const SESSION_COOKIE = /^(__(secure|host)-)?([a-z0-9]+[._-])*(jwt|sid|session|sessionid|token|auth|access[_-]?token|refresh[_-]?token)([._-][a-z0-9]+)*$/i;
+
+/**
+ * `cookies.delete('jwt')` / `res.clearCookie('session')` — signing out with no library
+ * to name (#186).
+ *
+ * Two spellings, each a framework's own: SvelteKit and Hono hand the handler a cookies
+ * object with `.delete(name)`, and Express answers with `res.clearCookie(name)`. The
+ * receiver has to look like the thing the framework handed over, because `.delete` on
+ * its own is the most overloaded method name in the language — a Map, a Set, a
+ * repository and an S3 client all have one.
+ *
+ * Returns the call as written, for the sentence `becauseSignIn` builds out of it.
+ */
+function cookieSignOut(dotted: string, node: CallExpression): string | null {
+  const parts = dotted.split('.');
+  const method = parts[parts.length - 1];
+  const receiver = parts.slice(0, -1).join('.');
+  const isCookieDelete = method === 'delete' && /(^|\.)cookies$/i.test(receiver);
+  const isClearCookie = method === 'clearCookie' && receiver !== '';
+  if (!isCookieDelete && !isClearCookie) return null;
+
+  const name = literalString(argAt(node, 0));
+  if (!name || !SESSION_COOKIE.test(name)) return null;
+  return `${dotted}('${name}')`;
+}
+
 /** `auth` is only a guard when it came from somewhere that deals in auth. */
 function isAuthContext(root: string, ctx: DetectorContext): boolean {
   const binding = ctx.imports.get(root);
@@ -194,6 +230,28 @@ export const authDetector: BoundaryDetector = {
         call: dotted,
         nodeId: ctx.enclosing(node),
         site: ctx.site(node, dotted),
+      });
+      return;
+    }
+
+    // …and the same door for an app that rolls its own session (#186). Every sign-out
+    // recognised above is a named call into an auth library; a SvelteKit or Express app
+    // that issues its own cookie has no library to call, and the sign-out *is*
+    // `cookies.delete('jwt')`. sveltejs/realworld's logout action was the single entry
+    // on that repo's worry list — a reader who opens the only finding, sees a logout,
+    // and concludes the list is decoration is #116 happening in one click.
+    const signOut = cookieSignOut(dotted, node);
+    if (signOut) {
+      ctx.emit({
+        type: 'sign-in-call',
+        // "the app's own sign-out routine" — because that is precisely what makes this
+        // case different from every other entry in `becauseSignIn`: there is no library
+        // whose name could go here.
+        provider: 'the app',
+        what: 'sign-out',
+        call: signOut,
+        nodeId: ctx.enclosing(node),
+        site: ctx.site(node, signOut),
       });
       return;
     }
