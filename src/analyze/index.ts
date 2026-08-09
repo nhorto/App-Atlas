@@ -140,7 +140,20 @@ import { dominantZone } from './zones.js';
  * says so on every surface (#171) — the cached version presents the sliver as the app,
  * which is the confident wrong answer this number exists to expire.
  */
-export const TOOL_VERSION = '0.24.0';
+/*
+ * 0.25.0 is the desktop release, and both of its headline changes are the same kind of
+ * cache lie: an *absence* that was never true. A Tauri app writing the idiomatic
+ * `#[command]` went from zero doors to all of them (#195) — the first real one tried
+ * had eleven and was reported as having no ways in — and an Electron preload's direct
+ * handovers, `shell.openExternal` among them, went from on no map at all to on this one
+ * (#192). A 0.24.0 cache does not hold a thinner answer about either; it holds an empty
+ * inventory for the privileged half of a desktop application.
+ *
+ * Two more move what a cached verdict *means*: a logout that deletes the session cookie
+ * is now the sign-in door rather than an unchecked one (#186), and a test fixture is no
+ * longer a scope (#185), so the very set of atlases a workspace produces is different.
+ */
+export const TOOL_VERSION = '0.25.0';
 
 export interface AnalyzeOptions {
   maxFiles?: number;
