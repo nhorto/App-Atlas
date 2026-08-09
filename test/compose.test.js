@@ -235,6 +235,48 @@ test('the door survives the whole pipeline, path and all', () => {
 });
 
 /**
+ * One package of a workspace is not the stack (#143).
+ *
+ * The two cases above look identical from inside `packages/api` and mean opposite
+ * things. `app-atlas ./packages/api` is somebody asking about one app in a repo, and the
+ * compose file at the top describes the stack that app runs in — so it is inherited.
+ * `app-atlas .` on a workspace analyzes all sixteen packages side by side, and handing
+ * each of them the same file says all sixteen publish the same Postgres port.
+ *
+ * documenso is where that showed: `packages/assets` contains no source files whatsoever
+ * and reported fourteen ways in, every one of them a port declared in `../../docker/`.
+ * Fourteen facts became 224, and the column a reader scans to find which package is
+ * exposed could no longer tell one that is from one that cannot be.
+ */
+const { atlas: sibling } = await analyzeProject(MONO_APP, {
+  repoRoot: MONO,
+  inheritDeploymentFiles: false,
+  cache: 'off',
+});
+
+test('a package analyzed beside its siblings does not inherit the repo stack', () => {
+  assert.deepEqual(
+    sibling.nodes.filter((n) => n.kind === 'endpoint' && n.meta.endpointKind === 'port').map((n) => n.name),
+    [],
+  );
+});
+
+test('but it is still not the repo, which is a separate fact and stays true', () => {
+  // `repoRoot` travels for this even when the deployment files do not. A package that
+  // claimed to cover the whole repo would be a worse lie than the one just fixed.
+  assert.equal(sibling.meta.coverage.wholeRepo, false);
+});
+
+test('the narrowed single-app case is untouched, because it is the one that was right', () => {
+  // Same directory, same repo root, inheritance left at its default. If this ever goes
+  // quiet, #143's fix has eaten the behaviour #34 and #73 asked for.
+  assert.deepEqual(
+    scoped.nodes.filter((n) => n.kind === 'endpoint' && n.meta.endpointKind === 'port').map((n) => n.name),
+    ['../../docker-compose.yml publishes 5432 on every interface → db'],
+  );
+});
+
+/**
  * The exported brief, which is the surface a coding agent actually reads (#73).
  *
  * These doors were on the map and missing from the export for one release, because the

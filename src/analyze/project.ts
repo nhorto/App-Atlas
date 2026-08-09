@@ -76,6 +76,22 @@ export interface DiscoverOptions {
    * command line, `./backend` is the boundary.
    */
   repoRoot?: string;
+  /**
+   * Whether a deployment file *above* this app describes this app. True for the case
+   * `repoRoot` was written for — one app picked out of a repo — and false for one
+   * package of a workspace analyzed alongside its siblings.
+   *
+   * The difference is not pedantry. A compose file at the top of a monorepo describes
+   * the stack the repo deploys, and handing it to all sixteen packages said that each of
+   * them publishes all fourteen of its ports: documenso's `packages/assets`, which
+   * contains no source files whatsoever, reported fourteen ways in (#143). One fact
+   * became 224, and the column that exists to show which package is exposed could no
+   * longer distinguish one that is from one that cannot be.
+   *
+   * `repoRoot` still travels for the thing it is separately needed for — `coverage.wholeRepo`
+   * must stay false for a scope, because a package is not the repo.
+   */
+  inheritDeploymentFiles?: boolean;
 }
 
 export const SOURCE_GLOB = '**/*.{ts,tsx,mts,cts,js,jsx,mjs,cjs,py,pyi,ipynb,go,cs,rs}';
@@ -185,7 +201,11 @@ export async function discoverProject(rootInput: string, options: DiscoverOption
     (typeof packageJson?.name === 'string' && packageJson.name.trim()) || path.basename(root) || 'app';
 
   const tsConfigPath = findTsConfig(root);
-  const signals = readSignals(root, packageJson, options.repoRoot ? path.resolve(options.repoRoot) : root);
+  // Where to look for deployment files. Above this app only when something above it
+  // actually describes it — see `inheritDeploymentFiles`.
+  const deploymentRoot =
+    options.inheritDeploymentFiles !== false && options.repoRoot ? path.resolve(options.repoRoot) : root;
+  const signals = readSignals(root, packageJson, deploymentRoot);
   const workspaces = readWorkspaces(root, packageJson);
 
   const found = await fg(SOURCE_GLOB, {
