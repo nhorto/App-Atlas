@@ -866,6 +866,12 @@ function reasonPhrase(kind: string, count: number): string {
       return `${plural(count, 'address', 'addresses')} people sign in through, which cannot require a session`;
     case 'unreadable':
       return `behind a file App Atlas could not read — unknown, not open`;
+    case 'generated':
+      return `${plural(count, 'entry', 'entries')} a build wrote — the routes they serve are graded one by one`;
+    case 'unlinked':
+      return `${plural(count, 'route', 'routes')} declared in a routing table App Atlas has not followed to a handler`;
+    case 'declared-public':
+      return `${plural(count, 'door', 'doors')} the code declares open on purpose`;
     default:
       return kind;
   }

@@ -615,8 +615,20 @@ export interface TableProtectionInsight {
 /**
  * Why a door with no visible check is that way. `worth-a-look` is the absence of an
  * explanation, which is the only one of these that belongs in a headline.
+ *
+ * Mirrors `OpenKind` in src/model/types.ts, and must keep mirroring it: this copy
+ * lagging three kinds behind is how an unchecked door came to wear a badge reading
+ * "checked" (#161) — every kind missing here fell through a switch to the fallback
+ * written for guarded routes.
  */
-export type OpenKind = 'worth-a-look' | 'page' | 'auth-mount' | 'unreadable';
+export type OpenKind =
+  | 'worth-a-look'
+  | 'page'
+  | 'auth-mount'
+  | 'unreadable'
+  | 'generated'
+  | 'unlinked'
+  | 'declared-public';
 
 export interface OpenVerdict {
   kind: OpenKind;
