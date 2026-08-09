@@ -1,0 +1,8 @@
+{
+  "name": "nestglobal",
+  "private": true,
+  "dependencies": {
+    "@nestjs/common": "^10.0.0",
+    "@nestjs/core": "^10.0.0"
+  }
+}

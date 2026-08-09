@@ -887,11 +887,18 @@ function applyGuards(
     }
 
     const route = endpoint.meta.route;
-    if (!route || !route.startsWith('/')) continue;
+    const addressable = typeof route === 'string' && route.startsWith('/');
     for (const guard of matchers) {
-      const hit = guard.matchers.some(
-        (matcher) => matcherMatches(matcher, route) || isCatchAllMatcher(matcher),
-      );
+      // A pattern needs an address to match against, so a door whose address could not
+      // be resolved is out of reach of `/admin/:path*` — honestly, since we cannot say
+      // it lives under /admin. A *catch-all* is the one exception (#172): it covers a
+      // door whatever its address turns out to be, which is precisely what a NestJS
+      // APP_GUARD means, and immich's 46 unresolved-prefix routes are exactly as
+      // behind its global AuthGuard as the 224 readable ones. HTTP routes only —
+      // a server action or an IPC channel is not what a route middleware serves.
+      const hit = addressable
+        ? guard.matchers.some((matcher) => matcherMatches(matcher, route as string) || isCatchAllMatcher(matcher))
+        : endpoint.kind === 'http-route' && guard.matchers.some(isCatchAllMatcher);
       if (hit) pushGuard(endpoint, { ...guard.guard, confidence: 'likely' });
     }
   }
