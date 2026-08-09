@@ -212,6 +212,17 @@ function describesTheApp(): (finding: BoundaryFinding) => boolean {
       case 'path-constant':
       case 'global-prefix':
         return !isTest(finding.path);
+      // What a test file wires describes the test, not the app — the rule the router
+      // family already lives by. Latent for guards until #172: a node-scoped guard
+      // only reaches doors through same-file grouping or handler identity, which no
+      // spec shares with an app door, but a catch-all APP_GUARD finding originates
+      // anywhere and reaches everything — so the standard NestJS pattern of mocking
+      // one in Test.createTestingModule would have locked the whole scope from a file
+      // whose entire point is not being the application (#180).
+      case 'guard':
+        return !isTest(finding.guard.path ?? '');
+      case 'path-guard':
+        return !isTest(finding.path);
       default:
         return true;
     }
