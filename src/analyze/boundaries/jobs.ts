@@ -63,6 +63,11 @@ function callExpression(call: CallExpression, ctx: DetectorContext): void {
     return;
   }
 
+  // …and the preload, which is the same boundary seen from the untrusted side (#192).
+  if (last === 'exposeInMainWorld' && root === 'contextBridge') {
+    return bridgedCapabilities(ctx, call);
+  }
+
   // --- webhook signature verification ---
   // `constructEventAsync` is not a variant worth skipping: it is the *only* one that
   // works on an edge runtime, where there is no synchronous crypto to hash the body
@@ -186,6 +191,78 @@ function emitRealtime(ctx: DetectorContext, at: Node, name: string, framework: s
  * the boundary screen is for, so it is recorded as evidence rather than promoted to a
  * distinction the reader has to learn.
  */
+/**
+ * The privileged modules a preload can hand over without asking the main process.
+ *
+ * Deliberately the whole point of the rule: `shell.openExternal` opens any URL in the
+ * user's browser, `fs` reads their disk, `child_process` runs a command. A renderer
+ * given one of these reaches it *directly* — no `ipcMain` channel exists, so nothing
+ * else on the map represents it, and bruno's preload hands over two.
+ */
+const PRIVILEGED_MODULES = /^(shell|fs|fsPromises|childProcess|child_process|os|webUtils|process|require|clipboard|app|dialog)$/;
+
+/**
+ * What `contextBridge.exposeInMainWorld('api', { … })` really gives the renderer (#192).
+ *
+ * The preload is the security boundary of a desktop app — #149 read the main process's
+ * half and left this one, so a capability crossing the bridge with no channel behind it
+ * was on no map at all.
+ *
+ * The trap here is double counting, and avoiding it is most of the rule. A member that
+ * forwards to `ipcRenderer.invoke('project:read')` is a *name for a door that already
+ * exists*; emitting it again would report four ways in for two real paths and inflate
+ * exactly the number #149 was careful about. So only members that reach a privileged
+ * module directly become doors — everything else is the renderer's vocabulary for
+ * channels already listed.
+ *
+ * No auth verdict, exactly as IPC channels and Tauri commands carry none: the caller is
+ * the app's own interface, not a stranger, and badging these would be the false alarm
+ * that whole tier exists to avoid.
+ */
+function bridgedCapabilities(ctx: DetectorContext, call: CallExpression): void {
+  const api = literalString(argAt(call, 0));
+  const surface = argAt(call, 1);
+  if (!api || !surface || !Node.isObjectLiteralExpression(surface)) return;
+
+  for (const member of surface.getProperties()) {
+    if (!Node.isPropertyAssignment(member) && !Node.isMethodDeclaration(member)) continue;
+    const name = member.getName();
+    const body = Node.isPropertyAssignment(member) ? member.getInitializer() : member;
+    if (!body) continue;
+
+    let reaches: string | null = null;
+    body.forEachDescendant((child) => {
+      if (reaches || !Node.isCallExpression(child)) return;
+      const inner = dottedName(child.getExpression());
+      if (!inner) return;
+      const parts = inner.split('.');
+      // A forwarder names a door that is already on the map — see the docstring.
+      if (parts[0] === 'ipcRenderer') {
+        reaches = 'ipc';
+        return;
+      }
+      if (PRIVILEGED_MODULES.test(parts[0]) && parts.length > 1) reaches = inner;
+    });
+
+    if (reaches === null || reaches === 'ipc') continue;
+    ctx.emit({
+      type: 'endpoint',
+      endpointKind: 'ipc',
+      key: `bridge ${api}.${name}`,
+      name: `${api}.${name}`,
+      method: 'BRIDGE',
+      route: null,
+      framework: 'Electron',
+      // Unknowable from the handover, same as an IPC registration: what the renderer
+      // does with `shell.openExternal` is the renderer's business and not written here.
+      writes: false,
+      guards: [],
+      site: ctx.site(member, `${api}.${name} → ${reaches}`),
+      handlerId: ctx.enclosing(member),
+    });
+  }
+}
+
 function emitIpc(ctx: DetectorContext, at: Node, channel: string, dotted: string): void {
   ctx.emit({
     type: 'endpoint',
