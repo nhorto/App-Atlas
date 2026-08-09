@@ -514,7 +514,14 @@ function nestController(cls: ClassDeclaration, ctx: DetectorContext): void {
   const controller = cls.getDecorator('Controller');
   if (!controller) return;
 
-  const base = normalizeSegment(literalString(controller.getArguments()[0]) ?? '');
+  // `@Controller()` with nothing in it means "no prefix", and that is an address.
+  // `@Controller(`${ApiPath.Rest}/metadata/pageLayouts`)` means "a prefix I could not
+  // read", and that is not. Both used to produce an empty base, which is how twentyhq/
+  // twenty's 141 route decorators collapsed onto 44 doors (#153).
+  const prefixArg = controller.getArguments()[0];
+  const literalBase = literalString(prefixArg);
+  const prefixUnread = prefixArg !== undefined && literalBase === null;
+  const base = normalizeSegment(literalBase ?? '');
   const classUseGuards = cls.getDecorator('UseGuards');
   const classGuards = decoratorGuards(classUseGuards, ctx);
   const classDeclaredPublic = declaresPublic(classUseGuards);
@@ -524,13 +531,21 @@ function nestController(cls: ClassDeclaration, ctx: DetectorContext): void {
       const decorator = method.getDecorator(capitalize(name.toLowerCase()));
       if (!decorator) continue;
       const sub = normalizeSegment(literalString(decorator.getArguments()[0]) ?? '');
-      const route = `/${[base, sub].filter(Boolean).join('/')}`;
+      const path = `/${[base, sub].filter(Boolean).join('/')}`;
+      const owner = cls.getName() ?? null;
+      // An unread prefix makes the whole address unknown, and two unknown addresses are
+      // not the same door. Keyed on the controller so a dozen of them stop merging into
+      // one entry wearing everybody's guards — which is what turned a 5,000-file server
+      // green. The tail is real and is shown; the ellipsis is where the prefix would be.
+      const route = prefixUnread ? null : path;
+      const shown = prefixUnread ? `${name} …${path}${owner ? ` (${owner})` : ''}` : `${name} ${path}`;
+      const key = prefixUnread ? `${name} ${owner ?? ctx.ref.relPath}${path}` : `${name} ${path}`;
       const methodUseGuards = method.getDecorator('UseGuards');
       ctx.emit({
         type: 'endpoint',
         endpointKind: 'http-route',
-        key: `${name} ${route}`,
-        name: `${name} ${route}`,
+        key,
+        name: shown,
         method: name,
         route,
         framework: 'NestJS',
@@ -543,7 +558,7 @@ function nestController(cls: ClassDeclaration, ctx: DetectorContext): void {
         handlerId: ctx.enclosing(method),
         // The class this route was declared on, so a check written further up the chain
         // than this file goes can still be found.
-        handlerOwner: cls.getName() ?? null,
+        handlerOwner: owner,
       });
     }
   }

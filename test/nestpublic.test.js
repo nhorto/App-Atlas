@@ -41,7 +41,46 @@ const guardsOn = (name) => (named(name)?.meta.guards ?? []).map((g) => g.name);
 
 test('the fixture parsed, so a silent failure cannot pass as a pass', () => {
   assert.deepEqual(atlas.meta.warnings, []);
-  assert.equal(routes.length, 4);
+  assert.equal(routes.length, 6);
+});
+
+// ---------------------------------------------------------------------------
+// A prefix nothing can read is not an address (#153)
+// ---------------------------------------------------------------------------
+
+test('two controllers with unreadable prefixes are two doors, not one', () => {
+  // Both declare `@Get(':id')` under a template-literal prefix. They used to produce a
+  // single `GET /:id`, and on twentyhq/twenty a dozen controllers did — 141 route
+  // decorators onto 44 doors, one of them wearing sixty guards belonging to all of them.
+  const unread = routes.filter((n) => n.name.startsWith('GET …'));
+  assert.deepEqual(unread.map((n) => n.name).sort(), [
+    'GET …/:id (LayoutMetadataController)',
+    'GET …/:id (WidgetMetadataController)',
+  ]);
+});
+
+test('each keeps its own guards, which is what the merge was destroying', () => {
+  const guarded = named('GET …/:id (LayoutMetadataController)');
+  const open = named('GET …/:id (WidgetMetadataController)');
+  assert.deepEqual(guarded.meta.guards.map((g) => g.name), ['RealAuthGuard']);
+  assert.deepEqual(open.meta.guards, []);
+  // The one that genuinely has no check must still say so. Merging made it inherit one.
+  assert.equal(open.meta.open.kind, 'worth-a-look');
+});
+
+test('an unreadable prefix leaves no address behind for anything to match on', () => {
+  // `route` is what the merge tests for webhook-shaped addresses and what exposure.ts
+  // matches catch-all patterns against. A fragment presented as a whole address would
+  // quietly opt these into rules they should not be in.
+  assert.equal(named('GET …/:id (LayoutMetadataController)').meta.route, null);
+  // …while a prefix that *is* readable still composes exactly as before.
+  assert.equal(named('GET /billing/invoices').meta.route, '/billing/invoices');
+});
+
+test('an empty @Controller() is an address, not an unreadable one', () => {
+  // The distinction the fix turns on: `@Controller()` means "no prefix" and is known.
+  // Only an argument that exists and cannot be read is unknown.
+  assert.equal(routes.some((n) => n.name === 'POST /billing/charge'), true);
 });
 
 test('a guard whose body is `return true` is not counted as a check', () => {
@@ -71,10 +110,13 @@ test('a route with no guard at all is still worth a look', () => {
 });
 
 test('the headline counts a declared-public route as open on purpose', () => {
-  assert.equal(atlas.meta.stats.unprotectedRoutes, 1);
+  // Two genuinely unguarded — `POST /billing/charge` and the widget controller — and
+  // one declared open on purpose. The declared one is the only difference this test is
+  // about; it must not land in the same number as the other two.
+  assert.equal(atlas.meta.stats.unprotectedRoutes, 2);
   assert.equal(atlas.meta.stats.publicRoutes, 1);
   const line = authHeadline(atlas.meta.stats);
-  assert.match(line.headline, /1 of 4 routes have no auth check/);
+  assert.match(line.headline, /2 of 6 routes have no auth check/);
   assert.ok(
     line.caveats.some((c) => /1 more (is|are) pages or the door people sign in through/.test(c)),
     `expected the public route to be stated, got ${JSON.stringify(line.caveats)}`,
