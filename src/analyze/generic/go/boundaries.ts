@@ -790,10 +790,20 @@ function detectCheckers(input: BoundaryInput, wiring: Set<string>, findings: Bou
     findings.push({ type: 'auth-checker', name: def.name, guard });
 
     // And attached to itself, because a handler that does its own checking is guarded,
-    // and a route answering with it should not read as wide open.
+    // and a route answering with it should not read as wide open. Gin's `ArticleDelete`
+    // returns a 403 for "you are not the author" and `ArticleFeed` a 401 for an absent
+    // identity: both are real checks with nothing but the handler to hang them on.
+    //
+    // The grade does not improve by being pointed at itself, though, and it used to
+    // (#147). `likely` above is this evidence's honest strength — one function's
+    // behaviour standing in for a decision no framework confirmed — and being sure the
+    // check *reaches* the route says nothing about whether it is a check. Certainty
+    // there let Gin's `POST /login`, which answers a wrong *password* with a 401, read
+    // as certainly protected: a false green on the one route in any application that
+    // cannot require a caller to be signed in.
     findings.push({
       type: 'guard',
-      guard: { ...guard, how: 'call', confidence: 'certain' },
+      guard: { ...guard, how: 'call' },
       scope: 'node',
       nodeId,
       matchers: [],
