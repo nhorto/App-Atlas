@@ -492,7 +492,12 @@ function nestClassChain(cls: ClassDeclaration, ctx: DetectorContext): void {
   if (!name) return;
   const guards = decoratorGuards(cls.getDecorator('UseGuards'), ctx);
   const bases = [cls.getExtends()?.getExpression().getText()].filter((base): base is string => Boolean(base));
-  if (guards.length === 0 && bases.length === 0) return;
+  // A class that carries nothing and extends nothing is still *declared* — and saying so
+  // is the whole protection against name collisions. The merge trusts a name only when
+  // exactly one class declares it, and it can only count the declarations it was told
+  // about: when the guardless `UsersController` stayed silent, its guarded namesake in
+  // another file became "the only UsersController", and its lock walked onto a door it
+  // was never written on (#162).
 
   for (const guard of guards) ctx.emit({ type: 'auth-checker', name: guard.name, guard });
   ctx.emit({
@@ -534,12 +539,15 @@ function nestController(cls: ClassDeclaration, ctx: DetectorContext): void {
       const path = `/${[base, sub].filter(Boolean).join('/')}`;
       const owner = cls.getName() ?? null;
       // An unread prefix makes the whole address unknown, and two unknown addresses are
-      // not the same door. Keyed on the controller so a dozen of them stop merging into
-      // one entry wearing everybody's guards — which is what turned a 5,000-file server
-      // green. The tail is real and is shown; the ellipsis is where the prefix would be.
+      // not the same door. Keyed on the *file*, not the class name: a v1/v2 split puts
+      // a `UsersController` in two files, and keying on the name merged them back into
+      // one entry wearing one of their guards — #153's false green through a smaller
+      // hole (#159). A file holds one class of a given name, so file-plus-tail is the
+      // identity the class name only approximates. The tail is real and is shown; the
+      // ellipsis is where the prefix would be.
       const route = prefixUnread ? null : path;
       const shown = prefixUnread ? `${name} …${path}${owner ? ` (${owner})` : ''}` : `${name} ${path}`;
-      const key = prefixUnread ? `${name} ${owner ?? ctx.ref.relPath}${path}` : `${name} ${path}`;
+      const key = prefixUnread ? `${name} ${ctx.ref.relPath}#${owner ?? ''}${path}` : `${name} ${path}`;
       const methodUseGuards = method.getDecorator('UseGuards');
       ctx.emit({
         type: 'endpoint',

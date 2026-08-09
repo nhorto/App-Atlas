@@ -1,0 +1,7 @@
+{
+  "name": "nestdup",
+  "private": true,
+  "dependencies": {
+    "@nestjs/common": "^10.0.0"
+  }
+}

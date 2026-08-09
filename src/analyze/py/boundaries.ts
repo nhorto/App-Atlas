@@ -483,14 +483,17 @@ function detectAuthAliases(input: PythonBoundaryInput, findings: BoundaryFinding
   // `class BaseUserController: user: PrivateUser = Depends(get_current_user)`, and the
   // controller that inherits it three levels down declares routes that mention nobody.
   //
-  // A class with no dependency of its own is still recorded, as long as it has parents:
-  // it is a link in the chain, and a chain missing one link loses every route below it.
-  // `class Reporting(SignedIn): ...` carries nothing and decides everything.
+  // A class with no dependency of its own is still recorded — with parents because it
+  // is a link in the chain (`class Reporting(SignedIn): ...` carries nothing and
+  // decides everything), and without them because its *declaration* is the fact that
+  // protects its namesakes. The merge trusts a name only while exactly one class
+  // declares it, and a guardless class that stayed silent made its guarded namesake in
+  // another file look unique — which lent that lock to doors it was never written on
+  // (#162).
   for (const def of input.file.defs ?? []) {
     if (def.kind !== 'class') continue;
     const bases = (def.bases ?? []).map((base) => base.split('.').pop() ?? base).filter(Boolean);
     const depends = (def.depends ?? []).map((name) => name.split('.').pop() ?? name);
-    if (depends.length === 0 && bases.length === 0) continue;
     findings.push({ type: 'auth-alias', name: def.name, depends, bases, path: input.file.path, line: def.line });
   }
 
