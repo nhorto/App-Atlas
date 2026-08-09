@@ -335,13 +335,17 @@ async function runAnalysis(dir: string, options: SharedOptions): Promise<Analysi
     console.log('');
   }
 
-  const { scopes: found, hiddenTests } = await findWorkspace(root);
-  const scopes = options.scope ? found.filter((s) => s.id === options.scope || s.name === options.scope) : found;
+  const { scopes: found, hidden } = await findWorkspace(root);
+  // A named scope is searched among the hidden ones too: somebody who types
+  // `--scope fixture-basic` has out-argued the heuristic that left it off the list, and
+  // a rule about what is worth *listing* must not decide what they may look at (#185).
+  const byName = (s: Scope) => s.id === options.scope || s.name === options.scope;
+  const scopes = options.scope ? [...found, ...hidden].filter(byName) : found;
   if (options.scope && scopes.length === 0) {
     const names = found.map((s) => s.id).join(', ') || 'none';
     throw new Error(`No app called "${options.scope}" in this workspace. Found: ${names}`);
   }
-  if (scopes.length > 1) return runWorkspaceAnalysis(root, scopes, options, hiddenTests);
+  if (scopes.length > 1) return runWorkspaceAnalysis(root, scopes, options, hidden.length);
 
   // One app in a workspace is still one app: analyze it where it lives, so its cache
   // and its atlas end up beside it exactly as they would in a repo of its own. The

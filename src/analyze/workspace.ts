@@ -66,8 +66,13 @@ export async function findScopes(root: string): Promise<Scope[]> {
 /**
  * The same answer, plus what was left out of it — for the one caller that prints the
  * list and therefore owes the reader an account of what is not in it (#185).
+ *
+ * The hidden scopes come back whole rather than as a count, because a reader who names
+ * one explicitly (`--scope fixture-basic`) has out-argued the heuristic and should get
+ * what they asked for. A rule about what is *worth listing* has no business deciding
+ * what somebody may look at.
  */
-export async function findWorkspace(root: string): Promise<{ scopes: Scope[]; hiddenTests: number }> {
+export async function findWorkspace(root: string): Promise<{ scopes: Scope[]; hidden: Scope[] }> {
   const byDir = new Map<string, Scope>();
 
   const globs = workspaceGlobs(root);
@@ -110,10 +115,10 @@ export async function findWorkspace(root: string): Promise<{ scopes: Scope[]; hi
   // same floor `scopes.length < 2` draws below.
   const shipped = declared.filter((scope) => classifyZone(`${scope.dir}/package.json`) !== 'test');
   const scopes = shipped.length > 0 ? shipped : declared;
-  const hiddenTests = declared.length - scopes.length;
+  const hidden = shipped.length > 0 ? declared.filter((scope) => !shipped.includes(scope)) : [];
 
   // One package in a workspace is not a monorepo worth a switcher.
-  if (scopes.length < 2) return { scopes: [], hiddenTests: 0 };
+  if (scopes.length < 2) return { scopes: [], hidden: [] };
 
   // Measured against *every* declared scope, hidden ones included. A dropped fixture's
   // files are still owned by that fixture — counting them as leftovers the root has
@@ -121,7 +126,7 @@ export async function findWorkspace(root: string): Promise<{ scopes: Scope[]; hi
   // the fix undoing itself one function later.
   const files = await measure(root, declared);
   const all = includeTheRootWhenItIsTheProject(root, scopes, files);
-  return { scopes: leadWithTheMainApp(all.sort(byKindThenName), files), hiddenTests };
+  return { scopes: leadWithTheMainApp(all.sort(byKindThenName), files), hidden };
 }
 
 /** Where files belong that no declared package claims. */
