@@ -45,6 +45,14 @@ export interface EndpointFinding {
   handlerUnlinked?: boolean;
   /** The code says in as many words that this door is open on purpose — see EndpointMeta. */
   declaredPublic?: boolean;
+  /**
+   * The route was registered on a router that arrived as a function parameter whose
+   * type is definitionally a sub-group (`*gin.RouterGroup`), so its prefix was decided
+   * by the caller (#151). Only consulted when prefix composition has already failed:
+   * a composed address always wins, and a route this flag turns unresolved was already
+   * showing a fragment — `POST ""` — as its whole name.
+   */
+  prefixFromCaller?: boolean;
   site: CodeSite;
   /** The atlas node that answers this door. */
   handlerId: string | null;

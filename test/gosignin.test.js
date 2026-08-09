@@ -16,6 +16,11 @@
  *
  * Explicitly rejected, still: matching the name `login`. The fixture's handlers could
  * be renamed to anything and every assertion here would hold.
+ *
+ * The door names carry an ellipsis because every route here sits on a `*gin.
+ * RouterGroup` parameter whose prefix lives with the caller (#151): the tails are
+ * real, the prefix is honestly unknown, and the handler in parentheses is the way
+ * back to the code.
  */
 import assert from 'node:assert/strict';
 import path from 'node:path';
@@ -33,7 +38,7 @@ const routes = atlas.nodes.filter((n) => n.kind === 'endpoint' && n.meta.endpoin
 const named = (name) => routes.find((n) => n.name === name);
 
 test('the login route is the sign-in door, not a route guarding itself', () => {
-  const login = named('POST /users/login');
+  const login = named('POST …/users/login (UsersLogin)');
   assert.ok(login, `have: ${routes.map((n) => n.name).join(', ')}`);
   assert.equal(login.meta.open?.kind, 'auth-mount');
   assert.ok(login.meta.signInCall, 'signInCall stamped');
@@ -42,21 +47,21 @@ test('the login route is the sign-in door, not a route guarding itself', () => {
 test("the 401 it answers a wrong password with is no longer a guard", () => {
   // Pre-fix this door wore `UsersLogin@likely` — the handler attached to itself via
   // the rejection reading. The mint outranks that reading; the guard list is empty.
-  assert.deepEqual(named('POST /users/login').meta.guards, []);
+  assert.deepEqual(named('POST …/users/login (UsersLogin)').meta.guards, []);
 });
 
 test('one hop: login reaches the bcrypt password check through CheckPassword', () => {
-  assert.match(named('POST /users/login').meta.signInCall.call, /CompareHashAndPassword/);
+  assert.match(named('POST …/users/login (UsersLogin)').meta.signInCall.call, /CompareHashAndPassword/);
 });
 
 test('two hops: register reaches the mint only through the serializer', () => {
-  const register = named('POST /users');
+  const register = named('POST …/users (UsersRegister)');
   assert.equal(register.meta.open?.kind, 'auth-mount');
   assert.match(register.meta.signInCall.call, /SignedString/);
 });
 
 test('the route next to the mint is not excused by proximity', () => {
-  const ping = named('GET /ping');
+  const ping = named('GET …/ping (Ping)');
   assert.equal(ping.meta.open?.kind, 'worth-a-look');
   assert.equal(ping.meta.signInCall, undefined);
 });

@@ -53,7 +53,8 @@ export function composeRoutePrefixes(findings: BoundaryFinding[]): BoundaryFindi
     else if (finding.type === 'global-prefix') globals.push(finding);
   }
   const hasPrefixes = mounts.length > 0 || globals.length > 0 || builds.some((build) => build.hasPrefix);
-  if (!hasPrefixes) return findings;
+  const hasCallerPrefixed = findings.some((finding) => finding.type === 'endpoint' && finding.prefixFromCaller);
+  if (!hasPrefixes && !hasCallerPrefixed) return findings;
 
   const chains = new Chains(builds, mounts, constants);
   const everywhere = globalPrefixes(globals);
@@ -71,9 +72,46 @@ export function composeRoutePrefixes(findings: BoundaryFinding[]): BoundaryFindi
     const own = finding.routerVar
       ? chains.prefixFor(routerKey(moduleOf(finding.site.path), finding.routerVar))
       : [];
-    if (!global && own.length === 0) return finding;
+    if (!global && own.length === 0) {
+      // Composition failed, and for most routes that is fine — `r.GET("/api/ping")` on
+      // the top-level engine has no prefix because its address is already whole. A
+      // route on a *caller-prefixed* router is the other case (#151): the fragment it
+      // wrote is not its address, and treating it as one collided `POST ""` from an
+      // articles package — mounted behind AuthMiddleware — with the `POST ""` that
+      // signs users up, guards pooled across the pair. #153's rule, in Go: an address
+      // that could not be read is not an address, and two of them are never one door.
+      if (!finding.prefixFromCaller) return finding;
+      return unresolvedAddress(finding);
+    }
     return applyPrefix(finding, global ? [global, ...own] : own);
   });
+}
+
+/**
+ * #153's pattern for a door whose prefix lives with a caller nothing connected: keyed
+ * on its file and router so strangers never merge, shown with the ellipsis where the
+ * prefix would be, and `route: null` so nothing downstream matches a prefix or a
+ * webhook shape against a fragment. The handler's name rides along in the label
+ * because `POST …` on its own sends the reader searching; the ellipsis is honest and
+ * the parenthesis is the way back to the code.
+ */
+function unresolvedAddress(finding: EndpointFinding): EndpointFinding {
+  const method = finding.method ?? 'ANY';
+  const tail = finding.route ?? '';
+  const handler =
+    finding.handlerId?.startsWith('func:') === true
+      ? finding.handlerId.slice(finding.handlerId.lastIndexOf('#') + 1)
+      : null;
+  return {
+    ...finding,
+    // The handler is part of the key: realworld registers ArticleList on both its
+    // public and its authed group, and those are two addresses even when one function
+    // answers both — merging them would pool whatever guard either mount carries.
+    // A closure has no handler id, so the line stands in for it.
+    key: `${method} ${finding.site.path}#${finding.routerVar ?? ''}#${finding.handlerId ?? `L${finding.site.line}`}${tail}`,
+    name: `${method} …${tail}${handler ? ` (${handler})` : ''}`,
+    route: null,
+  };
 }
 
 /**
