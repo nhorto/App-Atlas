@@ -114,6 +114,52 @@ function nameArg(value: PyValue | undefined): string | null {
   return value && value.t === 'name' ? value.v : null;
 }
 
+/**
+ * The first argument of a decorator, exactly as it was written (#142).
+ *
+ * Read off `decorator.text` rather than off the parsed value, because the parse throws
+ * away the part a reader needs. `org_scoped_rule("/login")` reduces to the value
+ * `org_scoped_rule()` — correct for a *callee*, and useless as a label, since the whole
+ * of what distinguishes this route from the twenty-two beside it is the string inside
+ * the parentheses.
+ *
+ * Returns null when there is no argument at all, which is what keeps `@property` and
+ * every other bare decorator out.
+ */
+function writtenFirstArg(text: string | undefined): string | null {
+  if (!text) return null;
+  const open = text.indexOf('(');
+  if (open < 0) return null;
+
+  let depth = 0;
+  let quote: string | null = null;
+  for (let i = open; i < text.length; i++) {
+    const ch = text[i];
+    if (quote) {
+      if (ch === '\\') i++;
+      else if (ch === quote) quote = null;
+      continue;
+    }
+    if (ch === '"' || ch === "'") quote = ch;
+    else if (ch === '(' || ch === '[' || ch === '{') depth++;
+    else if (ch === ')' || ch === ']' || ch === '}') {
+      depth--;
+      // The decorator's own closing bracket: one argument, and this is the end of it.
+      if (depth === 0) return trimmedArg(text.slice(open + 1, i));
+    } else if (ch === ',' && depth === 1) {
+      return trimmedArg(text.slice(open + 1, i));
+    }
+  }
+  return null;
+}
+
+function trimmedArg(raw: string): string | null {
+  const arg = raw.trim();
+  // A keyword argument is not the path — `@app.route(methods=["GET"])` has no address.
+  if (arg === '' || /^[A-Za-z_][A-Za-z0-9_]*\s*=/.test(arg)) return null;
+  return arg;
+}
+
 /** Every function and method, flattened, with the scope name the extractor used. */
 function everyDef(file: PyFile): { def: PyDef; scope: string }[] {
   const out: { def: PyDef; scope: string }[] = [];
@@ -150,7 +196,16 @@ function detectRoutes(
       const parts = decorator.callee.split('.');
       const last = parts[parts.length - 1];
       const route = strArg(decorator.args[0]);
-      if (!route) continue;
+      // A path the source computes — `@routes.route(org_scoped_rule("/login"))`. The
+      // address is genuinely unknowable from here and guessing one would be worse, but
+      // dropping the door is not the neutral choice it looks like: it says this handler
+      // answers no URL, which is false. redash writes 23 of its 28 route decorators this
+      // way, and `/login`, `/forgot` and `/reset/<token>` were all absent while the
+      // summary said `4 of 5 routes` in the type it uses when the denominator is right
+      // (#142). Same trade the sqlx reader already makes: a call whose SQL is built
+      // elsewhere still proves the database is used, and only the arrow is missing.
+      const computed = route === null ? writtenFirstArg(decorator.text) : null;
+      if (route === null && computed === null) continue;
 
       let methods: string[] = [];
       if (ROUTE_METHODS.has(last)) {
@@ -172,9 +227,17 @@ function detectRoutes(
           // merge, on the address after its prefixes are composed — a handler spelled
           // `@router.post("/")` under `prefix="/webhooks"` cannot know its own name.
           endpointKind: 'http-route',
-          key: `${method} ${route}`,
-          name: `${method} ${route}`,
+          // The expression as the author wrote it when there is no literal to show. Not
+          // a URL and not pretending to be one: `POST org_scoped_rule('/login')` sits
+          // where the address goes and a reader recognises their own line in it. The
+          // alternative — reconstructing `/login` from inside the call — would be
+          // inventing an address, since the helper is a prefix and the real path is not
+          // the one in the parentheses.
+          key: `${method} ${route ?? computed}`,
+          name: `${method} ${route ?? computed}`,
           method,
+          // Null, because nothing downstream may treat this as an address it can match
+          // a prefix or a webhook pattern against.
           route,
           framework,
           writes: method !== 'GET' && method !== 'HEAD',
