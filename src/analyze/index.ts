@@ -6,6 +6,7 @@
  * functions/types), and produces a complete Atlas. This is the only place that knows
  * the whole pipeline.
  */
+import fs from 'node:fs';
 import path from 'node:path';
 import type {
   Atlas,
@@ -289,7 +290,23 @@ export async function analyzeProject(rootDir: string, options: AnalyzeOptions = 
   // Beside the pass above and for the same reason: this is a fact about a file that
   // every later answer depends on, and it must be settled before the boundary is built,
   // because an exported name in a generated file is not a commitment anybody made (#126).
-  const generatedFiles = markGeneratedFiles(nodes).files;
+  // The reader hands over each file's first lines so the header rules actually run —
+  // they were dead code until #173 — and it stays byte-bounded because this pass has no
+  // business re-reading a repository the plugins already read once.
+  const generatedFiles = markGeneratedFiles(nodes, (relPath) => {
+    try {
+      const fd = fs.openSync(path.join(project.root, relPath), 'r');
+      try {
+        const buffer = Buffer.alloc(600);
+        const bytes = fs.readSync(fd, buffer, 0, buffer.length, 0);
+        return buffer.toString('utf8', 0, bytes);
+      } finally {
+        fs.closeSync(fd);
+      }
+    } catch {
+      return null;
+    }
+  }).files;
 
   // --- the database schema ---
   // Read before the containment tree is built, because the schema file has to be in
