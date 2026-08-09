@@ -25,6 +25,7 @@
  *   - `unreadable`— a file this route imports could not be read, so "no check found"
  *                   is a statement about the analyzer, not about the code.
  */
+import { backbonePhrase, unreadBackbone } from './coverage.js';
 import { makeFileId } from './types.js';
 import type {
   AtlasEdge,
@@ -295,7 +296,21 @@ export function authHeadline(stats: AtlasStats): AuthHeadline | null {
   // A Python project mapped on a machine whose interpreter never answered has zero doors
   // for the same reason a blindfolded person sees no traffic (issue #58), and "nothing
   // here answers a URL" is then the most confidently wrong sentence this tool can print.
+  //
+  // The strongest form of not-seeing is a whole language (#171): huginn's routes are in
+  // 469 Ruby files nothing here parses, and the auth question was never asked of the
+  // application at all — which outranks every other reading of "zero routes".
+  const backbone = unreadBackbone(stats.unreadLanguages, stats.files);
   if (routes === 0) {
+    if (backbone) {
+      return {
+        tone: 'warn',
+        headline:
+          `most of this repository is ${backbonePhrase(backbone)}, which App Atlas cannot read — ` +
+          'whether anything answers a URL was never in view',
+        caveats: [],
+      };
+    }
     if (unread === 0) return null;
     return {
       tone: 'warn',
@@ -385,6 +400,15 @@ export function authHeadline(stats: AtlasStats): AuthHeadline | null {
       `App Atlas could not read ${unread} ${unread === 1 ? 'file' : 'files'}; whatever they declare is missing from every number here`,
     );
   }
+  // Routes were found AND most of the repository is in a language nothing here reads —
+  // a Rails app with a JS sprinkle. The routes above are real; the denominator is not
+  // the application's (#171).
+  if (backbone) {
+    caveats.push(
+      `most of this repository is ${backbonePhrase(backbone)}, which App Atlas cannot read — ` +
+        'the routes above are only the ones written in languages it can',
+    );
+  }
   if (hedged) {
     caveats.push(
       likelyOnly === assessed - public_
@@ -393,7 +417,7 @@ export function authHeadline(stats: AtlasStats): AuthHeadline | null {
     );
   }
 
-  return { tone: open > 0 || unknown > 0 || unlinked > 0 ? 'warn' : 'ok', headline, caveats };
+  return { tone: open > 0 || unknown > 0 || unlinked > 0 || backbone !== null ? 'warn' : 'ok', headline, caveats };
 }
 
 /** Files that could not be parsed, so the reader can see what the map is missing. */

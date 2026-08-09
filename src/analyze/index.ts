@@ -447,7 +447,12 @@ export async function analyzeProject(rootDir: string, options: AnalyzeOptions = 
       languages: [...languages],
       frameworks: project.frameworks,
       archetype,
-      stats: computeStats(nodes, liveEdges),
+      stats: {
+        ...computeStats(nodes, liveEdges),
+        // Stamped from discovery rather than computed from nodes, because the whole
+        // point is the files that never became nodes (#171).
+        ...(project.unreadLanguages.length > 0 ? { unreadLanguages: project.unreadLanguages } : {}),
+      },
       incremental: { reused, analyzed },
       // Written down rather than inferred later, because every one of these facts is
       // gone by the time a second process reads the atlas — and a question answered by

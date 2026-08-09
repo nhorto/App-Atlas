@@ -540,6 +540,13 @@ export interface AtlasStats {
   likelyOnlyRoutes: number;
   /** Files that could not be parsed at all. Every count above is short by their contents. */
   unreadFiles: number;
+  /**
+   * Whole languages no analyzer reads, counted at discovery (#171). huginn is 469 Ruby
+   * files and read as "18 files, 1 way in" with no hint the application itself was
+   * never in view. When these outnumber the files read, every surface hedges — the
+   * summary, the archetype and the auth headline must not present a sliver as the app.
+   */
+  unreadLanguages?: { ext: string; count: number }[];
   services: number;
   externalServices: number;
   stores: number;
