@@ -83,6 +83,7 @@ export function detectPythonBoundaries(input: PythonBoundaryInput): BoundaryFind
 
   detectRoutes(input, modules, findings, site);
   if (has('django')) detectDjangoRoutes(input, findings, site);
+  if (modules.has('rest_framework')) detectDrfRouters(input, findings, site);
   detectTasks(input, has, findings, site);
   detectEnv(input, findings, site);
   detectOutbound(input, modules, findings, site);
@@ -329,6 +330,62 @@ function detectDjangoRoutes(
       // The view lives in another file and this reader does not follow it there yet, so
       // whatever guards it is invisible from `urls.py`. Say that, rather than counting
       // it as a door nobody checks — see EndpointMeta.handlerUnlinked.
+      handlerUnlinked: true,
+    });
+  }
+}
+
+/**
+ * A DRF router's register() table, which is the whole API (#170).
+ *
+ * `api_router.register(r"documents", DocumentViewSet)` is Django REST Framework's way
+ * of declaring an entire REST resource — and paperless-ngx writes twenty of them in
+ * `urls.py`, spliced into the URL tree as `*api_router.urls`, covering documents,
+ * tags, saved views and tasks. Every one produced zero doors, so the map said "83
+ * ways in" about the application while missing its primary surface completely. Same
+ * registration-table shape #142 noted in redash's Flask-RESTful `add_org_resource`,
+ * in the ecosystem's most canonical spelling.
+ *
+ * What is claimed is the under-claiming floor: ONE door per registration, method
+ * unknown. DRF derives list/detail/extra-action URLs from the class body — a
+ * ReadOnlyModelViewSet has no POST — so claiming the generated set without reading
+ * the class would invent doors. The mount prefix lives wherever the router's urls
+ * were spliced, usually another expression entirely, so the address wears #153's
+ * ellipsis and `route` stays null. The ViewSet's name is the way back to the code
+ * and travels as handlerOwner, so a class-level check the owner chain can read
+ * still reaches the door.
+ *
+ * Gated on the file importing rest_framework, so somebody's own `.register(...)`
+ * in an unrelated codebase proves nothing. The first argument must be a string:
+ * `admin.site.register(Document)` registers a model, not a route, and has no
+ * prefix to read.
+ */
+function detectDrfRouters(
+  input: PythonBoundaryInput,
+  findings: BoundaryFinding[],
+  site: (line: number, snippet?: string) => CodeSite,
+): void {
+  for (const call of input.file.calls ?? []) {
+    if (!call.callee.endsWith('.register')) continue;
+    const prefix = strArg(call.args[0]);
+    if (prefix === null) continue;
+    const view = nameArg(call.args[1]);
+    if (view === null) continue;
+    const shown = `/${prefix}`.replace(/\/+/g, '/');
+    findings.push({
+      type: 'endpoint',
+      endpointKind: 'http-route',
+      key: `ANY ${input.file.path}#${call.callee}(${prefix})`,
+      name: `…${shown} (${view})`,
+      // The ViewSet decides which verbs exist, so claiming one would be a guess.
+      method: null,
+      route: null,
+      framework: 'Django REST Framework',
+      writes: false,
+      guards: [],
+      site: site(call.line, `${call.callee}("${prefix}", ${view})`),
+      handlerId: null,
+      handlerOwner: view.split('.').pop() ?? view,
       handlerUnlinked: true,
     });
   }
