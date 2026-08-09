@@ -284,7 +284,14 @@ export interface EnvVarInfo {
  * mounted on, and a handler that calls the provider's own sign-in routine. Both are
  * "the door people sign in through", which is what every screen already calls this.
  */
-export type OpenKind = 'worth-a-look' | 'page' | 'auth-mount' | 'unreadable' | 'generated' | 'unlinked';
+export type OpenKind =
+  | 'worth-a-look'
+  | 'page'
+  | 'auth-mount'
+  | 'unreadable'
+  | 'generated'
+  | 'unlinked'
+  | 'declared-public';
 
 export interface OpenVerdict {
   kind: OpenKind;
@@ -377,6 +384,18 @@ export interface EndpointMeta {
    * whose views are behind a permission mixin (#139).
    */
   handlerUnlinked?: boolean;
+  /**
+   * The code declares this door open on purpose — NestJS's `@UseGuards(PublicEndpointGuard)`,
+   * where the guard's `canActivate` is `return true` and the class docstring says it
+   * "serves as documentation that the endpoint is intentionally accessible without
+   * authentication" (#152).
+   *
+   * Unchecked *with a reason*, which is the same shelf as a marketing page and the door
+   * people sign in through. Counting it as a lock reported twentyhq/twenty's OAuth
+   * callbacks as protected; counting it as silence would put twenty-seven deliberate
+   * decisions on the worry list. Neither is what the author wrote down.
+   */
+  declaredPublic?: boolean;
   /** Cron expression, when a scheduler is what knocks. */
   schedule?: string;
   /** Only on the single `env` endpoint. */

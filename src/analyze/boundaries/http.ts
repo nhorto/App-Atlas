@@ -515,7 +515,9 @@ function nestController(cls: ClassDeclaration, ctx: DetectorContext): void {
   if (!controller) return;
 
   const base = normalizeSegment(literalString(controller.getArguments()[0]) ?? '');
-  const classGuards = decoratorGuards(cls.getDecorator('UseGuards'), ctx);
+  const classUseGuards = cls.getDecorator('UseGuards');
+  const classGuards = decoratorGuards(classUseGuards, ctx);
+  const classDeclaredPublic = declaresPublic(classUseGuards);
 
   for (const method of cls.getMethods()) {
     for (const name of HTTP_METHODS) {
@@ -523,6 +525,7 @@ function nestController(cls: ClassDeclaration, ctx: DetectorContext): void {
       if (!decorator) continue;
       const sub = normalizeSegment(literalString(decorator.getArguments()[0]) ?? '');
       const route = `/${[base, sub].filter(Boolean).join('/')}`;
+      const methodUseGuards = method.getDecorator('UseGuards');
       ctx.emit({
         type: 'endpoint',
         endpointKind: 'http-route',
@@ -532,7 +535,10 @@ function nestController(cls: ClassDeclaration, ctx: DetectorContext): void {
         route,
         framework: 'NestJS',
         writes: WRITE_METHODS.has(name),
-        guards: [...classGuards, ...decoratorGuards(method.getDecorator('UseGuards'), ctx)],
+        // A guard that permits everything is not a lock and not silence either: it is
+        // somebody writing down that this door is open on purpose (#152).
+        ...(classDeclaredPublic || declaresPublic(methodUseGuards) ? { declaredPublic: true } : {}),
+        guards: [...classGuards, ...decoratorGuards(methodUseGuards, ctx)],
         site: ctx.site(method, `@${capitalize(name.toLowerCase())}('${sub}')`),
         handlerId: ctx.enclosing(method),
         // The class this route was declared on, so a check written further up the chain
@@ -601,14 +607,74 @@ function edgeFunctionName(relPath: string): string | null {
 
 function decoratorGuards(decorator: ReturnType<ClassDeclaration['getDecorator']>, ctx: DetectorContext): GuardInfo[] {
   if (!decorator) return [];
-  return decorator.getArguments().map((arg) => ({
-    name: arg.getText(),
-    how: 'decorator' as const,
-    provider: providerForGuardName(arg.getText(), ctx),
-    path: ctx.ref.relPath,
-    line: decorator.getStartLineNumber(),
-    confidence: 'certain' as const,
-  }));
+  return decorator
+    .getArguments()
+    .filter((arg) => !permitsEverything(arg))
+    .map((arg) => ({
+      name: arg.getText(),
+      how: 'decorator' as const,
+      provider: providerForGuardName(arg.getText(), ctx),
+      path: ctx.ref.relPath,
+      line: decorator.getStartLineNumber(),
+      confidence: 'certain' as const,
+    }));
+}
+
+/** Whether any argument of a `@UseGuards(...)` is a guard that lets everybody through. */
+function declaresPublic(decorator: ReturnType<ClassDeclaration['getDecorator']>): boolean {
+  return (decorator?.getArguments() ?? []).some((arg) => permitsEverything(arg));
+}
+
+/**
+ * Whether a NestJS guard lets everybody through — an opt-out wearing a lock's clothes.
+ *
+ * Nest has no `[AllowAnonymous]`. Excusing a route from a globally applied guard is
+ * conventionally written *as a guard that permits everything*, so the opt-out and the
+ * lock are spelled identically and only the class body tells them apart. twentyhq/twenty
+ * uses one 27 times:
+ *
+ *     // Guard that explicitly marks an endpoint as public/unprotected.
+ *     // This guard always returns true …
+ *     canActivate(_context: ExecutionContext): boolean { return true; }
+ *
+ * Counting that as a check reported two OAuth endpoints, deliberately reachable without
+ * a session, as protected at `certain` confidence (#152) — the direction
+ * `csharp/boundaries.ts` calls "the one direction this tool must never be wrong in",
+ * which is why that tier has `ALLOW_ANONYMOUS`. This is the same rule for the framework
+ * where the opt-out has no name of its own.
+ *
+ * Read from the body, never from the name: `PublicEndpointGuard` and `PublicApiKeyGuard`
+ * are indistinguishable as strings and one of them is a real check. A guard whose class
+ * cannot be resolved — anything from a package — is left alone and stays a guard, which
+ * keeps the failure on the side of over-reporting a lock rather than silencing one.
+ */
+function permitsEverything(arg: Node): boolean {
+  const symbol = arg.getSymbol();
+  if (!symbol) return false;
+  // A guard is almost always imported, and an imported name's symbol is the *alias* —
+  // its declaration is the `ImportSpecifier`, not the class. Following the alias is the
+  // whole difference between this rule working and silently never firing.
+  let aliased: ReturnType<typeof symbol.getAliasedSymbol>;
+  try {
+    aliased = symbol.getAliasedSymbol();
+  } catch {
+    aliased = undefined;
+  }
+  const declarations = (aliased ?? symbol).getDeclarations() ?? [];
+  for (const declaration of declarations) {
+    if (!Node.isClassDeclaration(declaration)) continue;
+    const method = declaration.getMethod('canActivate');
+    const body = method?.getBody();
+    if (!body || !Node.isBlock(body)) continue;
+    const statements = body.getStatements();
+    // One statement, and it hands back `true`. Anything else — a branch, a throw, a
+    // look at the ExecutionContext — is a decision, and a decision is a check.
+    if (statements.length !== 1) continue;
+    const only = statements[0];
+    if (!Node.isReturnStatement(only)) continue;
+    if (only.getExpression()?.getKind() === SyntaxKind.TrueKeyword) return true;
+  }
+  return false;
 }
 
 /** Middleware arguments sitting between the path and the handler. */

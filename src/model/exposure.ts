@@ -190,6 +190,21 @@ export function classifyOpenDoors(nodes: AtlasNode[], edges: AtlasEdge[]): Map<s
       continue;
     }
 
+    // Somebody wrote down that this door is open (#152). A NestJS guard whose whole body
+    // is `return true` is the framework's `[AllowAnonymous]`, spelled as a guard because
+    // Nest gives it no other spelling — and the intent is as explicit as a comment.
+    //
+    // Above the page rule and below the ignorance rules, in the same order the rest of
+    // this function reads: a stated decision outranks a guess about what a door is for,
+    // and nothing outranks admitting we could not see.
+    if (meta.declaredPublic) {
+      verdicts.set(node.id, {
+        kind: 'declared-public',
+        because: 'a guard that permits everything is written on it — this door is open on purpose',
+      });
+      continue;
+    }
+
     // A page that writes data is not the harmless marketing page this rule is about,
     // so it keeps its place in the list that gets read.
     if (meta.method === 'PAGE' && !meta.writes) {
@@ -216,16 +231,27 @@ export interface OpenTally {
   generated: number;
   /** Routes whose handler was named in a routing table but never followed (#139). */
   unlinked: number;
+  /** Routes the code declares open on purpose — Nest's answer to `[AllowAnonymous]` (#152). */
+  declaredPublic: number;
 }
 
 export function tallyOpenDoors(verdicts: Iterable<OpenVerdict>): OpenTally {
-  const tally: OpenTally = { worthALook: 0, page: 0, authMount: 0, unreadable: 0, generated: 0, unlinked: 0 };
+  const tally: OpenTally = {
+    worthALook: 0,
+    page: 0,
+    authMount: 0,
+    unreadable: 0,
+    generated: 0,
+    unlinked: 0,
+    declaredPublic: 0,
+  };
   for (const verdict of verdicts) {
     if (verdict.kind === 'page') tally.page++;
     else if (verdict.kind === 'auth-mount') tally.authMount++;
     else if (verdict.kind === 'unreadable') tally.unreadable++;
     else if (verdict.kind === 'generated') tally.generated++;
     else if (verdict.kind === 'unlinked') tally.unlinked++;
+    else if (verdict.kind === 'declared-public') tally.declaredPublic++;
     else tally.worthALook++;
   }
   return tally;
