@@ -233,7 +233,14 @@ function detectRoutes(
           // alternative — reconstructing `/login` from inside the call — would be
           // inventing an address, since the helper is a prefix and the real path is not
           // the one in the parentheses.
-          key: `${method} ${route ?? computed}`,
+          //
+          // For a literal, the key IS the address, so `GET /health` in two files is one
+          // door — that merge is the point. For a computed one, identical text is not an
+          // identical address: two blueprints with different url_prefixes both write
+          // `make_rule("/list")`, and merging them put one file's login_required on the
+          // other's open route (#160). The file and the callee — which carries the
+          // blueprint variable — are the identity the text alone doesn't have.
+          key: route !== null ? `${method} ${route}` : `${method} ${input.file.path}#${decorator.callee}(${computed})`,
           name: `${method} ${route ?? computed}`,
           method,
           // Null, because nothing downstream may treat this as an address it can match
