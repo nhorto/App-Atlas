@@ -1,0 +1,23 @@
+You are onboarding to the repository at /tmp/atlas-exp/subject-atlas. Answer four questions about its Python backend.
+
+Definitions, so we agree on what counts. An endpoint is an HTTP route declared with a FastAPI route decorator (@router.get(...), @app.post(...), and the other verbs) in backend/open_webui/routers/*.py or backend/open_webui/main.py. Its path is the decorator's path with whatever prefix app.include_router(...) mounts it under in main.py. Ignore websockets, socket.io, static mounts, and anything outside backend/.
+
+Q1. List every endpoint under /api/v1/notes and every endpoint under /api/v1/folders.
+
+Q2. For each endpoint in Q1, say who may call it: "admin" (administrators only), "user" (any signed-in user), or "open" (reachable with no authentication at all). Judge this by the handler's signature — which authentication dependency it declares, if any.
+
+Q3. Across the whole backend, list every endpoint that is "open" — reachable by a caller who is not signed in.
+
+Q4. In two short paragraphs, describe what happens when a signed-in user uploads a file: which endpoint receives it, where the bytes end up, and what else the upload triggers. Give file:line for every claim.
+
+Answer with one fenced json block in exactly this shape, and then your Q4 prose underneath it:
+
+```json
+{"q1": [{"method": "GET", "path": "/api/v1/notes/"}],
+ "q2": [{"method": "GET", "path": "/api/v1/notes/", "auth": "user"}],
+ "q3": [{"method": "POST", "path": "/api/v1/auths/signin"}]}
+```
+
+Be complete and be accurate. Both matter. Do not pad the lists to look thorough.
+
+An App Atlas MCP server is attached, offering list_doors, unguarded_doors, where_is, what_calls, data_stores, env_vars and unimported_files over a precomputed map of this repo. Use it if it helps.

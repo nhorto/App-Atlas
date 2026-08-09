@@ -170,4 +170,155 @@ would.
 
 # Results
 
-*(pending — this section is written after the six runs complete)*
+*Six runs, 9 August 2026. Raw output in [`runs/`](agent-trial/), one JSON per session,
+including every answer quoted below.*
+
+## The pre-registered test failed, and not for the reason it was written to catch
+
+| | Q1 F1 | Q2 acc | Q3 P | Q3 R | Q3 F1 | invented | missed | secs | turns | cost |
+|---|---|---|---|---|---|---|---|---|---|---|
+| control-1 | 1.00 | 1.00 | 1.00 | 1.00 | 1.00 | 0 | 0 | 165 | 31 | $1.20 |
+| control-2 | 1.00 | 1.00 | 1.00 | 1.00 | 1.00 | 0 | 0 | 298 | 16 | $2.13 |
+| control-3 | 1.00 | 1.00 | 1.00 | 1.00 | 1.00 | 0 | 0 | 213 | 38 | $1.37 |
+| atlas-1 | 1.00 | 1.00 | 1.00 | 1.00 | 1.00 | 0 | 0 | 97 | 19 | $0.75 |
+| atlas-2 | 1.00 | 1.00 | 1.00 | 1.00 | 1.00 | 0 | 0 | 95 | 17 | $0.65 |
+| atlas-3 | 1.00 | 1.00 | 1.00 | 1.00 | 1.00 | 0 | 0 | 340 | 38 | $1.38 |
+
+```
+Q3 F1 lift  +0.00 — needs >= +0.15 : FAIL
+Q3 precision  atlas 1.00 vs control 1.00 : PASS
+```
+
+**The map did not make the agent more accurate, because the agent was already perfect
+without it.** Three control runs out of three enumerated all 23 endpoints across two
+routers, labelled every one's authentication correctly, and found all 21 unauthenticated
+endpoints among 529 — with nothing invented and nothing missed. There was no headroom for
+the map to occupy, and the primary metric was therefore unmeasurable on this subject.
+
+That is a failure of the experiment's design, and it is also the most useful thing it
+produced. **On a conventionally-structured FastAPI repository, a competent agent with grep
+does not need this tool to get the right answer.** Any pitch that says otherwise is
+contradicted by six runs' worth of evidence in this repository.
+
+The second condition passed: precision was 1.00 in both arms, so the map did not induce a
+single false alarm. The third — Q4 false statements — is below, and it also passed.
+
+## What did differ: cost, unreliably
+
+| | mean | median | range |
+|---|---|---|---|
+| control | 225s, $1.56, 28 turns | 213s | 165–298s |
+| **atlas** | **177s, $0.93, 25 turns** | **92s** | **95–340s** |
+
+Atlas times include the cold `analyze` each run paid for: 5.78s, 5.68s, 5.82s.
+
+Two atlas runs came in at 95s and 97s — under half the control median, at 40% of the cost.
+The third took 340s and $1.38, slower and dearer than every control run. **At n=3 with that
+spread, the cost difference is not a result.** Reporting the mean without the range would
+be the more flattering and less true summary.
+
+## The transcripts explain the spread, and this is the real finding
+
+Tool calls, counted from each session's own transcript:
+
+| run | App Atlas calls | other tool calls | secs | cost |
+|---|---|---|---|---|
+| atlas-1 | 2 — `list_doors`, `unguarded_doors` | 15 (7 grep, 3 read) | 97 | $0.75 |
+| atlas-2 | 1 — `unguarded_doors` | 13 (5 read, no grep) | 95 | $0.65 |
+| atlas-3 | 1 — `list_doors` | 34 (24 bash, 7 grep) | **340** | **$1.38** |
+
+**The saving tracks how far the agent was willing to lean on the map.** atlas-2 asked
+`unguarded_doors` one question, spot-read five files, and stopped — the cheapest run of the
+six. atlas-3 called `list_doors` once, then re-derived the entire answer by hand: a control
+run carrying the map's overhead, and the slowest of all six.
+
+Two things follow, and the second matters more than the first.
+
+**No run trusted the map on its own.** All three cross-checked it against source. That is
+correct behaviour from the agent — it has no way to know the map is right — and it puts a
+ceiling on the saving that no improvement to the map's *accuracy* can lift. What would lift
+it is the agent having a reason to believe the map, which is a provenance and confidence
+problem, not a coverage one.
+
+**Every atlas run spent a `ToolSearch` call discovering the MCP tools' schemas before it
+could call one.** Small, but it is friction on the first and most fragile step, and it is
+paid once per session by every user.
+
+## Q4 — the question the map has no answer for
+
+Scored by hand, as pre-registered. **118 distinct `file:line` citations across the six runs.
+Every one resolves to a real line. No false statement was found in either arm.**
+
+The claims checked directly against source: the receiving endpoint (`POST /api/v1/files/`,
+`routers/files.py:271`), its guard (`user=Depends(get_verified_user)`, `files.py:279`), the
+`process: bool = Query(True)` default (`files.py:277`), the storage name
+(`id = str(uuid.uuid4())` then `filename = f'{id}_{filename}'`, `files.py:356-358`), the
+destination (`UPLOAD_DIR = DATA_DIR / 'uploads'`, `config.py:168`), and the event
+(`FILE_UPLOADED`, `name='file.uploaded'`, `events.py:287-288`). All correct in every run
+that cited them.
+
+This is a sample of the spine plus every point where two runs disagreed, not an exhaustive
+audit of all 118 citations. On that basis the map neither helped nor misled on work outside
+its coverage, which is the answer the question was asked for.
+
+One thing that could have gone wrong and did not: the map showed every address in this repo
+with a leading `…` (see [#199](https://github.com/nhorto/App-Atlas/issues/199)). **No arm
+reported a path containing an ellipsis.** The agents dropped it silently rather than
+propagating it.
+
+## Measured on the side: how accurate the map itself is
+
+The oracle grades App Atlas as readily as it grades an agent, so it was pointed at the map.
+0.25.0 from the registry, `--no-ai`, on the same commit:
+
+| | oracle | App Atlas | |
+|---|---|---|---|
+| endpoints | 529 | **528** | 0 invented |
+| reachable with no auth | 25 | **24** | 0 false alarms, 0 missed |
+| auth verdict per endpoint | — | **528 / 528 agree** | |
+
+The single miss is `/api/v1/retrieval/ef/{text}`, registered under `if ENV == 'dev'` — one
+of the cases the protocol excused in advance for both sides.
+
+Seventeen repositories have been dogfooded and every one of them produced a defect. This is
+the first whose *facts* were clean. It still produced a defect, in the addresses rather than
+the verdicts: [#199](https://github.com/nhorto/App-Atlas/issues/199) — FastAPI's
+`app.mount()` read as mounting the app's own routers, which puts a leading `…` on all 518
+addresses here, and on an app with exactly one static mount fabricates the prefix outright.
+That one was found by preparing this trial, not by running it.
+
+## What this changes
+
+1. **Stop claiming the map makes an agent more correct on ordinary repos.** It does not, on
+   the evidence here, because the agent was already correct. The claim that survives is
+   narrower: *the same answer, sometimes for under half the cost.*
+2. **The cost claim is real but conditional, and the condition is trust.** The map pays off
+   exactly when the agent stops re-deriving what it just read. The lever is provenance —
+   giving the agent grounds to believe a line — not more coverage.
+3. **Fix the ToolSearch friction**, or at least measure it. Every session pays it.
+4. **The accuracy question is still open and needs a harder subject.** open-webui is
+   conventional: one decorator per route, one dependency per guard, greppable. The repos
+   this tool was built for are the ones where that fails — a custom auth wrapper one hop
+   away, a route path computed from a constant, a guard on a router rather than a handler.
+   The next trial should use one, and be pre-registered the same way.
+
+   That is a follow-up, not a moved goalpost. **This trial failed its own primary test and
+   that stands recorded above**; a second trial on a harder subject does not retract it,
+   and if the harder subject also comes out tied, the honest conclusion is the one
+   [LAUNCH.md](LAUNCH.md) already anticipated.
+5. **Ship [#199](https://github.com/nhorto/App-Atlas/issues/199).** An invented address is
+   the failure mode this project treats as worst, and one static-file mount is enough to
+   produce it.
+
+## Limitations, plainly
+
+- **One subject, one language, one framework.** Nothing here generalises to TypeScript, Go
+  or C#.
+- **n=3 per arm.** Enough to kill the single-sample problem, not enough to make the cost
+  difference a measurement.
+- **One model** (`sonnet`). A weaker agent would plausibly benefit more from a map; a
+  stronger one, less. This trial says nothing about that slope.
+- **The atlas arm was told the server existed.** Whether an agent finds and uses it unaided
+  is a separate question and was deliberately not asked.
+- **Q4 grading is mine**, on a sample, and I am not a neutral judge of my own tool. The runs
+  are committed so the count can be disputed.

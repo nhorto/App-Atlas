@@ -1,0 +1,6089 @@
+[
+ {
+  "method": "GET",
+  "path": "/api/changelog",
+  "auth": "open",
+  "handler": "get_app_changelog",
+  "file": "backend/open_webui/main.py",
+  "line": 2445,
+  "depends": []
+ },
+ {
+  "method": "POST",
+  "path": "/api/chat/actions/{action_id}",
+  "auth": "user",
+  "handler": "chat_action",
+  "file": "backend/open_webui/main.py",
+  "line": 1997,
+  "depends": [
+   "get_verified_user"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/api/chat/completed",
+  "auth": "user",
+  "handler": "chat_completed",
+  "file": "backend/open_webui/main.py",
+  "line": 1977,
+  "depends": [
+   "get_verified_user"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/api/chat/completions",
+  "auth": "user",
+  "handler": "chat_completion",
+  "file": "backend/open_webui/main.py",
+  "line": 1054,
+  "depends": [
+   "get_verified_user"
+  ]
+ },
+ {
+  "method": "GET",
+  "path": "/api/config",
+  "auth": "open",
+  "handler": "get_app_config",
+  "file": "backend/open_webui/main.py",
+  "line": 2069,
+  "depends": []
+ },
+ {
+  "method": "POST",
+  "path": "/api/embeddings",
+  "auth": "user",
+  "handler": "embeddings",
+  "file": "backend/open_webui/main.py",
+  "line": 1018,
+  "depends": [
+   "get_verified_user"
+  ]
+ },
+ {
+  "method": "GET",
+  "path": "/api/events",
+  "auth": "admin",
+  "handler": "get_event_catalog",
+  "file": "backend/open_webui/main.py",
+  "line": 2320,
+  "depends": [
+   "get_admin_user"
+  ]
+ },
+ {
+  "method": "GET",
+  "path": "/api/events/webhooks",
+  "auth": "admin",
+  "handler": "get_event_webhooks_api",
+  "file": "backend/open_webui/main.py",
+  "line": 2328,
+  "depends": [
+   "get_admin_user"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/api/events/webhooks",
+  "auth": "admin",
+  "handler": "create_event_webhook",
+  "file": "backend/open_webui/main.py",
+  "line": 2333,
+  "depends": [
+   "get_admin_user"
+  ]
+ },
+ {
+  "method": "DELETE",
+  "path": "/api/events/webhooks/{webhook_id}",
+  "auth": "admin",
+  "handler": "delete_event_webhook_api",
+  "file": "backend/open_webui/main.py",
+  "line": 2398,
+  "depends": [
+   "get_admin_user"
+  ]
+ },
+ {
+  "method": "PUT",
+  "path": "/api/events/webhooks/{webhook_id}",
+  "auth": "admin",
+  "handler": "update_event_webhook",
+  "file": "backend/open_webui/main.py",
+  "line": 2364,
+  "depends": [
+   "get_admin_user"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/api/message",
+  "auth": "user",
+  "handler": "generate_messages",
+  "file": "backend/open_webui/main.py",
+  "line": 1883,
+  "depends": [
+   "get_verified_user"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/api/message/count_tokens",
+  "auth": "user",
+  "handler": "count_message_tokens",
+  "file": "backend/open_webui/main.py",
+  "line": 1814,
+  "depends": [
+   "get_verified_user"
+  ]
+ },
+ {
+  "method": "GET",
+  "path": "/api/models",
+  "auth": "user",
+  "handler": "get_models",
+  "file": "backend/open_webui/main.py",
+  "line": 841,
+  "depends": [
+   "get_verified_user"
+  ]
+ },
+ {
+  "method": "GET",
+  "path": "/api/models/base",
+  "auth": "admin",
+  "handler": "get_base_models",
+  "file": "backend/open_webui/main.py",
+  "line": 891,
+  "depends": [
+   "get_admin_user"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/api/models/unload",
+  "auth": "admin",
+  "handler": "unload_model",
+  "file": "backend/open_webui/main.py",
+  "line": 901,
+  "depends": [
+   "get_admin_user"
+  ]
+ },
+ {
+  "method": "GET",
+  "path": "/api/tasks",
+  "auth": "admin",
+  "handler": "list_tasks_endpoint",
+  "file": "backend/open_webui/main.py",
+  "line": 2024,
+  "depends": [
+   "get_admin_user"
+  ]
+ },
+ {
+  "method": "GET",
+  "path": "/api/tasks/chat/{chat_id:path}",
+  "auth": "user",
+  "handler": "list_tasks_by_chat_id_endpoint",
+  "file": "backend/open_webui/main.py",
+  "line": 2029,
+  "depends": [
+   "get_verified_user"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/api/tasks/chat/{chat_id:path}/stop",
+  "auth": "user",
+  "handler": "stop_tasks_by_chat_id_endpoint",
+  "file": "backend/open_webui/main.py",
+  "line": 2047,
+  "depends": [
+   "get_verified_user"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/api/tasks/stop/{task_id}",
+  "auth": "admin",
+  "handler": "stop_task_endpoint",
+  "file": "backend/open_webui/main.py",
+  "line": 2015,
+  "depends": [
+   "get_admin_user"
+  ]
+ },
+ {
+  "method": "GET",
+  "path": "/api/usage",
+  "auth": "user",
+  "handler": "get_current_usage",
+  "file": "backend/open_webui/main.py",
+  "line": 2450,
+  "depends": [
+   "get_verified_user"
+  ]
+ },
+ {
+  "method": "GET",
+  "path": "/api/v1/analytics/daily",
+  "auth": "admin",
+  "handler": "get_daily_stats",
+  "file": "backend/open_webui/routers/analytics.py",
+  "line": 200,
+  "depends": [
+   "get_admin_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "GET",
+  "path": "/api/v1/analytics/messages",
+  "auth": "admin",
+  "handler": "get_messages",
+  "file": "backend/open_webui/routers/analytics.py",
+  "line": 126,
+  "depends": [
+   "get_admin_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "GET",
+  "path": "/api/v1/analytics/models",
+  "auth": "admin",
+  "handler": "get_model_analytics",
+  "file": "backend/open_webui/routers/analytics.py",
+  "line": 59,
+  "depends": [
+   "get_admin_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "GET",
+  "path": "/api/v1/analytics/models/{model_id:path}/chats",
+  "auth": "admin",
+  "handler": "get_model_chats",
+  "file": "backend/open_webui/routers/analytics.py",
+  "line": 286,
+  "depends": [
+   "get_admin_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "GET",
+  "path": "/api/v1/analytics/models/{model_id:path}/overview",
+  "auth": "admin",
+  "handler": "get_model_overview",
+  "file": "backend/open_webui/routers/analytics.py",
+  "line": 344,
+  "depends": [
+   "get_admin_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "GET",
+  "path": "/api/v1/analytics/summary",
+  "auth": "admin",
+  "handler": "get_summary",
+  "file": "backend/open_webui/routers/analytics.py",
+  "line": 164,
+  "depends": [
+   "get_admin_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "GET",
+  "path": "/api/v1/analytics/tokens",
+  "auth": "admin",
+  "handler": "get_token_usage",
+  "file": "backend/open_webui/routers/analytics.py",
+  "line": 236,
+  "depends": [
+   "get_admin_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "GET",
+  "path": "/api/v1/analytics/users",
+  "auth": "admin",
+  "handler": "get_user_analytics",
+  "file": "backend/open_webui/routers/analytics.py",
+  "line": 86,
+  "depends": [
+   "get_admin_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "GET",
+  "path": "/api/v1/audio/config",
+  "auth": "admin",
+  "handler": "get_audio_config",
+  "file": "backend/open_webui/routers/audio.py",
+  "line": 280,
+  "depends": [
+   "get_admin_user"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/api/v1/audio/config/update",
+  "auth": "admin",
+  "handler": "update_audio_config",
+  "file": "backend/open_webui/routers/audio.py",
+  "line": 288,
+  "depends": [
+   "get_admin_user"
+  ]
+ },
+ {
+  "method": "GET",
+  "path": "/api/v1/audio/models",
+  "auth": "user",
+  "handler": "get_models",
+  "file": "backend/open_webui/routers/audio.py",
+  "line": 1333,
+  "depends": [
+   "get_verified_user"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/api/v1/audio/speech",
+  "auth": "user",
+  "handler": "speech",
+  "file": "backend/open_webui/routers/audio.py",
+  "line": 557,
+  "depends": [
+   "get_verified_user"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/api/v1/audio/transcriptions",
+  "auth": "user",
+  "handler": "transcription",
+  "file": "backend/open_webui/routers/audio.py",
+  "line": 1180,
+  "depends": [
+   "get_verified_user"
+  ]
+ },
+ {
+  "method": "GET",
+  "path": "/api/v1/audio/voices",
+  "auth": "user",
+  "handler": "get_voices",
+  "file": "backend/open_webui/routers/audio.py",
+  "line": 1438,
+  "depends": [
+   "get_verified_user"
+  ]
+ },
+ {
+  "method": "GET",
+  "path": "/api/v1/auths/",
+  "auth": "user",
+  "handler": "get_session_user",
+  "file": "backend/open_webui/routers/auths.py",
+  "line": 247,
+  "depends": [
+   "get_current_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/api/v1/auths/add",
+  "auth": "admin",
+  "handler": "add_user",
+  "file": "backend/open_webui/routers/auths.py",
+  "line": 1082,
+  "depends": [
+   "get_admin_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "GET",
+  "path": "/api/v1/auths/admin/config",
+  "auth": "admin",
+  "handler": "get_admin_config",
+  "file": "backend/open_webui/routers/auths.py",
+  "line": 1185,
+  "depends": [
+   "get_admin_user"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/api/v1/auths/admin/config",
+  "auth": "admin",
+  "handler": "update_admin_config",
+  "file": "backend/open_webui/routers/auths.py",
+  "line": 1221,
+  "depends": [
+   "get_admin_user"
+  ]
+ },
+ {
+  "method": "GET",
+  "path": "/api/v1/auths/admin/config/ldap",
+  "auth": "admin",
+  "handler": "get_ldap_config",
+  "file": "backend/open_webui/routers/auths.py",
+  "line": 1296,
+  "depends": [
+   "get_admin_user"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/api/v1/auths/admin/config/ldap",
+  "auth": "admin",
+  "handler": "update_ldap_config",
+  "file": "backend/open_webui/routers/auths.py",
+  "line": 1305,
+  "depends": [
+   "get_admin_user"
+  ]
+ },
+ {
+  "method": "GET",
+  "path": "/api/v1/auths/admin/config/ldap/server",
+  "auth": "admin",
+  "handler": "get_ldap_server",
+  "file": "backend/open_webui/routers/auths.py",
+  "line": 1265,
+  "depends": [
+   "get_admin_user"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/api/v1/auths/admin/config/ldap/server",
+  "auth": "admin",
+  "handler": "update_ldap_server",
+  "file": "backend/open_webui/routers/auths.py",
+  "line": 1270,
+  "depends": [
+   "get_admin_user"
+  ]
+ },
+ {
+  "method": "GET",
+  "path": "/api/v1/auths/admin/config/oauth",
+  "auth": "admin",
+  "handler": "get_oauth_config",
+  "file": "backend/open_webui/routers/auths.py",
+  "line": 1444,
+  "depends": [
+   "get_admin_user"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/api/v1/auths/admin/config/oauth",
+  "auth": "admin",
+  "handler": "update_oauth_config",
+  "file": "backend/open_webui/routers/auths.py",
+  "line": 1449,
+  "depends": [
+   "get_admin_user"
+  ]
+ },
+ {
+  "method": "GET",
+  "path": "/api/v1/auths/admin/details",
+  "auth": "user",
+  "handler": "get_admin_details",
+  "file": "backend/open_webui/routers/auths.py",
+  "line": 1152,
+  "depends": [
+   "get_current_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "DELETE",
+  "path": "/api/v1/auths/api_key",
+  "auth": "user",
+  "handler": "delete_api_key",
+  "file": "backend/open_webui/routers/auths.py",
+  "line": 1492,
+  "depends": [
+   "get_current_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "GET",
+  "path": "/api/v1/auths/api_key",
+  "auth": "user",
+  "handler": "get_api_key",
+  "file": "backend/open_webui/routers/auths.py",
+  "line": 1510,
+  "depends": [
+   "get_current_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/api/v1/auths/api_key",
+  "auth": "user",
+  "handler": "generate_api_key",
+  "file": "backend/open_webui/routers/auths.py",
+  "line": 1467,
+  "depends": [
+   "get_current_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/api/v1/auths/ldap",
+  "auth": "open",
+  "handler": "ldap_auth",
+  "file": "backend/open_webui/routers/auths.py",
+  "line": 472,
+  "depends": [
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "DELETE",
+  "path": "/api/v1/auths/oauth/sessions/{provider:path}",
+  "auth": "user",
+  "handler": "delete_oauth_session_by_provider",
+  "file": "backend/open_webui/routers/auths.py",
+  "line": 1048,
+  "depends": [
+   "get_verified_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/api/v1/auths/oauth/{provider}/token/exchange",
+  "auth": "open",
+  "handler": "token_exchange",
+  "file": "backend/open_webui/routers/auths.py",
+  "line": 1562,
+  "depends": [
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/api/v1/auths/signin",
+  "auth": "open",
+  "handler": "signin",
+  "file": "backend/open_webui/routers/auths.py",
+  "line": 714,
+  "depends": [
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/api/v1/auths/signout",
+  "auth": "open",
+  "handler": "signout",
+  "file": "backend/open_webui/routers/auths.py",
+  "line": 942,
+  "depends": [
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/api/v1/auths/signup",
+  "auth": "open",
+  "handler": "signup",
+  "file": "backend/open_webui/routers/auths.py",
+  "line": 886,
+  "depends": [
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/api/v1/auths/update/password",
+  "auth": "user",
+  "handler": "update_password",
+  "file": "backend/open_webui/routers/auths.py",
+  "line": 384,
+  "depends": [
+   "get_current_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/api/v1/auths/update/profile",
+  "auth": "user",
+  "handler": "update_profile",
+  "file": "backend/open_webui/routers/auths.py",
+  "line": 317,
+  "depends": [
+   "get_verified_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/api/v1/auths/update/timezone",
+  "auth": "user",
+  "handler": "update_timezone",
+  "file": "backend/open_webui/routers/auths.py",
+  "line": 354,
+  "depends": [
+   "get_current_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/api/v1/automations/create",
+  "auth": "user",
+  "handler": "create_new_automation",
+  "file": "backend/open_webui/routers/automations.py",
+  "line": 169,
+  "depends": [
+   "get_verified_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "GET",
+  "path": "/api/v1/automations/list",
+  "auth": "user",
+  "handler": "get_automation_items",
+  "file": "backend/open_webui/routers/automations.py",
+  "line": 123,
+  "depends": [
+   "get_verified_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "GET",
+  "path": "/api/v1/automations/{id}",
+  "auth": "user",
+  "handler": "get_automation_by_id",
+  "file": "backend/open_webui/routers/automations.py",
+  "line": 206,
+  "depends": [
+   "get_verified_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "DELETE",
+  "path": "/api/v1/automations/{id}/delete",
+  "auth": "user",
+  "handler": "delete_automation_by_id",
+  "file": "backend/open_webui/routers/automations.py",
+  "line": 319,
+  "depends": [
+   "get_verified_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/api/v1/automations/{id}/run",
+  "auth": "user",
+  "handler": "run_automation_by_id",
+  "file": "backend/open_webui/routers/automations.py",
+  "line": 293,
+  "depends": [
+   "get_verified_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "GET",
+  "path": "/api/v1/automations/{id}/runs",
+  "auth": "user",
+  "handler": "get_automation_runs",
+  "file": "backend/open_webui/routers/automations.py",
+  "line": 347,
+  "depends": [
+   "get_verified_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/api/v1/automations/{id}/toggle",
+  "auth": "user",
+  "handler": "toggle_automation_by_id",
+  "file": "backend/open_webui/routers/automations.py",
+  "line": 265,
+  "depends": [
+   "get_verified_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/api/v1/automations/{id}/update",
+  "auth": "user",
+  "handler": "update_automation_by_id",
+  "file": "backend/open_webui/routers/automations.py",
+  "line": 224,
+  "depends": [
+   "get_verified_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "GET",
+  "path": "/api/v1/calendars/",
+  "auth": "user",
+  "handler": "get_calendars",
+  "file": "backend/open_webui/routers/calendar.py",
+  "line": 88,
+  "depends": [
+   "get_verified_user"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/api/v1/calendars/create",
+  "auth": "user",
+  "handler": "create_calendar",
+  "file": "backend/open_webui/routers/calendar.py",
+  "line": 113,
+  "depends": [
+   "get_verified_user"
+  ]
+ },
+ {
+  "method": "GET",
+  "path": "/api/v1/calendars/events",
+  "auth": "user",
+  "handler": "get_events",
+  "file": "backend/open_webui/routers/calendar.py",
+  "line": 144,
+  "depends": [
+   "get_verified_user"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/api/v1/calendars/events/create",
+  "auth": "user",
+  "handler": "create_event",
+  "file": "backend/open_webui/routers/calendar.py",
+  "line": 273,
+  "depends": [
+   "get_verified_user"
+  ]
+ },
+ {
+  "method": "GET",
+  "path": "/api/v1/calendars/events/search",
+  "auth": "user",
+  "handler": "search_events",
+  "file": "backend/open_webui/routers/calendar.py",
+  "line": 288,
+  "depends": [
+   "get_verified_user"
+  ]
+ },
+ {
+  "method": "GET",
+  "path": "/api/v1/calendars/events/{event_id}",
+  "auth": "user",
+  "handler": "get_event",
+  "file": "backend/open_webui/routers/calendar.py",
+  "line": 300,
+  "depends": [
+   "get_verified_user"
+  ]
+ },
+ {
+  "method": "DELETE",
+  "path": "/api/v1/calendars/events/{event_id}/delete",
+  "auth": "user",
+  "handler": "delete_event",
+  "file": "backend/open_webui/routers/calendar.py",
+  "line": 342,
+  "depends": [
+   "get_verified_user"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/api/v1/calendars/events/{event_id}/rsvp",
+  "auth": "user",
+  "handler": "rsvp_event",
+  "file": "backend/open_webui/routers/calendar.py",
+  "line": 364,
+  "depends": [
+   "get_verified_user"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/api/v1/calendars/events/{event_id}/update",
+  "auth": "user",
+  "handler": "update_event",
+  "file": "backend/open_webui/routers/calendar.py",
+  "line": 312,
+  "depends": [
+   "get_verified_user"
+  ]
+ },
+ {
+  "method": "GET",
+  "path": "/api/v1/calendars/{calendar_id}",
+  "auth": "user",
+  "handler": "get_calendar_by_id",
+  "file": "backend/open_webui/routers/calendar.py",
+  "line": 391,
+  "depends": [
+   "get_verified_user"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/api/v1/calendars/{calendar_id}/default",
+  "auth": "user",
+  "handler": "set_default_calendar",
+  "file": "backend/open_webui/routers/calendar.py",
+  "line": 467,
+  "depends": [
+   "get_verified_user"
+  ]
+ },
+ {
+  "method": "DELETE",
+  "path": "/api/v1/calendars/{calendar_id}/delete",
+  "auth": "user",
+  "handler": "delete_calendar",
+  "file": "backend/open_webui/routers/calendar.py",
+  "line": 436,
+  "depends": [
+   "get_verified_user"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/api/v1/calendars/{calendar_id}/update",
+  "auth": "user",
+  "handler": "update_calendar",
+  "file": "backend/open_webui/routers/calendar.py",
+  "line": 398,
+  "depends": [
+   "get_verified_user"
+  ]
+ },
+ {
+  "method": "GET",
+  "path": "/api/v1/channels/",
+  "auth": "user",
+  "handler": "get_channels",
+  "file": "backend/open_webui/routers/channels.py",
+  "line": 157,
+  "depends": [
+   "get_verified_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/api/v1/channels/create",
+  "auth": "user",
+  "handler": "create_new_channel",
+  "file": "backend/open_webui/routers/channels.py",
+  "line": 280,
+  "depends": [
+   "get_verified_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "GET",
+  "path": "/api/v1/channels/list",
+  "auth": "user",
+  "handler": "get_all_channels",
+  "file": "backend/open_webui/routers/channels.py",
+  "line": 205,
+  "depends": [
+   "get_verified_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "GET",
+  "path": "/api/v1/channels/users/{user_id}",
+  "auth": "user",
+  "handler": "get_dm_channel_by_user_id",
+  "file": "backend/open_webui/routers/channels.py",
+  "line": 222,
+  "depends": [
+   "get_verified_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "GET",
+  "path": "/api/v1/channels/webhooks/{webhook_id}/profile/image",
+  "auth": "user",
+  "handler": "get_webhook_profile_image",
+  "file": "backend/open_webui/routers/channels.py",
+  "line": 1807,
+  "depends": [
+   "get_verified_user"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/api/v1/channels/webhooks/{webhook_id}/{token}",
+  "auth": "open",
+  "handler": "post_webhook_message",
+  "file": "backend/open_webui/routers/channels.py",
+  "line": 1969,
+  "depends": [
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "GET",
+  "path": "/api/v1/channels/{id}",
+  "auth": "user",
+  "handler": "get_channel_by_id",
+  "file": "backend/open_webui/routers/channels.py",
+  "line": 368,
+  "depends": [
+   "get_verified_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "DELETE",
+  "path": "/api/v1/channels/{id}/delete",
+  "auth": "user",
+  "handler": "delete_channel_by_id",
+  "file": "backend/open_webui/routers/channels.py",
+  "line": 730,
+  "depends": [
+   "get_verified_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "GET",
+  "path": "/api/v1/channels/{id}/members",
+  "auth": "user",
+  "handler": "get_channel_members_by_id",
+  "file": "backend/open_webui/routers/channels.py",
+  "line": 490,
+  "depends": [
+   "get_verified_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/api/v1/channels/{id}/members/active",
+  "auth": "user",
+  "handler": "update_is_active_member_by_id_and_user_id",
+  "file": "backend/open_webui/routers/channels.py",
+  "line": 567,
+  "depends": [
+   "get_verified_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "GET",
+  "path": "/api/v1/channels/{id}/messages",
+  "auth": "user",
+  "handler": "get_channel_messages",
+  "file": "backend/open_webui/routers/channels.py",
+  "line": 779,
+  "depends": [
+   "get_verified_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "GET",
+  "path": "/api/v1/channels/{id}/messages/pinned",
+  "auth": "user",
+  "handler": "get_pinned_channel_messages",
+  "file": "backend/open_webui/routers/channels.py",
+  "line": 847,
+  "depends": [
+   "get_verified_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/api/v1/channels/{id}/messages/post",
+  "auth": "user",
+  "handler": "post_new_message",
+  "file": "backend/open_webui/routers/channels.py",
+  "line": 1205,
+  "depends": [
+   "get_verified_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "GET",
+  "path": "/api/v1/channels/{id}/messages/{message_id}",
+  "auth": "user",
+  "handler": "get_channel_message",
+  "file": "backend/open_webui/routers/channels.py",
+  "line": 1267,
+  "depends": [
+   "get_verified_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "GET",
+  "path": "/api/v1/channels/{id}/messages/{message_id}/data",
+  "auth": "user",
+  "handler": "get_channel_message_data",
+  "file": "backend/open_webui/routers/channels.py",
+  "line": 1308,
+  "depends": [
+   "get_verified_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "DELETE",
+  "path": "/api/v1/channels/{id}/messages/{message_id}/delete",
+  "auth": "user",
+  "handler": "delete_message_by_id",
+  "file": "backend/open_webui/routers/channels.py",
+  "line": 1710,
+  "depends": [
+   "get_verified_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/api/v1/channels/{id}/messages/{message_id}/pin",
+  "auth": "user",
+  "handler": "pin_channel_message",
+  "file": "backend/open_webui/routers/channels.py",
+  "line": 1347,
+  "depends": [
+   "get_verified_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/api/v1/channels/{id}/messages/{message_id}/reactions/add",
+  "auth": "user",
+  "handler": "add_reaction_to_message",
+  "file": "backend/open_webui/routers/channels.py",
+  "line": 1561,
+  "depends": [
+   "get_verified_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/api/v1/channels/{id}/messages/{message_id}/reactions/remove",
+  "auth": "user",
+  "handler": "remove_reaction_by_id_and_user_id_and_name",
+  "file": "backend/open_webui/routers/channels.py",
+  "line": 1635,
+  "depends": [
+   "get_verified_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "GET",
+  "path": "/api/v1/channels/{id}/messages/{message_id}/thread",
+  "auth": "user",
+  "handler": "get_channel_thread_messages",
+  "file": "backend/open_webui/routers/channels.py",
+  "line": 1421,
+  "depends": [
+   "get_verified_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/api/v1/channels/{id}/messages/{message_id}/update",
+  "auth": "user",
+  "handler": "update_message_by_id",
+  "file": "backend/open_webui/routers/channels.py",
+  "line": 1483,
+  "depends": [
+   "get_verified_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/api/v1/channels/{id}/update",
+  "auth": "user",
+  "handler": "update_channel_by_id",
+  "file": "backend/open_webui/routers/channels.py",
+  "line": 685,
+  "depends": [
+   "get_verified_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/api/v1/channels/{id}/update/members/add",
+  "auth": "user",
+  "handler": "add_members_by_id",
+  "file": "backend/open_webui/routers/channels.py",
+  "line": 604,
+  "depends": [
+   "get_verified_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/api/v1/channels/{id}/update/members/remove",
+  "auth": "user",
+  "handler": "remove_members_by_id",
+  "file": "backend/open_webui/routers/channels.py",
+  "line": 647,
+  "depends": [
+   "get_verified_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "GET",
+  "path": "/api/v1/channels/{id}/webhooks",
+  "auth": "user",
+  "handler": "get_channel_webhooks",
+  "file": "backend/open_webui/routers/channels.py",
+  "line": 1841,
+  "depends": [
+   "get_verified_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/api/v1/channels/{id}/webhooks/create",
+  "auth": "user",
+  "handler": "create_channel_webhook",
+  "file": "backend/open_webui/routers/channels.py",
+  "line": 1860,
+  "depends": [
+   "get_verified_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "DELETE",
+  "path": "/api/v1/channels/{id}/webhooks/{webhook_id}/delete",
+  "auth": "user",
+  "handler": "delete_channel_webhook",
+  "file": "backend/open_webui/routers/channels.py",
+  "line": 1927,
+  "depends": [
+   "get_verified_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/api/v1/channels/{id}/webhooks/{webhook_id}/update",
+  "auth": "user",
+  "handler": "update_channel_webhook",
+  "file": "backend/open_webui/routers/channels.py",
+  "line": 1891,
+  "depends": [
+   "get_verified_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/api/v1/chat/completions",
+  "auth": "user",
+  "handler": "chat_completion",
+  "file": "backend/open_webui/main.py",
+  "line": 1054,
+  "depends": [
+   "get_verified_user"
+  ]
+ },
+ {
+  "method": "DELETE",
+  "path": "/api/v1/chats/",
+  "auth": "user",
+  "handler": "delete_all_user_chats",
+  "file": "backend/open_webui/routers/chats.py",
+  "line": 680,
+  "depends": [
+   "get_verified_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "GET",
+  "path": "/api/v1/chats/",
+  "auth": "user",
+  "handler": "get_session_user_chat_list",
+  "file": "backend/open_webui/routers/chats.py",
+  "line": 222,
+  "depends": [
+   "get_verified_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "GET",
+  "path": "/api/v1/chats/all",
+  "auth": "user",
+  "handler": "get_user_chats",
+  "file": "backend/open_webui/routers/chats.py",
+  "line": 989,
+  "depends": [
+   "get_verified_user"
+  ]
+ },
+ {
+  "method": "GET",
+  "path": "/api/v1/chats/all/archived",
+  "auth": "user",
+  "handler": "get_user_archived_chats",
+  "file": "backend/open_webui/routers/chats.py",
+  "line": 1002,
+  "depends": [
+   "get_verified_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "GET",
+  "path": "/api/v1/chats/all/db",
+  "auth": "admin",
+  "handler": "get_all_user_chats_in_db",
+  "file": "backend/open_webui/routers/chats.py",
+  "line": 1030,
+  "depends": [
+   "get_admin_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "GET",
+  "path": "/api/v1/chats/all/tags",
+  "auth": "user",
+  "handler": "get_all_user_tags",
+  "file": "backend/open_webui/routers/chats.py",
+  "line": 1015,
+  "depends": [
+   "get_verified_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/api/v1/chats/archive/all",
+  "auth": "user",
+  "handler": "archive_all_chats",
+  "file": "backend/open_webui/routers/chats.py",
+  "line": 1094,
+  "depends": [
+   "get_verified_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "GET",
+  "path": "/api/v1/chats/archived",
+  "auth": "user",
+  "handler": "get_archived_session_user_chat_list",
+  "file": "backend/open_webui/routers/chats.py",
+  "line": 1042,
+  "depends": [
+   "get_verified_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "GET",
+  "path": "/api/v1/chats/archived/count",
+  "auth": "user",
+  "handler": "get_archived_session_user_chat_count",
+  "file": "backend/open_webui/routers/chats.py",
+  "line": 1081,
+  "depends": [
+   "get_verified_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "GET",
+  "path": "/api/v1/chats/config",
+  "auth": "admin",
+  "handler": "get_chat_config",
+  "file": "backend/open_webui/routers/chats.py",
+  "line": 818,
+  "depends": [
+   "get_admin_user"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/api/v1/chats/config",
+  "auth": "admin",
+  "handler": "set_chat_config",
+  "file": "backend/open_webui/routers/chats.py",
+  "line": 823,
+  "depends": [
+   "get_admin_user"
+  ]
+ },
+ {
+  "method": "GET",
+  "path": "/api/v1/chats/folder/{folder_id}",
+  "auth": "user",
+  "handler": "get_chats_by_folder_id",
+  "file": "backend/open_webui/routers/chats.py",
+  "line": 893,
+  "depends": [
+   "get_verified_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "GET",
+  "path": "/api/v1/chats/folder/{folder_id}/list",
+  "auth": "user",
+  "handler": "get_chat_list_by_folder_id",
+  "file": "backend/open_webui/routers/chats.py",
+  "line": 908,
+  "depends": [
+   "get_verified_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/api/v1/chats/import",
+  "auth": "user",
+  "handler": "import_chats",
+  "file": "backend/open_webui/routers/chats.py",
+  "line": 789,
+  "depends": [
+   "get_verified_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "GET",
+  "path": "/api/v1/chats/list",
+  "auth": "user",
+  "handler": "get_session_user_chat_list",
+  "file": "backend/open_webui/routers/chats.py",
+  "line": 222,
+  "depends": [
+   "get_verified_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "GET",
+  "path": "/api/v1/chats/list/user/{user_id}",
+  "auth": "admin",
+  "handler": "get_user_chat_list_by_user_id",
+  "file": "backend/open_webui/routers/chats.py",
+  "line": 709,
+  "depends": [
+   "get_admin_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/api/v1/chats/new",
+  "auth": "user",
+  "handler": "create_new_chat",
+  "file": "backend/open_webui/routers/chats.py",
+  "line": 747,
+  "depends": [
+   "get_verified_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "GET",
+  "path": "/api/v1/chats/pinned",
+  "auth": "user",
+  "handler": "get_user_pinned_chats",
+  "file": "backend/open_webui/routers/chats.py",
+  "line": 943,
+  "depends": [
+   "get_verified_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/api/v1/chats/read",
+  "auth": "user",
+  "handler": "mark_chats_read_by_user_id",
+  "file": "backend/open_webui/routers/chats.py",
+  "line": 263,
+  "depends": [
+   "get_verified_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "GET",
+  "path": "/api/v1/chats/search",
+  "auth": "user",
+  "handler": "search_user_chats",
+  "file": "backend/open_webui/routers/chats.py",
+  "line": 847,
+  "depends": [
+   "get_verified_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "DELETE",
+  "path": "/api/v1/chats/share/all",
+  "auth": "user",
+  "handler": "unshare_all_chats",
+  "file": "backend/open_webui/routers/chats.py",
+  "line": 1124,
+  "depends": [
+   "get_verified_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "GET",
+  "path": "/api/v1/chats/share/{share_id}",
+  "auth": "open",
+  "handler": "get_shared_chat_by_id",
+  "file": "backend/open_webui/routers/chats.py",
+  "line": 1189,
+  "depends": [
+   "get_optional_verified_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "GET",
+  "path": "/api/v1/chats/shared",
+  "auth": "user",
+  "handler": "get_shared_session_user_chat_list",
+  "file": "backend/open_webui/routers/chats.py",
+  "line": 1152,
+  "depends": [
+   "get_verified_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "GET",
+  "path": "/api/v1/chats/shared/{id}/access",
+  "auth": "user",
+  "handler": "get_shared_chat_access_by_id",
+  "file": "backend/open_webui/routers/chats.py",
+  "line": 2056,
+  "depends": [
+   "get_verified_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/api/v1/chats/shared/{id}/access/update",
+  "auth": "user",
+  "handler": "update_shared_chat_access_by_id",
+  "file": "backend/open_webui/routers/chats.py",
+  "line": 2018,
+  "depends": [
+   "get_verified_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "GET",
+  "path": "/api/v1/chats/stats/export",
+  "auth": "user",
+  "handler": "export_chat_stats",
+  "file": "backend/open_webui/routers/chats.py",
+  "line": 582,
+  "depends": [
+   "get_verified_user"
+  ]
+ },
+ {
+  "method": "GET",
+  "path": "/api/v1/chats/stats/export/{chat_id}",
+  "auth": "user",
+  "handler": "export_single_chat_stats",
+  "file": "backend/open_webui/routers/chats.py",
+  "line": 628,
+  "depends": [
+   "get_verified_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "GET",
+  "path": "/api/v1/chats/stats/usage",
+  "auth": "user",
+  "handler": "get_session_user_chat_usage_stats",
+  "file": "backend/open_webui/routers/chats.py",
+  "line": 280,
+  "depends": [
+   "get_verified_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/api/v1/chats/tags",
+  "auth": "user",
+  "handler": "get_user_chat_list_by_tag_name",
+  "file": "backend/open_webui/routers/chats.py",
+  "line": 1231,
+  "depends": [
+   "get_verified_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/api/v1/chats/unarchive/all",
+  "auth": "user",
+  "handler": "unarchive_all_chats",
+  "file": "backend/open_webui/routers/chats.py",
+  "line": 1109,
+  "depends": [
+   "get_verified_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "DELETE",
+  "path": "/api/v1/chats/{id}",
+  "auth": "user",
+  "handler": "delete_chat_by_id",
+  "file": "backend/open_webui/routers/chats.py",
+  "line": 1569,
+  "depends": [
+   "get_verified_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "GET",
+  "path": "/api/v1/chats/{id}",
+  "auth": "user",
+  "handler": "get_chat_by_id",
+  "file": "backend/open_webui/routers/chats.py",
+  "line": 1306,
+  "depends": [
+   "get_verified_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/api/v1/chats/{id}",
+  "auth": "user",
+  "handler": "update_chat_by_id",
+  "file": "backend/open_webui/routers/chats.py",
+  "line": 1349,
+  "depends": [
+   "get_verified_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/api/v1/chats/{id}/archive",
+  "auth": "user",
+  "handler": "archive_chat_by_id",
+  "file": "backend/open_webui/routers/chats.py",
+  "line": 1898,
+  "depends": [
+   "get_verified_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/api/v1/chats/{id}/clone",
+  "auth": "user",
+  "handler": "clone_chat_by_id",
+  "file": "backend/open_webui/routers/chats.py",
+  "line": 1764,
+  "depends": [
+   "get_verified_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/api/v1/chats/{id}/clone/shared",
+  "auth": "user",
+  "handler": "clone_shared_chat_by_id",
+  "file": "backend/open_webui/routers/chats.py",
+  "line": 1823,
+  "depends": [
+   "get_verified_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/api/v1/chats/{id}/compact",
+  "auth": "user",
+  "handler": "compact_chat_by_id",
+  "file": "backend/open_webui/routers/chats.py",
+  "line": 1252,
+  "depends": [
+   "get_verified_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/api/v1/chats/{id}/folder",
+  "auth": "user",
+  "handler": "update_chat_folder_id_by_id",
+  "file": "backend/open_webui/routers/chats.py",
+  "line": 2115,
+  "depends": [
+   "get_verified_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/api/v1/chats/{id}/fork",
+  "auth": "user",
+  "handler": "fork_chat_by_id",
+  "file": "backend/open_webui/routers/chats.py",
+  "line": 1673,
+  "depends": [
+   "get_verified_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "DELETE",
+  "path": "/api/v1/chats/{id}/messages/{message_id}",
+  "auth": "user",
+  "handler": "delete_chat_message_by_id",
+  "file": "backend/open_webui/routers/chats.py",
+  "line": 1469,
+  "depends": [
+   "get_verified_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/api/v1/chats/{id}/messages/{message_id}",
+  "auth": "user",
+  "handler": "update_chat_message_by_id",
+  "file": "backend/open_webui/routers/chats.py",
+  "line": 1407,
+  "depends": [
+   "get_verified_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/api/v1/chats/{id}/messages/{message_id}/event",
+  "auth": "user",
+  "handler": "send_chat_message_event_by_id",
+  "file": "backend/open_webui/routers/chats.py",
+  "line": 1516,
+  "depends": [
+   "get_verified_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/api/v1/chats/{id}/pin",
+  "auth": "user",
+  "handler": "pin_chat_by_id",
+  "file": "backend/open_webui/routers/chats.py",
+  "line": 1641,
+  "depends": [
+   "get_verified_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "GET",
+  "path": "/api/v1/chats/{id}/pinned",
+  "auth": "user",
+  "handler": "get_pinned_status_by_id",
+  "file": "backend/open_webui/routers/chats.py",
+  "line": 1625,
+  "depends": [
+   "get_verified_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "DELETE",
+  "path": "/api/v1/chats/{id}/share",
+  "auth": "user",
+  "handler": "delete_shared_chat_by_id",
+  "file": "backend/open_webui/routers/chats.py",
+  "line": 1984,
+  "depends": [
+   "get_verified_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/api/v1/chats/{id}/share",
+  "auth": "user",
+  "handler": "share_chat_by_id",
+  "file": "backend/open_webui/routers/chats.py",
+  "line": 1934,
+  "depends": [
+   "get_verified_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "DELETE",
+  "path": "/api/v1/chats/{id}/tags",
+  "auth": "user",
+  "handler": "delete_tag_by_id_and_tag_name",
+  "file": "backend/open_webui/routers/chats.py",
+  "line": 2211,
+  "depends": [
+   "get_verified_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "GET",
+  "path": "/api/v1/chats/{id}/tags",
+  "auth": "user",
+  "handler": "get_chat_tags_by_id",
+  "file": "backend/open_webui/routers/chats.py",
+  "line": 2155,
+  "depends": [
+   "get_verified_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/api/v1/chats/{id}/tags",
+  "auth": "user",
+  "handler": "add_tag_by_id_and_tag_name",
+  "file": "backend/open_webui/routers/chats.py",
+  "line": 2170,
+  "depends": [
+   "get_verified_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/api/v1/chats/{id}/unread",
+  "auth": "user",
+  "handler": "mark_chat_unread_by_id",
+  "file": "backend/open_webui/routers/chats.py",
+  "line": 2093,
+  "depends": [
+   "get_verified_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "GET",
+  "path": "/api/v1/configs/banners",
+  "auth": "user",
+  "handler": "get_banners",
+  "file": "backend/open_webui/routers/configs.py",
+  "line": 860,
+  "depends": [
+   "get_verified_user"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/api/v1/configs/banners",
+  "auth": "admin",
+  "handler": "set_banners",
+  "file": "backend/open_webui/routers/configs.py",
+  "line": 840,
+  "depends": [
+   "get_admin_user"
+  ]
+ },
+ {
+  "method": "GET",
+  "path": "/api/v1/configs/code_execution",
+  "auth": "admin",
+  "handler": "get_code_execution_config",
+  "file": "backend/open_webui/routers/configs.py",
+  "line": 699,
+  "depends": [
+   "get_admin_user"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/api/v1/configs/code_execution",
+  "auth": "admin",
+  "handler": "set_code_execution_config",
+  "file": "backend/open_webui/routers/configs.py",
+  "line": 704,
+  "depends": [
+   "get_admin_user"
+  ]
+ },
+ {
+  "method": "GET",
+  "path": "/api/v1/configs/connections",
+  "auth": "admin",
+  "handler": "get_connections_config",
+  "file": "backend/open_webui/routers/configs.py",
+  "line": 140,
+  "depends": [
+   "get_admin_user"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/api/v1/configs/connections",
+  "auth": "admin",
+  "handler": "set_connections_config",
+  "file": "backend/open_webui/routers/configs.py",
+  "line": 145,
+  "depends": [
+   "get_admin_user"
+  ]
+ },
+ {
+  "method": "GET",
+  "path": "/api/v1/configs/export",
+  "auth": "admin",
+  "handler": "export_config",
+  "file": "backend/open_webui/routers/configs.py",
+  "line": 120,
+  "depends": [
+   "get_admin_user"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/api/v1/configs/import",
+  "auth": "admin",
+  "handler": "import_config",
+  "file": "backend/open_webui/routers/configs.py",
+  "line": 102,
+  "depends": [
+   "get_admin_user"
+  ]
+ },
+ {
+  "method": "GET",
+  "path": "/api/v1/configs/models",
+  "auth": "admin",
+  "handler": "get_models_config",
+  "file": "backend/open_webui/routers/configs.py",
+  "line": 744,
+  "depends": [
+   "get_admin_user"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/api/v1/configs/models",
+  "auth": "admin",
+  "handler": "set_models_config",
+  "file": "backend/open_webui/routers/configs.py",
+  "line": 749,
+  "depends": [
+   "get_admin_user"
+  ]
+ },
+ {
+  "method": "GET",
+  "path": "/api/v1/configs/models/defaults",
+  "auth": "user",
+  "handler": "get_models_defaults",
+  "file": "backend/open_webui/routers/configs.py",
+  "line": 737,
+  "depends": [
+   "get_verified_user"
+  ]
+ },
+ {
+  "method": "GET",
+  "path": "/api/v1/configs/namespace/{namespace}",
+  "auth": "admin",
+  "handler": "get_config_namespace",
+  "file": "backend/open_webui/routers/configs.py",
+  "line": 125,
+  "depends": [
+   "get_admin_user"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/api/v1/configs/oauth/clients/register",
+  "auth": "admin",
+  "handler": "register_oauth_client",
+  "file": "backend/open_webui/routers/configs.py",
+  "line": 173,
+  "depends": [
+   "get_admin_user"
+  ]
+ },
+ {
+  "method": "GET",
+  "path": "/api/v1/configs/subagents",
+  "auth": "admin",
+  "handler": "get_subagents_config",
+  "file": "backend/open_webui/routers/configs.py",
+  "line": 778,
+  "depends": [
+   "get_admin_user"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/api/v1/configs/subagents",
+  "auth": "admin",
+  "handler": "set_subagents_config",
+  "file": "backend/open_webui/routers/configs.py",
+  "line": 783,
+  "depends": [
+   "get_admin_user"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/api/v1/configs/suggestions",
+  "auth": "admin",
+  "handler": "set_default_suggestions",
+  "file": "backend/open_webui/routers/configs.py",
+  "line": 811,
+  "depends": [
+   "get_admin_user"
+  ]
+ },
+ {
+  "method": "GET",
+  "path": "/api/v1/configs/terminal_servers",
+  "auth": "admin",
+  "handler": "get_terminal_servers_config",
+  "file": "backend/open_webui/routers/configs.py",
+  "line": 321,
+  "depends": [
+   "get_admin_user"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/api/v1/configs/terminal_servers",
+  "auth": "admin",
+  "handler": "set_terminal_servers_config",
+  "file": "backend/open_webui/routers/configs.py",
+  "line": 326,
+  "depends": [
+   "get_admin_user"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/api/v1/configs/terminal_servers/lifecycle",
+  "auth": "admin",
+  "handler": "put_terminal_server_lifecycle",
+  "file": "backend/open_webui/routers/configs.py",
+  "line": 462,
+  "depends": [
+   "get_admin_user"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/api/v1/configs/terminal_servers/policy",
+  "auth": "admin",
+  "handler": "put_terminal_server_policy",
+  "file": "backend/open_webui/routers/configs.py",
+  "line": 425,
+  "depends": [
+   "get_admin_user"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/api/v1/configs/terminal_servers/refresh",
+  "auth": "admin",
+  "handler": "refresh_terminal_server_terminals",
+  "file": "backend/open_webui/routers/configs.py",
+  "line": 499,
+  "depends": [
+   "get_admin_user"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/api/v1/configs/terminal_servers/verify",
+  "auth": "admin",
+  "handler": "verify_terminal_server_connection",
+  "file": "backend/open_webui/routers/configs.py",
+  "line": 350,
+  "depends": [
+   "get_admin_user"
+  ]
+ },
+ {
+  "method": "GET",
+  "path": "/api/v1/configs/tool_servers",
+  "auth": "admin",
+  "handler": "get_tool_servers_config",
+  "file": "backend/open_webui/routers/configs.py",
+  "line": 235,
+  "depends": [
+   "get_admin_user"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/api/v1/configs/tool_servers",
+  "auth": "admin",
+  "handler": "set_tool_servers_config",
+  "file": "backend/open_webui/routers/configs.py",
+  "line": 240,
+  "depends": [
+   "get_admin_user"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/api/v1/configs/tool_servers/verify",
+  "auth": "admin",
+  "handler": "verify_tool_servers_config",
+  "file": "backend/open_webui/routers/configs.py",
+  "line": 546,
+  "depends": [
+   "get_admin_user"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/api/v1/embeddings",
+  "auth": "user",
+  "handler": "embeddings",
+  "file": "backend/open_webui/main.py",
+  "line": 1018,
+  "depends": [
+   "get_verified_user"
+  ]
+ },
+ {
+  "method": "GET",
+  "path": "/api/v1/evaluations/config",
+  "auth": "admin",
+  "handler": "get_config",
+  "file": "backend/open_webui/routers/evaluations.py",
+  "line": 269,
+  "depends": [
+   "get_admin_user"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/api/v1/evaluations/config",
+  "auth": "admin",
+  "handler": "update_config",
+  "file": "backend/open_webui/routers/evaluations.py",
+  "line": 284,
+  "depends": [
+   "get_admin_user"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/api/v1/evaluations/feedback",
+  "auth": "user",
+  "handler": "create_feedback",
+  "file": "backend/open_webui/routers/evaluations.py",
+  "line": 409,
+  "depends": [
+   "get_verified_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "DELETE",
+  "path": "/api/v1/evaluations/feedback/{id}",
+  "auth": "user",
+  "handler": "delete_feedback_by_id",
+  "file": "backend/open_webui/routers/evaluations.py",
+  "line": 472,
+  "depends": [
+   "get_verified_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "GET",
+  "path": "/api/v1/evaluations/feedback/{id}",
+  "auth": "user",
+  "handler": "get_feedback_by_id",
+  "file": "backend/open_webui/routers/evaluations.py",
+  "line": 433,
+  "depends": [
+   "get_verified_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/api/v1/evaluations/feedback/{id}",
+  "auth": "user",
+  "handler": "update_feedback_by_id",
+  "file": "backend/open_webui/routers/evaluations.py",
+  "line": 446,
+  "depends": [
+   "get_verified_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "DELETE",
+  "path": "/api/v1/evaluations/feedbacks",
+  "auth": "user",
+  "handler": "delete_feedbacks",
+  "file": "backend/open_webui/routers/evaluations.py",
+  "line": 365,
+  "depends": [
+   "get_verified_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "DELETE",
+  "path": "/api/v1/evaluations/feedbacks/all",
+  "auth": "admin",
+  "handler": "delete_all_feedbacks",
+  "file": "backend/open_webui/routers/evaluations.py",
+  "line": 321,
+  "depends": [
+   "get_admin_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "GET",
+  "path": "/api/v1/evaluations/feedbacks/all/export",
+  "auth": "admin",
+  "handler": "export_all_feedbacks",
+  "file": "backend/open_webui/routers/evaluations.py",
+  "line": 338,
+  "depends": [
+   "get_admin_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "GET",
+  "path": "/api/v1/evaluations/feedbacks/all/ids",
+  "auth": "admin",
+  "handler": "get_all_feedback_ids",
+  "file": "backend/open_webui/routers/evaluations.py",
+  "line": 316,
+  "depends": [
+   "get_admin_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "GET",
+  "path": "/api/v1/evaluations/feedbacks/list",
+  "auth": "admin",
+  "handler": "get_feedbacks",
+  "file": "backend/open_webui/routers/evaluations.py",
+  "line": 383,
+  "depends": [
+   "get_admin_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "GET",
+  "path": "/api/v1/evaluations/feedbacks/models",
+  "auth": "admin",
+  "handler": "get_feedback_model_ids",
+  "file": "backend/open_webui/routers/evaluations.py",
+  "line": 311,
+  "depends": [
+   "get_admin_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "GET",
+  "path": "/api/v1/evaluations/feedbacks/user",
+  "auth": "user",
+  "handler": "get_user_feedbacks",
+  "file": "backend/open_webui/routers/evaluations.py",
+  "line": 353,
+  "depends": [
+   "get_verified_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "GET",
+  "path": "/api/v1/evaluations/leaderboard",
+  "auth": "admin",
+  "handler": "get_leaderboard",
+  "file": "backend/open_webui/routers/evaluations.py",
+  "line": 217,
+  "depends": [
+   "get_admin_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "GET",
+  "path": "/api/v1/evaluations/leaderboard/{model_id}/history",
+  "auth": "admin",
+  "handler": "get_model_history",
+  "file": "backend/open_webui/routers/evaluations.py",
+  "line": 252,
+  "depends": [
+   "get_admin_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "GET",
+  "path": "/api/v1/files/",
+  "auth": "user",
+  "handler": "list_files",
+  "file": "backend/open_webui/routers/files.py",
+  "line": 477,
+  "depends": [
+   "get_verified_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/api/v1/files/",
+  "auth": "user",
+  "handler": "upload_file",
+  "file": "backend/open_webui/routers/files.py",
+  "line": 272,
+  "depends": [
+   "get_verified_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "DELETE",
+  "path": "/api/v1/files/all",
+  "auth": "admin",
+  "handler": "delete_all_files",
+  "file": "backend/open_webui/routers/files.py",
+  "line": 563,
+  "depends": [
+   "get_admin_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "GET",
+  "path": "/api/v1/files/count",
+  "auth": "user",
+  "handler": "count_files",
+  "file": "backend/open_webui/routers/files.py",
+  "line": 549,
+  "depends": [
+   "get_verified_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "GET",
+  "path": "/api/v1/files/search",
+  "auth": "user",
+  "handler": "search_files",
+  "file": "backend/open_webui/routers/files.py",
+  "line": 502,
+  "depends": [
+   "get_verified_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "DELETE",
+  "path": "/api/v1/files/{id}",
+  "auth": "user",
+  "handler": "delete_file_by_id",
+  "file": "backend/open_webui/routers/files.py",
+  "line": 1001,
+  "depends": [
+   "get_verified_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "GET",
+  "path": "/api/v1/files/{id}",
+  "auth": "user",
+  "handler": "get_file_by_id",
+  "file": "backend/open_webui/routers/files.py",
+  "line": 593,
+  "depends": [
+   "get_verified_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "GET",
+  "path": "/api/v1/files/{id}/content",
+  "auth": "user",
+  "handler": "get_file_content_by_id",
+  "file": "backend/open_webui/routers/files.py",
+  "line": 783,
+  "depends": [
+   "get_verified_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "GET",
+  "path": "/api/v1/files/{id}/content/html",
+  "auth": "user",
+  "handler": "get_html_file_content_by_id",
+  "file": "backend/open_webui/routers/files.py",
+  "line": 846,
+  "depends": [
+   "get_verified_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "GET",
+  "path": "/api/v1/files/{id}/content/{file_name}",
+  "auth": "user",
+  "handler": "get_file_content_by_id",
+  "file": "backend/open_webui/routers/files.py",
+  "line": 895,
+  "depends": [
+   "get_verified_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "GET",
+  "path": "/api/v1/files/{id}/data/content",
+  "auth": "user",
+  "handler": "get_file_data_content_by_id",
+  "file": "backend/open_webui/routers/files.py",
+  "line": 676,
+  "depends": [
+   "get_verified_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/api/v1/files/{id}/data/content/update",
+  "auth": "user",
+  "handler": "update_file_data_content_by_id",
+  "file": "backend/open_webui/routers/files.py",
+  "line": 706,
+  "depends": [
+   "get_verified_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "GET",
+  "path": "/api/v1/files/{id}/process/status",
+  "auth": "user",
+  "handler": "get_file_process_status",
+  "file": "backend/open_webui/routers/files.py",
+  "line": 612,
+  "depends": [
+   "get_verified_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/api/v1/files/{id}/rename",
+  "auth": "user",
+  "handler": "rename_file_by_id",
+  "file": "backend/open_webui/routers/files.py",
+  "line": 957,
+  "depends": [
+   "get_verified_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "GET",
+  "path": "/api/v1/folders/",
+  "auth": "user",
+  "handler": "get_folders",
+  "file": "backend/open_webui/routers/folders.py",
+  "line": 92,
+  "depends": [
+   "get_verified_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/api/v1/folders/",
+  "auth": "user",
+  "handler": "create_folder",
+  "file": "backend/open_webui/routers/folders.py",
+  "line": 132,
+  "depends": [
+   "get_verified_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "GET",
+  "path": "/api/v1/folders/shared",
+  "auth": "user",
+  "handler": "get_shared_folders",
+  "file": "backend/open_webui/routers/folders.py",
+  "line": 224,
+  "depends": [
+   "get_verified_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "DELETE",
+  "path": "/api/v1/folders/{id}",
+  "auth": "user",
+  "handler": "delete_folder_by_id",
+  "file": "backend/open_webui/routers/folders.py",
+  "line": 643,
+  "depends": [
+   "get_verified_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "GET",
+  "path": "/api/v1/folders/{id}",
+  "auth": "user",
+  "handler": "get_folder_by_id",
+  "file": "backend/open_webui/routers/folders.py",
+  "line": 283,
+  "depends": [
+   "get_verified_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/api/v1/folders/{id}/access/update",
+  "auth": "user",
+  "handler": "update_folder_access_by_id",
+  "file": "backend/open_webui/routers/folders.py",
+  "line": 480,
+  "depends": [
+   "get_verified_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/api/v1/folders/{id}/read",
+  "auth": "user",
+  "handler": "mark_folder_chats_read_by_id",
+  "file": "backend/open_webui/routers/folders.py",
+  "line": 600,
+  "depends": [
+   "get_verified_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "GET",
+  "path": "/api/v1/folders/{id}/shared/chats",
+  "auth": "user",
+  "handler": "get_shared_folder_chats",
+  "file": "backend/open_webui/routers/folders.py",
+  "line": 534,
+  "depends": [
+   "get_verified_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/api/v1/folders/{id}/update",
+  "auth": "user",
+  "handler": "update_folder_name_by_id",
+  "file": "backend/open_webui/routers/folders.py",
+  "line": 310,
+  "depends": [
+   "get_verified_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/api/v1/folders/{id}/update/expanded",
+  "auth": "user",
+  "handler": "update_folder_is_expanded_by_id",
+  "file": "backend/open_webui/routers/folders.py",
+  "line": 436,
+  "depends": [
+   "get_verified_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/api/v1/folders/{id}/update/parent",
+  "auth": "user",
+  "handler": "update_folder_parent_id_by_id",
+  "file": "backend/open_webui/routers/folders.py",
+  "line": 382,
+  "depends": [
+   "get_verified_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "GET",
+  "path": "/api/v1/functions/",
+  "auth": "user",
+  "handler": "get_functions",
+  "file": "backend/open_webui/routers/functions.py",
+  "line": 48,
+  "depends": [
+   "get_verified_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/api/v1/functions/create",
+  "auth": "admin",
+  "handler": "create_new_function",
+  "file": "backend/open_webui/routers/functions.py",
+  "line": 200,
+  "depends": [
+   "get_admin_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "GET",
+  "path": "/api/v1/functions/export",
+  "auth": "admin",
+  "handler": "get_functions",
+  "file": "backend/open_webui/routers/functions.py",
+  "line": 69,
+  "depends": [
+   "get_admin_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "GET",
+  "path": "/api/v1/functions/id/{id}",
+  "auth": "admin",
+  "handler": "get_function_by_id",
+  "file": "backend/open_webui/routers/functions.py",
+  "line": 270,
+  "depends": [
+   "get_admin_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "DELETE",
+  "path": "/api/v1/functions/id/{id}/delete",
+  "auth": "admin",
+  "handler": "delete_function_by_id",
+  "file": "backend/open_webui/routers/functions.py",
+  "line": 432,
+  "depends": [
+   "get_admin_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/api/v1/functions/id/{id}/toggle",
+  "auth": "admin",
+  "handler": "toggle_function_by_id",
+  "file": "backend/open_webui/routers/functions.py",
+  "line": 288,
+  "depends": [
+   "get_admin_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/api/v1/functions/id/{id}/toggle/global",
+  "auth": "admin",
+  "handler": "toggle_global_by_id",
+  "file": "backend/open_webui/routers/functions.py",
+  "line": 342,
+  "depends": [
+   "get_admin_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/api/v1/functions/id/{id}/update",
+  "auth": "admin",
+  "handler": "update_function_by_id",
+  "file": "backend/open_webui/routers/functions.py",
+  "line": 379,
+  "depends": [
+   "get_admin_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "GET",
+  "path": "/api/v1/functions/id/{id}/valves",
+  "auth": "admin",
+  "handler": "get_function_valves_by_id",
+  "file": "backend/open_webui/routers/functions.py",
+  "line": 459,
+  "depends": [
+   "get_admin_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "GET",
+  "path": "/api/v1/functions/id/{id}/valves/spec",
+  "auth": "admin",
+  "handler": "get_function_valves_spec_by_id",
+  "file": "backend/open_webui/routers/functions.py",
+  "line": 485,
+  "depends": [
+   "get_admin_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/api/v1/functions/id/{id}/valves/update",
+  "auth": "admin",
+  "handler": "update_function_valves_by_id",
+  "file": "backend/open_webui/routers/functions.py",
+  "line": 515,
+  "depends": [
+   "get_admin_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "GET",
+  "path": "/api/v1/functions/id/{id}/valves/user",
+  "auth": "user",
+  "handler": "get_function_user_valves_by_id",
+  "file": "backend/open_webui/routers/functions.py",
+  "line": 567,
+  "depends": [
+   "get_verified_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "GET",
+  "path": "/api/v1/functions/id/{id}/valves/user/spec",
+  "auth": "user",
+  "handler": "get_function_user_valves_spec_by_id",
+  "file": "backend/open_webui/routers/functions.py",
+  "line": 588,
+  "depends": [
+   "get_verified_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/api/v1/functions/id/{id}/valves/user/update",
+  "auth": "user",
+  "handler": "update_function_user_valves_by_id",
+  "file": "backend/open_webui/routers/functions.py",
+  "line": 613,
+  "depends": [
+   "get_verified_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "GET",
+  "path": "/api/v1/functions/list",
+  "auth": "admin",
+  "handler": "get_function_list",
+  "file": "backend/open_webui/routers/functions.py",
+  "line": 56,
+  "depends": [
+   "get_admin_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/api/v1/functions/load/url",
+  "auth": "admin",
+  "handler": "load_function_from_url",
+  "file": "backend/open_webui/routers/functions.py",
+  "line": 107,
+  "depends": [
+   "get_admin_user"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/api/v1/functions/sync",
+  "auth": "admin",
+  "handler": "sync_functions",
+  "file": "backend/open_webui/routers/functions.py",
+  "line": 163,
+  "depends": [
+   "get_admin_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "GET",
+  "path": "/api/v1/groups/",
+  "auth": "user",
+  "handler": "get_groups",
+  "file": "backend/open_webui/routers/groups.py",
+  "line": 37,
+  "depends": [
+   "get_verified_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/api/v1/groups/create",
+  "auth": "admin",
+  "handler": "create_new_group",
+  "file": "backend/open_webui/routers/groups.py",
+  "line": 61,
+  "depends": [
+   "get_admin_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "GET",
+  "path": "/api/v1/groups/id/{id}",
+  "auth": "admin",
+  "handler": "get_group_by_id",
+  "file": "backend/open_webui/routers/groups.py",
+  "line": 102,
+  "depends": [
+   "get_admin_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "DELETE",
+  "path": "/api/v1/groups/id/{id}/delete",
+  "auth": "admin",
+  "handler": "delete_group_by_id",
+  "file": "backend/open_webui/routers/groups.py",
+  "line": 305,
+  "depends": [
+   "get_admin_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "GET",
+  "path": "/api/v1/groups/id/{id}/export",
+  "auth": "admin",
+  "handler": "export_group_by_id",
+  "file": "backend/open_webui/routers/groups.py",
+  "line": 142,
+  "depends": [
+   "get_admin_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "GET",
+  "path": "/api/v1/groups/id/{id}/info",
+  "auth": "user",
+  "handler": "get_group_info_by_id",
+  "file": "backend/open_webui/routers/groups.py",
+  "line": 117,
+  "depends": [
+   "get_verified_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "GET",
+  "path": "/api/v1/groups/id/{id}/preview",
+  "auth": "admin",
+  "handler": "preview_group_access",
+  "file": "backend/open_webui/routers/groups.py",
+  "line": 339,
+  "depends": [
+   "get_admin_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/api/v1/groups/id/{id}/update",
+  "auth": "admin",
+  "handler": "update_group_by_id",
+  "file": "backend/open_webui/routers/groups.py",
+  "line": 181,
+  "depends": [
+   "get_admin_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/api/v1/groups/id/{id}/users",
+  "auth": "admin",
+  "handler": "get_users_in_group",
+  "file": "backend/open_webui/routers/groups.py",
+  "line": 163,
+  "depends": [
+   "get_admin_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/api/v1/groups/id/{id}/users/add",
+  "auth": "admin",
+  "handler": "add_user_to_group",
+  "file": "backend/open_webui/routers/groups.py",
+  "line": 223,
+  "depends": [
+   "get_admin_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/api/v1/groups/id/{id}/users/remove",
+  "auth": "admin",
+  "handler": "remove_users_from_group",
+  "file": "backend/open_webui/routers/groups.py",
+  "line": 263,
+  "depends": [
+   "get_admin_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "GET",
+  "path": "/api/v1/images/config",
+  "auth": "admin",
+  "handler": "get_config",
+  "file": "backend/open_webui/routers/images.py",
+  "line": 272,
+  "depends": [
+   "get_admin_user"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/api/v1/images/config/update",
+  "auth": "admin",
+  "handler": "update_config",
+  "file": "backend/open_webui/routers/images.py",
+  "line": 277,
+  "depends": [
+   "get_admin_user"
+  ]
+ },
+ {
+  "method": "GET",
+  "path": "/api/v1/images/config/url/verify",
+  "auth": "admin",
+  "handler": "verify_url",
+  "file": "backend/open_webui/routers/images.py",
+  "line": 333,
+  "depends": [
+   "get_admin_user"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/api/v1/images/edit",
+  "auth": "user",
+  "handler": "edit_images",
+  "file": "backend/open_webui/routers/images.py",
+  "line": 853,
+  "depends": [
+   "get_verified_user"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/api/v1/images/generations",
+  "auth": "user",
+  "handler": "generate_images",
+  "file": "backend/open_webui/routers/images.py",
+  "line": 559,
+  "depends": [
+   "get_verified_user"
+  ]
+ },
+ {
+  "method": "GET",
+  "path": "/api/v1/images/models",
+  "auth": "user",
+  "handler": "get_models",
+  "file": "backend/open_webui/routers/images.py",
+  "line": 367,
+  "depends": [
+   "get_verified_user"
+  ]
+ },
+ {
+  "method": "GET",
+  "path": "/api/v1/knowledge/",
+  "auth": "user",
+  "handler": "get_knowledge_bases",
+  "file": "backend/open_webui/routers/knowledge.py",
+  "line": 131,
+  "depends": [
+   "get_verified_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/api/v1/knowledge/create",
+  "auth": "user",
+  "handler": "create_new_knowledge",
+  "file": "backend/open_webui/routers/knowledge.py",
+  "line": 277,
+  "depends": [
+   "get_verified_user"
+  ]
+ },
+ {
+  "method": "GET",
+  "path": "/api/v1/knowledge/external/connections",
+  "auth": "admin",
+  "handler": "get_external_knowledge_connections",
+  "file": "backend/open_webui/routers/knowledge.py",
+  "line": 633,
+  "depends": [
+   "get_admin_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/api/v1/knowledge/external/connections",
+  "auth": "admin",
+  "handler": "create_external_knowledge_connection",
+  "file": "backend/open_webui/routers/knowledge.py",
+  "line": 642,
+  "depends": [
+   "get_admin_user"
+  ]
+ },
+ {
+  "method": "DELETE",
+  "path": "/api/v1/knowledge/external/connections/{id}",
+  "auth": "admin",
+  "handler": "delete_external_knowledge_connection",
+  "file": "backend/open_webui/routers/knowledge.py",
+  "line": 701,
+  "depends": [
+   "get_admin_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "GET",
+  "path": "/api/v1/knowledge/external/connections/{id}",
+  "auth": "admin",
+  "handler": "get_external_knowledge_connection",
+  "file": "backend/open_webui/routers/knowledge.py",
+  "line": 663,
+  "depends": [
+   "get_admin_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "PATCH",
+  "path": "/api/v1/knowledge/external/connections/{id}",
+  "auth": "admin",
+  "handler": "update_external_knowledge_connection",
+  "file": "backend/open_webui/routers/knowledge.py",
+  "line": 675,
+  "depends": [
+   "get_admin_user"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/api/v1/knowledge/external/connections/{id}/retrieve-test",
+  "auth": "admin",
+  "handler": "test_external_knowledge_retrieval",
+  "file": "backend/open_webui/routers/knowledge.py",
+  "line": 826,
+  "depends": [
+   "get_admin_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/api/v1/knowledge/external/connections/{id}/test",
+  "auth": "admin",
+  "handler": "test_external_knowledge_connection",
+  "file": "backend/open_webui/routers/knowledge.py",
+  "line": 730,
+  "depends": [
+   "get_admin_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/api/v1/knowledge/external/knowledge/create",
+  "auth": "admin",
+  "handler": "create_external_knowledge",
+  "file": "backend/open_webui/routers/knowledge.py",
+  "line": 842,
+  "depends": [
+   "get_admin_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/api/v1/knowledge/external/source/create",
+  "auth": "admin",
+  "handler": "create_external_knowledge_source",
+  "file": "backend/open_webui/routers/knowledge.py",
+  "line": 892,
+  "depends": [
+   "get_admin_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/api/v1/knowledge/external/source/test",
+  "auth": "admin",
+  "handler": "test_external_knowledge_source",
+  "file": "backend/open_webui/routers/knowledge.py",
+  "line": 802,
+  "depends": [
+   "get_admin_user"
+  ]
+ },
+ {
+  "method": "PATCH",
+  "path": "/api/v1/knowledge/external/source/{id}",
+  "auth": "admin",
+  "handler": "update_external_knowledge_source",
+  "file": "backend/open_webui/routers/knowledge.py",
+  "line": 957,
+  "depends": [
+   "get_admin_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/api/v1/knowledge/metadata/reindex",
+  "auth": "admin",
+  "handler": "reindex_knowledge_base_metadata_embeddings",
+  "file": "backend/open_webui/routers/knowledge.py",
+  "line": 417,
+  "depends": [
+   "get_admin_user"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/api/v1/knowledge/reindex",
+  "auth": "user",
+  "handler": "reindex_knowledge_files",
+  "file": "backend/open_webui/routers/knowledge.py",
+  "line": 333,
+  "depends": [
+   "get_verified_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "GET",
+  "path": "/api/v1/knowledge/search",
+  "auth": "user",
+  "handler": "search_knowledge_bases",
+  "file": "backend/open_webui/routers/knowledge.py",
+  "line": 180,
+  "depends": [
+   "get_verified_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "GET",
+  "path": "/api/v1/knowledge/search/files",
+  "auth": "user",
+  "handler": "search_knowledge_files",
+  "file": "backend/open_webui/routers/knowledge.py",
+  "line": 245,
+  "depends": [
+   "get_verified_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "GET",
+  "path": "/api/v1/knowledge/{id}",
+  "auth": "user",
+  "handler": "get_knowledge_by_id",
+  "file": "backend/open_webui/routers/knowledge.py",
+  "line": 1047,
+  "depends": [
+   "get_verified_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/api/v1/knowledge/{id}/access/update",
+  "auth": "user",
+  "handler": "update_knowledge_access_by_id",
+  "file": "backend/open_webui/routers/knowledge.py",
+  "line": 1172,
+  "depends": [
+   "get_verified_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "DELETE",
+  "path": "/api/v1/knowledge/{id}/delete",
+  "auth": "user",
+  "handler": "delete_knowledge_by_id",
+  "file": "backend/open_webui/routers/knowledge.py",
+  "line": 1661,
+  "depends": [
+   "get_verified_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/api/v1/knowledge/{id}/dirs/create",
+  "auth": "user",
+  "handler": "create_knowledge_directory",
+  "file": "backend/open_webui/routers/knowledge.py",
+  "line": 2203,
+  "depends": [
+   "get_verified_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "DELETE",
+  "path": "/api/v1/knowledge/{id}/dirs/{dir_id}/delete",
+  "auth": "user",
+  "handler": "delete_knowledge_directory",
+  "file": "backend/open_webui/routers/knowledge.py",
+  "line": 2275,
+  "depends": [
+   "get_verified_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/api/v1/knowledge/{id}/dirs/{dir_id}/update",
+  "auth": "user",
+  "handler": "update_knowledge_directory",
+  "file": "backend/open_webui/routers/knowledge.py",
+  "line": 2235,
+  "depends": [
+   "get_verified_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "GET",
+  "path": "/api/v1/knowledge/{id}/export",
+  "auth": "admin",
+  "handler": "export_knowledge_by_id",
+  "file": "backend/open_webui/routers/knowledge.py",
+  "line": 2112,
+  "depends": [
+   "get_admin_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/api/v1/knowledge/{id}/file/add",
+  "auth": "user",
+  "handler": "add_file_to_knowledge_by_id",
+  "file": "backend/open_webui/routers/knowledge.py",
+  "line": 1371,
+  "depends": [
+   "get_verified_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/api/v1/knowledge/{id}/file/move",
+  "auth": "user",
+  "handler": "move_file_in_knowledge",
+  "file": "backend/open_webui/routers/knowledge.py",
+  "line": 2314,
+  "depends": [
+   "get_verified_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/api/v1/knowledge/{id}/file/remove",
+  "auth": "user",
+  "handler": "remove_file_from_knowledge_by_id",
+  "file": "backend/open_webui/routers/knowledge.py",
+  "line": 1557,
+  "depends": [
+   "get_verified_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/api/v1/knowledge/{id}/file/update",
+  "auth": "user",
+  "handler": "update_file_from_knowledge_by_id",
+  "file": "backend/open_webui/routers/knowledge.py",
+  "line": 1468,
+  "depends": [
+   "get_verified_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "GET",
+  "path": "/api/v1/knowledge/{id}/files",
+  "auth": "user",
+  "handler": "get_knowledge_files_by_id",
+  "file": "backend/open_webui/routers/knowledge.py",
+  "line": 1297,
+  "depends": [
+   "get_verified_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/api/v1/knowledge/{id}/files/batch/add",
+  "auth": "user",
+  "handler": "add_files_to_knowledge_batch",
+  "file": "backend/open_webui/routers/knowledge.py",
+  "line": 1989,
+  "depends": [
+   "get_verified_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "GET",
+  "path": "/api/v1/knowledge/{id}/files/pending",
+  "auth": "user",
+  "handler": "get_pending_knowledge_files",
+  "file": "backend/open_webui/routers/knowledge.py",
+  "line": 1232,
+  "depends": [
+   "get_verified_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/api/v1/knowledge/{id}/reset",
+  "auth": "user",
+  "handler": "reset_knowledge_by_id",
+  "file": "backend/open_webui/routers/knowledge.py",
+  "line": 1746,
+  "depends": [
+   "get_verified_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/api/v1/knowledge/{id}/sync/cleanup",
+  "auth": "user",
+  "handler": "sync_knowledge_cleanup",
+  "file": "backend/open_webui/routers/knowledge.py",
+  "line": 1928,
+  "depends": [
+   "get_verified_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/api/v1/knowledge/{id}/sync/diff",
+  "auth": "user",
+  "handler": "sync_knowledge_diff",
+  "file": "backend/open_webui/routers/knowledge.py",
+  "line": 1823,
+  "depends": [
+   "get_verified_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/api/v1/knowledge/{id}/update",
+  "auth": "user",
+  "handler": "update_knowledge_by_id",
+  "file": "backend/open_webui/routers/knowledge.py",
+  "line": 1094,
+  "depends": [
+   "get_verified_user"
+  ]
+ },
+ {
+  "method": "GET",
+  "path": "/api/v1/memories/",
+  "auth": "user",
+  "handler": "get_memories",
+  "file": "backend/open_webui/routers/memories.py",
+  "line": 57,
+  "depends": [
+   "get_verified_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/api/v1/memories/add",
+  "auth": "user",
+  "handler": "add_memory",
+  "file": "backend/open_webui/routers/memories.py",
+  "line": 128,
+  "depends": [
+   "get_verified_user"
+  ]
+ },
+ {
+  "method": "DELETE",
+  "path": "/api/v1/memories/delete/user",
+  "auth": "user",
+  "handler": "delete_memory_by_user_id",
+  "file": "backend/open_webui/routers/memories.py",
+  "line": 450,
+  "depends": [
+   "get_verified_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/api/v1/memories/path",
+  "auth": "user",
+  "handler": "read_memory_path",
+  "file": "backend/open_webui/routers/memories.py",
+  "line": 368,
+  "depends": [
+   "get_verified_user"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/api/v1/memories/paths",
+  "auth": "user",
+  "handler": "list_memory_paths",
+  "file": "backend/open_webui/routers/memories.py",
+  "line": 352,
+  "depends": [
+   "get_verified_user"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/api/v1/memories/query",
+  "auth": "user",
+  "handler": "query_memory",
+  "file": "backend/open_webui/routers/memories.py",
+  "line": 275,
+  "depends": [
+   "get_verified_user"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/api/v1/memories/reset",
+  "auth": "user",
+  "handler": "reset_memory_from_vector_db",
+  "file": "backend/open_webui/routers/memories.py",
+  "line": 392,
+  "depends": [
+   "get_verified_user"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/api/v1/memories/search",
+  "auth": "user",
+  "handler": "search_memories",
+  "file": "backend/open_webui/routers/memories.py",
+  "line": 334,
+  "depends": [
+   "get_verified_user"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/api/v1/memories/update",
+  "auth": "user",
+  "handler": "update_memories",
+  "file": "backend/open_webui/routers/memories.py",
+  "line": 178,
+  "depends": [
+   "get_verified_user"
+  ]
+ },
+ {
+  "method": "DELETE",
+  "path": "/api/v1/memories/{memory_id}",
+  "auth": "user",
+  "handler": "delete_memory_by_id",
+  "file": "backend/open_webui/routers/memories.py",
+  "line": 543,
+  "depends": [
+   "get_verified_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/api/v1/memories/{memory_id}/update",
+  "auth": "user",
+  "handler": "update_memory_by_id",
+  "file": "backend/open_webui/routers/memories.py",
+  "line": 482,
+  "depends": [
+   "get_verified_user"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/api/v1/messages",
+  "auth": "user",
+  "handler": "generate_messages",
+  "file": "backend/open_webui/main.py",
+  "line": 1883,
+  "depends": [
+   "get_verified_user"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/api/v1/messages/count_tokens",
+  "auth": "user",
+  "handler": "count_message_tokens",
+  "file": "backend/open_webui/main.py",
+  "line": 1814,
+  "depends": [
+   "get_verified_user"
+  ]
+ },
+ {
+  "method": "GET",
+  "path": "/api/v1/models",
+  "auth": "user",
+  "handler": "get_models",
+  "file": "backend/open_webui/main.py",
+  "line": 841,
+  "depends": [
+   "get_verified_user"
+  ]
+ },
+ {
+  "method": "GET",
+  "path": "/api/v1/models/base",
+  "auth": "admin",
+  "handler": "get_base_models",
+  "file": "backend/open_webui/routers/models.py",
+  "line": 221,
+  "depends": [
+   "get_admin_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "GET",
+  "path": "/api/v1/models/base/tags",
+  "auth": "admin",
+  "handler": "get_base_model_tags",
+  "file": "backend/open_webui/routers/models.py",
+  "line": 215,
+  "depends": [
+   "get_admin_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/api/v1/models/create",
+  "auth": "user",
+  "handler": "create_new_model",
+  "file": "backend/open_webui/routers/models.py",
+  "line": 250,
+  "depends": [
+   "get_verified_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "DELETE",
+  "path": "/api/v1/models/delete/all",
+  "auth": "admin",
+  "handler": "delete_all_models",
+  "file": "backend/open_webui/routers/models.py",
+  "line": 894,
+  "depends": [
+   "get_admin_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "GET",
+  "path": "/api/v1/models/export",
+  "auth": "user",
+  "handler": "export_models",
+  "file": "backend/open_webui/routers/models.py",
+  "line": 316,
+  "depends": [
+   "get_verified_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/api/v1/models/import",
+  "auth": "user",
+  "handler": "import_models",
+  "file": "backend/open_webui/routers/models.py",
+  "line": 348,
+  "depends": [
+   "get_verified_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "GET",
+  "path": "/api/v1/models/list",
+  "auth": "user",
+  "handler": "get_models",
+  "file": "backend/open_webui/routers/models.py",
+  "line": 136,
+  "depends": [
+   "get_verified_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "GET",
+  "path": "/api/v1/models/model",
+  "auth": "user",
+  "handler": "get_model_by_id",
+  "file": "backend/open_webui/routers/models.py",
+  "line": 516,
+  "depends": [
+   "get_verified_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/api/v1/models/model/access/update",
+  "auth": "user",
+  "handler": "update_model_access_by_id",
+  "file": "backend/open_webui/routers/models.py",
+  "line": 776,
+  "depends": [
+   "get_verified_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/api/v1/models/model/delete",
+  "auth": "user",
+  "handler": "delete_model_by_id",
+  "file": "backend/open_webui/routers/models.py",
+  "line": 852,
+  "depends": [
+   "get_verified_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "GET",
+  "path": "/api/v1/models/model/profile/image",
+  "auth": "user",
+  "handler": "get_model_profile_image",
+  "file": "backend/open_webui/routers/models.py",
+  "line": 570,
+  "depends": [
+   "get_verified_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/api/v1/models/model/toggle",
+  "auth": "user",
+  "handler": "toggle_model_by_id",
+  "file": "backend/open_webui/routers/models.py",
+  "line": 651,
+  "depends": [
+   "get_verified_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/api/v1/models/model/update",
+  "auth": "user",
+  "handler": "update_model_by_id",
+  "file": "backend/open_webui/routers/models.py",
+  "line": 702,
+  "depends": [
+   "get_verified_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/api/v1/models/sync",
+  "auth": "admin",
+  "handler": "sync_models",
+  "file": "backend/open_webui/routers/models.py",
+  "line": 488,
+  "depends": [
+   "get_admin_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "GET",
+  "path": "/api/v1/models/tags",
+  "auth": "user",
+  "handler": "get_model_tags",
+  "file": "backend/open_webui/routers/models.py",
+  "line": 235,
+  "depends": [
+   "get_verified_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "GET",
+  "path": "/api/v1/notes/",
+  "auth": "user",
+  "handler": "get_notes",
+  "file": "backend/open_webui/routers/notes.py",
+  "line": 66,
+  "depends": [
+   "get_verified_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/api/v1/notes/create",
+  "auth": "user",
+  "handler": "create_new_note",
+  "file": "backend/open_webui/routers/notes.py",
+  "line": 208,
+  "depends": [
+   "get_verified_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "GET",
+  "path": "/api/v1/notes/pinned",
+  "auth": "user",
+  "handler": "get_pinned_notes",
+  "file": "backend/open_webui/routers/notes.py",
+  "line": 115,
+  "depends": [
+   "get_verified_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "GET",
+  "path": "/api/v1/notes/search",
+  "auth": "user",
+  "handler": "search_notes",
+  "file": "backend/open_webui/routers/notes.py",
+  "line": 150,
+  "depends": [
+   "get_verified_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "GET",
+  "path": "/api/v1/notes/{id}",
+  "auth": "user",
+  "handler": "get_note_by_id",
+  "file": "backend/open_webui/routers/notes.py",
+  "line": 256,
+  "depends": [
+   "get_verified_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/api/v1/notes/{id}/access/update",
+  "auth": "user",
+  "handler": "update_note_access_by_id",
+  "file": "backend/open_webui/routers/notes.py",
+  "line": 617,
+  "depends": [
+   "get_verified_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "GET",
+  "path": "/api/v1/notes/{id}/chat",
+  "auth": "user",
+  "handler": "get_note_chat_by_id",
+  "file": "backend/open_webui/routers/notes.py",
+  "line": 309,
+  "depends": [
+   "get_verified_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/api/v1/notes/{id}/chat",
+  "auth": "user",
+  "handler": "create_note_chat_by_id",
+  "file": "backend/open_webui/routers/notes.py",
+  "line": 468,
+  "depends": [
+   "get_verified_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "GET",
+  "path": "/api/v1/notes/{id}/chats",
+  "auth": "user",
+  "handler": "get_note_chats_by_id",
+  "file": "backend/open_webui/routers/notes.py",
+  "line": 405,
+  "depends": [
+   "get_verified_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "DELETE",
+  "path": "/api/v1/notes/{id}/delete",
+  "auth": "user",
+  "handler": "delete_note_by_id",
+  "file": "backend/open_webui/routers/notes.py",
+  "line": 725,
+  "depends": [
+   "get_verified_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/api/v1/notes/{id}/pin",
+  "auth": "user",
+  "handler": "pin_note_by_id",
+  "file": "backend/open_webui/routers/notes.py",
+  "line": 676,
+  "depends": [
+   "get_verified_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/api/v1/notes/{id}/update",
+  "auth": "user",
+  "handler": "update_note_by_id",
+  "file": "backend/open_webui/routers/notes.py",
+  "line": 537,
+  "depends": [
+   "get_verified_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "GET",
+  "path": "/api/v1/notifications/events",
+  "auth": "user",
+  "handler": "get_notification_events",
+  "file": "backend/open_webui/routers/notifications.py",
+  "line": 45,
+  "depends": [
+   "get_verified_user"
+  ]
+ },
+ {
+  "method": "GET",
+  "path": "/api/v1/notifications/targets",
+  "auth": "user",
+  "handler": "get_notification_targets",
+  "file": "backend/open_webui/routers/notifications.py",
+  "line": 51,
+  "depends": [
+   "get_verified_user"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/api/v1/notifications/targets",
+  "auth": "user",
+  "handler": "create_notification_target",
+  "file": "backend/open_webui/routers/notifications.py",
+  "line": 57,
+  "depends": [
+   "get_verified_user"
+  ]
+ },
+ {
+  "method": "DELETE",
+  "path": "/api/v1/notifications/targets/{target_id}",
+  "auth": "user",
+  "handler": "delete_notification_target",
+  "file": "backend/open_webui/routers/notifications.py",
+  "line": 77,
+  "depends": [
+   "get_verified_user"
+  ]
+ },
+ {
+  "method": "PUT",
+  "path": "/api/v1/notifications/targets/{target_id}",
+  "auth": "user",
+  "handler": "update_notification_target",
+  "file": "backend/open_webui/routers/notifications.py",
+  "line": 66,
+  "depends": [
+   "get_verified_user"
+  ]
+ },
+ {
+  "method": "PUT",
+  "path": "/api/v1/notifications/targets/{target_id}/default",
+  "auth": "user",
+  "handler": "set_default_notification_target",
+  "file": "backend/open_webui/routers/notifications.py",
+  "line": 85,
+  "depends": [
+   "get_verified_user"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/api/v1/notifications/targets/{target_id}/test",
+  "auth": "user",
+  "handler": "test_notification_target",
+  "file": "backend/open_webui/routers/notifications.py",
+  "line": 94,
+  "depends": [
+   "get_verified_user"
+  ]
+ },
+ {
+  "method": "GET",
+  "path": "/api/v1/pipelines/",
+  "auth": "admin",
+  "handler": "get_pipelines",
+  "file": "backend/open_webui/routers/pipelines.py",
+  "line": 406,
+  "depends": [
+   "get_admin_user"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/api/v1/pipelines/add",
+  "auth": "admin",
+  "handler": "add_pipeline",
+  "file": "backend/open_webui/routers/pipelines.py",
+  "line": 311,
+  "depends": [
+   "get_admin_user"
+  ]
+ },
+ {
+  "method": "DELETE",
+  "path": "/api/v1/pipelines/delete",
+  "auth": "admin",
+  "handler": "delete_pipeline",
+  "file": "backend/open_webui/routers/pipelines.py",
+  "line": 361,
+  "depends": [
+   "get_admin_user"
+  ]
+ },
+ {
+  "method": "GET",
+  "path": "/api/v1/pipelines/list",
+  "auth": "admin",
+  "handler": "get_pipelines_list",
+  "file": "backend/open_webui/routers/pipelines.py",
+  "line": 199,
+  "depends": [
+   "get_admin_user"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/api/v1/pipelines/upload",
+  "auth": "admin",
+  "handler": "upload_pipeline",
+  "file": "backend/open_webui/routers/pipelines.py",
+  "line": 218,
+  "depends": [
+   "get_admin_user"
+  ]
+ },
+ {
+  "method": "GET",
+  "path": "/api/v1/pipelines/{pipeline_id}/valves",
+  "auth": "admin",
+  "handler": "get_pipeline_valves",
+  "file": "backend/open_webui/routers/pipelines.py",
+  "line": 441,
+  "depends": [
+   "get_admin_user"
+  ]
+ },
+ {
+  "method": "GET",
+  "path": "/api/v1/pipelines/{pipeline_id}/valves/spec",
+  "auth": "admin",
+  "handler": "get_pipeline_valves_spec",
+  "file": "backend/open_webui/routers/pipelines.py",
+  "line": 488,
+  "depends": [
+   "get_admin_user"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/api/v1/pipelines/{pipeline_id}/valves/update",
+  "auth": "admin",
+  "handler": "update_pipeline_valves",
+  "file": "backend/open_webui/routers/pipelines.py",
+  "line": 528,
+  "depends": [
+   "get_admin_user"
+  ]
+ },
+ {
+  "method": "GET",
+  "path": "/api/v1/prompts/",
+  "auth": "user",
+  "handler": "get_prompts",
+  "file": "backend/open_webui/routers/prompts.py",
+  "line": 55,
+  "depends": [
+   "get_verified_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/api/v1/prompts/create",
+  "auth": "user",
+  "handler": "create_new_prompt",
+  "file": "backend/open_webui/routers/prompts.py",
+  "line": 144,
+  "depends": [
+   "get_verified_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "GET",
+  "path": "/api/v1/prompts/id/{prompt_id}",
+  "auth": "user",
+  "handler": "get_prompt_by_id",
+  "file": "backend/open_webui/routers/prompts.py",
+  "line": 206,
+  "depends": [
+   "get_verified_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/api/v1/prompts/id/{prompt_id}/access/update",
+  "auth": "user",
+  "handler": "update_prompt_access_by_id",
+  "file": "backend/open_webui/routers/prompts.py",
+  "line": 442,
+  "depends": [
+   "get_verified_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "DELETE",
+  "path": "/api/v1/prompts/id/{prompt_id}/delete",
+  "auth": "user",
+  "handler": "delete_prompt_by_id",
+  "file": "backend/open_webui/routers/prompts.py",
+  "line": 552,
+  "depends": [
+   "get_verified_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "GET",
+  "path": "/api/v1/prompts/id/{prompt_id}/history",
+  "auth": "user",
+  "handler": "get_prompt_history",
+  "file": "backend/open_webui/routers/prompts.py",
+  "line": 600,
+  "depends": [
+   "get_verified_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "GET",
+  "path": "/api/v1/prompts/id/{prompt_id}/history/diff",
+  "auth": "user",
+  "handler": "get_prompt_diff",
+  "file": "backend/open_webui/routers/prompts.py",
+  "line": 732,
+  "depends": [
+   "get_verified_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "DELETE",
+  "path": "/api/v1/prompts/id/{prompt_id}/history/{history_id}",
+  "auth": "user",
+  "handler": "delete_prompt_history_entry",
+  "file": "backend/open_webui/routers/prompts.py",
+  "line": 682,
+  "depends": [
+   "get_verified_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "GET",
+  "path": "/api/v1/prompts/id/{prompt_id}/history/{history_id}",
+  "auth": "user",
+  "handler": "get_prompt_history_entry",
+  "file": "backend/open_webui/routers/prompts.py",
+  "line": 639,
+  "depends": [
+   "get_verified_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/api/v1/prompts/id/{prompt_id}/toggle",
+  "auth": "user",
+  "handler": "toggle_prompt_active",
+  "file": "backend/open_webui/routers/prompts.py",
+  "line": 499,
+  "depends": [
+   "get_verified_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/api/v1/prompts/id/{prompt_id}/update",
+  "auth": "user",
+  "handler": "update_prompt_by_id",
+  "file": "backend/open_webui/routers/prompts.py",
+  "line": 250,
+  "depends": [
+   "get_verified_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/api/v1/prompts/id/{prompt_id}/update/meta",
+  "auth": "user",
+  "handler": "update_prompt_metadata",
+  "file": "backend/open_webui/routers/prompts.py",
+  "line": 324,
+  "depends": [
+   "get_verified_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/api/v1/prompts/id/{prompt_id}/update/version",
+  "auth": "user",
+  "handler": "set_prompt_version",
+  "file": "backend/open_webui/routers/prompts.py",
+  "line": 385,
+  "depends": [
+   "get_verified_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "GET",
+  "path": "/api/v1/prompts/list",
+  "auth": "user",
+  "handler": "get_prompt_list",
+  "file": "backend/open_webui/routers/prompts.py",
+  "line": 72,
+  "depends": [
+   "get_verified_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "GET",
+  "path": "/api/v1/prompts/tags",
+  "auth": "user",
+  "handler": "get_prompt_tags",
+  "file": "backend/open_webui/routers/prompts.py",
+  "line": 65,
+  "depends": [
+   "get_verified_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "GET",
+  "path": "/api/v1/retrieval/config",
+  "auth": "admin",
+  "handler": "get_rag_config",
+  "file": "backend/open_webui/routers/retrieval.py",
+  "line": 616,
+  "depends": [
+   "get_admin_user"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/api/v1/retrieval/config/update",
+  "auth": "admin",
+  "handler": "update_rag_config",
+  "file": "backend/open_webui/routers/retrieval.py",
+  "line": 939,
+  "depends": [
+   "get_admin_user"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/api/v1/retrieval/delete",
+  "auth": "admin",
+  "handler": "delete_entries_from_collection",
+  "file": "backend/open_webui/routers/retrieval.py",
+  "line": 2879,
+  "depends": [
+   "get_admin_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "GET",
+  "path": "/api/v1/retrieval/ef/{text}",
+  "auth": "open",
+  "handler": "get_embeddings",
+  "file": "backend/open_webui/routers/retrieval.py",
+  "line": 2990,
+  "depends": []
+ },
+ {
+  "method": "GET",
+  "path": "/api/v1/retrieval/embedding",
+  "auth": "admin",
+  "handler": "get_embedding_config",
+  "file": "backend/open_webui/routers/retrieval.py",
+  "line": 452,
+  "depends": [
+   "get_admin_user"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/api/v1/retrieval/embedding/update",
+  "auth": "admin",
+  "handler": "update_embedding_config",
+  "file": "backend/open_webui/routers/retrieval.py",
+  "line": 521,
+  "depends": [
+   "get_admin_user"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/api/v1/retrieval/process/file",
+  "auth": "user",
+  "handler": "process_file",
+  "file": "backend/open_webui/routers/retrieval.py",
+  "line": 1837,
+  "depends": [
+   "get_verified_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/api/v1/retrieval/process/files/batch",
+  "auth": "user",
+  "handler": "process_files_batch",
+  "file": "backend/open_webui/routers/retrieval.py",
+  "line": 3011,
+  "depends": [
+   "get_verified_user"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/api/v1/retrieval/process/text",
+  "auth": "user",
+  "handler": "process_text",
+  "file": "backend/open_webui/routers/retrieval.py",
+  "line": 2088,
+  "depends": [
+   "get_verified_user"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/api/v1/retrieval/process/web",
+  "auth": "user",
+  "handler": "process_web",
+  "file": "backend/open_webui/routers/retrieval.py",
+  "line": 2133,
+  "depends": [
+   "get_verified_user"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/api/v1/retrieval/process/web/search",
+  "auth": "user",
+  "handler": "process_web_search",
+  "file": "backend/open_webui/routers/retrieval.py",
+  "line": 2553,
+  "depends": [
+   "get_verified_user"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/api/v1/retrieval/process/youtube",
+  "auth": "user",
+  "handler": "process_web",
+  "file": "backend/open_webui/routers/retrieval.py",
+  "line": 2133,
+  "depends": [
+   "get_verified_user"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/api/v1/retrieval/query/collection",
+  "auth": "user",
+  "handler": "query_collection_handler",
+  "file": "backend/open_webui/routers/retrieval.py",
+  "line": 2810,
+  "depends": [
+   "get_verified_user"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/api/v1/retrieval/query/doc",
+  "auth": "user",
+  "handler": "query_doc_handler",
+  "file": "backend/open_webui/routers/retrieval.py",
+  "line": 2744,
+  "depends": [
+   "get_verified_user"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/api/v1/retrieval/reset/db",
+  "auth": "admin",
+  "handler": "reset_vector_db",
+  "file": "backend/open_webui/routers/retrieval.py",
+  "line": 2939,
+  "depends": [
+   "get_admin_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/api/v1/retrieval/reset/uploads",
+  "auth": "admin",
+  "handler": "reset_upload_dir",
+  "file": "backend/open_webui/routers/retrieval.py",
+  "line": 2955,
+  "depends": [
+   "get_admin_user"
+  ]
+ },
+ {
+  "method": "GET",
+  "path": "/api/v1/scim/v2/Groups",
+  "auth": "other",
+  "handler": "get_groups",
+  "file": "backend/open_webui/routers/scim.py",
+  "line": 813,
+  "depends": [
+   "get_scim_auth",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/api/v1/scim/v2/Groups",
+  "auth": "other",
+  "handler": "create_group",
+  "file": "backend/open_webui/routers/scim.py",
+  "line": 875,
+  "depends": [
+   "get_scim_auth",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "DELETE",
+  "path": "/api/v1/scim/v2/Groups/{group_id}",
+  "auth": "other",
+  "handler": "delete_group",
+  "file": "backend/open_webui/routers/scim.py",
+  "line": 1107,
+  "depends": [
+   "get_scim_auth",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "GET",
+  "path": "/api/v1/scim/v2/Groups/{group_id}",
+  "auth": "other",
+  "handler": "get_group",
+  "file": "backend/open_webui/routers/scim.py",
+  "line": 857,
+  "depends": [
+   "get_scim_auth",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "PATCH",
+  "path": "/api/v1/scim/v2/Groups/{group_id}",
+  "auth": "other",
+  "handler": "patch_group",
+  "file": "backend/open_webui/routers/scim.py",
+  "line": 1015,
+  "depends": [
+   "get_scim_auth",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "PUT",
+  "path": "/api/v1/scim/v2/Groups/{group_id}",
+  "auth": "other",
+  "handler": "update_group",
+  "file": "backend/open_webui/routers/scim.py",
+  "line": 945,
+  "depends": [
+   "get_scim_auth",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "GET",
+  "path": "/api/v1/scim/v2/ResourceTypes",
+  "auth": "open",
+  "handler": "get_resource_types",
+  "file": "backend/open_webui/routers/scim.py",
+  "line": 424,
+  "depends": []
+ },
+ {
+  "method": "GET",
+  "path": "/api/v1/scim/v2/Schemas",
+  "auth": "open",
+  "handler": "get_schemas",
+  "file": "backend/open_webui/routers/scim.py",
+  "line": 454,
+  "depends": []
+ },
+ {
+  "method": "GET",
+  "path": "/api/v1/scim/v2/ServiceProviderConfig",
+  "auth": "open",
+  "handler": "get_service_provider_config",
+  "file": "backend/open_webui/routers/scim.py",
+  "line": 402,
+  "depends": []
+ },
+ {
+  "method": "GET",
+  "path": "/api/v1/scim/v2/Users",
+  "auth": "other",
+  "handler": "get_users",
+  "file": "backend/open_webui/routers/scim.py",
+  "line": 499,
+  "depends": [
+   "get_scim_auth",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/api/v1/scim/v2/Users",
+  "auth": "other",
+  "handler": "create_user",
+  "file": "backend/open_webui/routers/scim.py",
+  "line": 564,
+  "depends": [
+   "get_scim_auth",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "DELETE",
+  "path": "/api/v1/scim/v2/Users/{user_id}",
+  "auth": "other",
+  "handler": "delete_user",
+  "file": "backend/open_webui/routers/scim.py",
+  "line": 779,
+  "depends": [
+   "get_scim_auth",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "GET",
+  "path": "/api/v1/scim/v2/Users/{user_id}",
+  "auth": "other",
+  "handler": "get_user",
+  "file": "backend/open_webui/routers/scim.py",
+  "line": 549,
+  "depends": [
+   "get_scim_auth",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "PATCH",
+  "path": "/api/v1/scim/v2/Users/{user_id}",
+  "auth": "other",
+  "handler": "patch_user",
+  "file": "backend/open_webui/routers/scim.py",
+  "line": 717,
+  "depends": [
+   "get_scim_auth",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "PUT",
+  "path": "/api/v1/scim/v2/Users/{user_id}",
+  "auth": "other",
+  "handler": "update_user",
+  "file": "backend/open_webui/routers/scim.py",
+  "line": 649,
+  "depends": [
+   "get_scim_auth",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "GET",
+  "path": "/api/v1/skills/",
+  "auth": "user",
+  "handler": "get_skills",
+  "file": "backend/open_webui/routers/skills.py",
+  "line": 39,
+  "depends": [
+   "get_verified_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/api/v1/skills/create",
+  "auth": "user",
+  "handler": "create_new_skill",
+  "file": "backend/open_webui/routers/skills.py",
+  "line": 161,
+  "depends": [
+   "get_verified_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "GET",
+  "path": "/api/v1/skills/export",
+  "auth": "user",
+  "handler": "export_skills",
+  "file": "backend/open_webui/routers/skills.py",
+  "line": 133,
+  "depends": [
+   "get_verified_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "GET",
+  "path": "/api/v1/skills/id/{id}",
+  "auth": "user",
+  "handler": "get_skill_by_id",
+  "file": "backend/open_webui/routers/skills.py",
+  "line": 230,
+  "depends": [
+   "get_verified_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/api/v1/skills/id/{id}/access/update",
+  "auth": "user",
+  "handler": "update_skill_access_by_id",
+  "file": "backend/open_webui/routers/skills.py",
+  "line": 360,
+  "depends": [
+   "get_verified_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "DELETE",
+  "path": "/api/v1/skills/id/{id}/delete",
+  "auth": "user",
+  "handler": "delete_skill_by_id",
+  "file": "backend/open_webui/routers/skills.py",
+  "line": 470,
+  "depends": [
+   "get_verified_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/api/v1/skills/id/{id}/toggle",
+  "auth": "user",
+  "handler": "toggle_skill_by_id",
+  "file": "backend/open_webui/routers/skills.py",
+  "line": 417,
+  "depends": [
+   "get_verified_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/api/v1/skills/id/{id}/update",
+  "auth": "user",
+  "handler": "update_skill_by_id",
+  "file": "backend/open_webui/routers/skills.py",
+  "line": 277,
+  "depends": [
+   "get_verified_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "GET",
+  "path": "/api/v1/skills/list",
+  "auth": "user",
+  "handler": "get_skill_list",
+  "file": "backend/open_webui/routers/skills.py",
+  "line": 72,
+  "depends": [
+   "get_verified_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/api/v1/tasks/auto/completions",
+  "auth": "user",
+  "handler": "generate_autocompletion",
+  "file": "backend/open_webui/routers/tasks.py",
+  "line": 480,
+  "depends": [
+   "get_verified_user"
+  ]
+ },
+ {
+  "method": "GET",
+  "path": "/api/v1/tasks/config",
+  "auth": "user",
+  "handler": "get_task_config",
+  "file": "backend/open_webui/routers/tasks.py",
+  "line": 79,
+  "depends": [
+   "get_verified_user"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/api/v1/tasks/config/update",
+  "auth": "admin",
+  "handler": "update_task_config",
+  "file": "backend/open_webui/routers/tasks.py",
+  "line": 105,
+  "depends": [
+   "get_admin_user"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/api/v1/tasks/emoji/completions",
+  "auth": "user",
+  "handler": "generate_emoji",
+  "file": "backend/open_webui/routers/tasks.py",
+  "line": 562,
+  "depends": [
+   "get_verified_user"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/api/v1/tasks/follow_up/completions",
+  "auth": "user",
+  "handler": "generate_follow_ups",
+  "file": "backend/open_webui/routers/tasks.py",
+  "line": 195,
+  "depends": [
+   "get_verified_user"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/api/v1/tasks/image_prompt/completions",
+  "auth": "user",
+  "handler": "generate_image_prompt",
+  "file": "backend/open_webui/routers/tasks.py",
+  "line": 335,
+  "depends": [
+   "get_verified_user"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/api/v1/tasks/moa/completions",
+  "auth": "user",
+  "handler": "generate_moa_response",
+  "file": "backend/open_webui/routers/tasks.py",
+  "line": 628,
+  "depends": [
+   "get_verified_user"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/api/v1/tasks/queries/completions",
+  "auth": "user",
+  "handler": "generate_queries",
+  "file": "backend/open_webui/routers/tasks.py",
+  "line": 399,
+  "depends": [
+   "get_verified_user"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/api/v1/tasks/tags/completions",
+  "auth": "user",
+  "handler": "generate_chat_tags",
+  "file": "backend/open_webui/routers/tasks.py",
+  "line": 265,
+  "depends": [
+   "get_verified_user"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/api/v1/tasks/title/completions",
+  "auth": "user",
+  "handler": "generate_title",
+  "file": "backend/open_webui/routers/tasks.py",
+  "line": 111,
+  "depends": [
+   "get_verified_user"
+  ]
+ },
+ {
+  "method": "GET",
+  "path": "/api/v1/terminals/",
+  "auth": "user",
+  "handler": "list_terminal_servers",
+  "file": "backend/open_webui/routers/terminals.py",
+  "line": 70,
+  "depends": [
+   "get_verified_user"
+  ]
+ },
+ {
+  "method": "GET",
+  "path": "/api/v1/tools/",
+  "auth": "user",
+  "handler": "get_tools",
+  "file": "backend/open_webui/routers/tools.py",
+  "line": 67,
+  "depends": [
+   "get_verified_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/api/v1/tools/create",
+  "auth": "user",
+  "handler": "create_new_tools",
+  "file": "backend/open_webui/routers/tools.py",
+  "line": 345,
+  "depends": [
+   "get_verified_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "GET",
+  "path": "/api/v1/tools/export",
+  "auth": "user",
+  "handler": "export_tools",
+  "file": "backend/open_webui/routers/tools.py",
+  "line": 317,
+  "depends": [
+   "get_verified_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "GET",
+  "path": "/api/v1/tools/id/{id}",
+  "auth": "user",
+  "handler": "get_tools_by_id",
+  "file": "backend/open_webui/routers/tools.py",
+  "line": 434,
+  "depends": [
+   "get_verified_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/api/v1/tools/id/{id}/access/update",
+  "auth": "user",
+  "handler": "update_tool_access_by_id",
+  "file": "backend/open_webui/routers/tools.py",
+  "line": 587,
+  "depends": [
+   "get_verified_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "DELETE",
+  "path": "/api/v1/tools/id/{id}/delete",
+  "auth": "user",
+  "handler": "delete_tools_by_id",
+  "file": "backend/open_webui/routers/tools.py",
+  "line": 644,
+  "depends": [
+   "get_verified_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/api/v1/tools/id/{id}/update",
+  "auth": "user",
+  "handler": "update_tools_by_id",
+  "file": "backend/open_webui/routers/tools.py",
+  "line": 483,
+  "depends": [
+   "get_verified_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "GET",
+  "path": "/api/v1/tools/id/{id}/valves",
+  "auth": "user",
+  "handler": "get_tools_valves_by_id",
+  "file": "backend/open_webui/routers/tools.py",
+  "line": 694,
+  "depends": [
+   "get_verified_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "GET",
+  "path": "/api/v1/tools/id/{id}/valves/spec",
+  "auth": "user",
+  "handler": "get_tools_valves_spec_by_id",
+  "file": "backend/open_webui/routers/tools.py",
+  "line": 736,
+  "depends": [
+   "get_verified_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/api/v1/tools/id/{id}/valves/update",
+  "auth": "user",
+  "handler": "update_tools_valves_by_id",
+  "file": "backend/open_webui/routers/tools.py",
+  "line": 782,
+  "depends": [
+   "get_verified_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "GET",
+  "path": "/api/v1/tools/id/{id}/valves/user",
+  "auth": "user",
+  "handler": "get_tools_user_valves_by_id",
+  "file": "backend/open_webui/routers/tools.py",
+  "line": 847,
+  "depends": [
+   "get_verified_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "GET",
+  "path": "/api/v1/tools/id/{id}/valves/user/spec",
+  "auth": "user",
+  "handler": "get_tools_user_valves_spec_by_id",
+  "file": "backend/open_webui/routers/tools.py",
+  "line": 884,
+  "depends": [
+   "get_verified_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/api/v1/tools/id/{id}/valves/user/update",
+  "auth": "user",
+  "handler": "update_tools_user_valves_by_id",
+  "file": "backend/open_webui/routers/tools.py",
+  "line": 925,
+  "depends": [
+   "get_verified_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "GET",
+  "path": "/api/v1/tools/list",
+  "auth": "user",
+  "handler": "get_tool_list",
+  "file": "backend/open_webui/routers/tools.py",
+  "line": 204,
+  "depends": [
+   "get_verified_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/api/v1/tools/load/url",
+  "auth": "admin",
+  "handler": "load_tool_from_url",
+  "file": "backend/open_webui/routers/tools.py",
+  "line": 265,
+  "depends": [
+   "get_admin_user"
+  ]
+ },
+ {
+  "method": "GET",
+  "path": "/api/v1/users/",
+  "auth": "admin",
+  "handler": "get_users",
+  "file": "backend/open_webui/routers/users.py",
+  "line": 67,
+  "depends": [
+   "get_admin_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "GET",
+  "path": "/api/v1/users/all",
+  "auth": "admin",
+  "handler": "get_all_users",
+  "file": "backend/open_webui/routers/users.py",
+  "line": 114,
+  "depends": [
+   "get_admin_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "GET",
+  "path": "/api/v1/users/default/permissions",
+  "auth": "admin",
+  "handler": "get_default_user_permissions",
+  "file": "backend/open_webui/routers/users.py",
+  "line": 393,
+  "depends": [
+   "get_admin_user"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/api/v1/users/default/permissions",
+  "auth": "admin",
+  "handler": "update_default_user_permissions",
+  "file": "backend/open_webui/routers/users.py",
+  "line": 406,
+  "depends": [
+   "get_admin_user"
+  ]
+ },
+ {
+  "method": "GET",
+  "path": "/api/v1/users/default/permissions/defaults",
+  "auth": "admin",
+  "handler": "get_default_user_permissions_defaults",
+  "file": "backend/open_webui/routers/users.py",
+  "line": 420,
+  "depends": [
+   "get_admin_user"
+  ]
+ },
+ {
+  "method": "GET",
+  "path": "/api/v1/users/groups",
+  "auth": "user",
+  "handler": "get_user_groups",
+  "file": "backend/open_webui/routers/users.py",
+  "line": 152,
+  "depends": [
+   "get_verified_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "GET",
+  "path": "/api/v1/users/permissions",
+  "auth": "user",
+  "handler": "get_user_permissisions",
+  "file": "backend/open_webui/routers/users.py",
+  "line": 162,
+  "depends": [
+   "get_verified_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "GET",
+  "path": "/api/v1/users/search",
+  "auth": "user",
+  "handler": "search_users",
+  "file": "backend/open_webui/routers/users.py",
+  "line": 122,
+  "depends": [
+   "get_verified_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "GET",
+  "path": "/api/v1/users/usage",
+  "auth": "user",
+  "handler": "get_user_usage_by_session_user",
+  "file": "backend/open_webui/routers/users.py",
+  "line": 657,
+  "depends": [
+   "get_verified_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "GET",
+  "path": "/api/v1/users/user/info",
+  "auth": "user",
+  "handler": "get_user_info_by_session_user",
+  "file": "backend/open_webui/routers/users.py",
+  "line": 573,
+  "depends": [
+   "get_verified_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/api/v1/users/user/info/update",
+  "auth": "user",
+  "handler": "update_user_info_by_session_user",
+  "file": "backend/open_webui/routers/users.py",
+  "line": 630,
+  "depends": [
+   "get_verified_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "GET",
+  "path": "/api/v1/users/user/settings",
+  "auth": "user",
+  "handler": "get_user_settings_by_session_user",
+  "file": "backend/open_webui/routers/users.py",
+  "line": 439,
+  "depends": [
+   "get_verified_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/api/v1/users/user/settings/update",
+  "auth": "user",
+  "handler": "update_user_settings_by_session_user",
+  "file": "backend/open_webui/routers/users.py",
+  "line": 452,
+  "depends": [
+   "get_verified_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "GET",
+  "path": "/api/v1/users/user/status",
+  "auth": "user",
+  "handler": "get_user_status_by_session_user",
+  "file": "backend/open_webui/routers/users.py",
+  "line": 520,
+  "depends": [
+   "get_verified_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/api/v1/users/user/status/update",
+  "auth": "user",
+  "handler": "update_user_status_by_session_user",
+  "file": "backend/open_webui/routers/users.py",
+  "line": 540,
+  "depends": [
+   "get_verified_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "GET",
+  "path": "/api/v1/users/user/variables",
+  "auth": "user",
+  "handler": "get_user_variables_by_session_user",
+  "file": "backend/open_webui/routers/users.py",
+  "line": 592,
+  "depends": [
+   "get_verified_user"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/api/v1/users/user/variables/update",
+  "auth": "user",
+  "handler": "update_user_variables_by_session_user",
+  "file": "backend/open_webui/routers/users.py",
+  "line": 602,
+  "depends": [
+   "get_verified_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "DELETE",
+  "path": "/api/v1/users/{user_id}",
+  "auth": "admin",
+  "handler": "delete_user_by_id",
+  "file": "backend/open_webui/routers/users.py",
+  "line": 991,
+  "depends": [
+   "get_admin_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "GET",
+  "path": "/api/v1/users/{user_id}",
+  "auth": "admin",
+  "handler": "get_user_by_id",
+  "file": "backend/open_webui/routers/users.py",
+  "line": 746,
+  "depends": [
+   "get_admin_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "GET",
+  "path": "/api/v1/users/{user_id}/active",
+  "auth": "user",
+  "handler": "get_user_active_status_by_id",
+  "file": "backend/open_webui/routers/users.py",
+  "line": 853,
+  "depends": [
+   "get_verified_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "GET",
+  "path": "/api/v1/users/{user_id}/groups",
+  "auth": "admin",
+  "handler": "get_user_groups_by_id",
+  "file": "backend/open_webui/routers/users.py",
+  "line": 1042,
+  "depends": [
+   "get_admin_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "GET",
+  "path": "/api/v1/users/{user_id}/info",
+  "auth": "user",
+  "handler": "get_user_info_by_id",
+  "file": "backend/open_webui/routers/users.py",
+  "line": 766,
+  "depends": [
+   "get_verified_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "GET",
+  "path": "/api/v1/users/{user_id}/oauth/sessions",
+  "auth": "admin",
+  "handler": "get_user_oauth_sessions_by_id",
+  "file": "backend/open_webui/routers/users.py",
+  "line": 787,
+  "depends": [
+   "get_admin_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "GET",
+  "path": "/api/v1/users/{user_id}/preview",
+  "auth": "admin",
+  "handler": "get_user_preview",
+  "file": "backend/open_webui/routers/users.py",
+  "line": 1054,
+  "depends": [
+   "get_admin_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "GET",
+  "path": "/api/v1/users/{user_id}/profile/image",
+  "auth": "user",
+  "handler": "get_user_profile_image_by_id",
+  "file": "backend/open_webui/routers/users.py",
+  "line": 806,
+  "depends": [
+   "get_verified_user"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/api/v1/users/{user_id}/update",
+  "auth": "admin",
+  "handler": "update_user_by_id",
+  "file": "backend/open_webui/routers/users.py",
+  "line": 867,
+  "depends": [
+   "get_admin_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/api/v1/utils/code/execute",
+  "auth": "user",
+  "handler": "execute_code",
+  "file": "backend/open_webui/routers/utils.py",
+  "line": 44,
+  "depends": [
+   "get_verified_user"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/api/v1/utils/code/format",
+  "auth": "admin",
+  "handler": "format_code",
+  "file": "backend/open_webui/routers/utils.py",
+  "line": 33,
+  "depends": [
+   "get_admin_user"
+  ]
+ },
+ {
+  "method": "GET",
+  "path": "/api/v1/utils/db/download",
+  "auth": "admin",
+  "handler": "download_db",
+  "file": "backend/open_webui/routers/utils.py",
+  "line": 97,
+  "depends": [
+   "get_admin_user"
+  ]
+ },
+ {
+  "method": "GET",
+  "path": "/api/v1/utils/gravatar",
+  "auth": "user",
+  "handler": "get_gravatar",
+  "file": "backend/open_webui/routers/utils.py",
+  "line": 24,
+  "depends": [
+   "get_verified_user"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/api/v1/utils/pdf",
+  "auth": "user",
+  "handler": "download_chat_as_pdf",
+  "file": "backend/open_webui/routers/utils.py",
+  "line": 82,
+  "depends": [
+   "get_verified_user"
+  ]
+ },
+ {
+  "method": "GET",
+  "path": "/api/version",
+  "auth": "open",
+  "handler": "get_app_version",
+  "file": "backend/open_webui/main.py",
+  "line": 2415,
+  "depends": []
+ },
+ {
+  "method": "GET",
+  "path": "/api/version/updates",
+  "auth": "user",
+  "handler": "get_app_latest_release_version",
+  "file": "backend/open_webui/main.py",
+  "line": 2423,
+  "depends": [
+   "get_verified_user"
+  ]
+ },
+ {
+  "method": "GET",
+  "path": "/cache/{path:path}",
+  "auth": "user",
+  "handler": "serve_cache_file",
+  "file": "backend/open_webui/main.py",
+  "line": 2827,
+  "depends": [
+   "get_verified_user"
+  ]
+ },
+ {
+  "method": "GET",
+  "path": "/health",
+  "auth": "open",
+  "handler": "healthcheck",
+  "file": "backend/open_webui/main.py",
+  "line": 2769,
+  "depends": []
+ },
+ {
+  "method": "GET",
+  "path": "/health/db",
+  "auth": "open",
+  "handler": "check_db_health",
+  "file": "backend/open_webui/main.py",
+  "line": 2815,
+  "depends": []
+ },
+ {
+  "method": "GET",
+  "path": "/manifest.json",
+  "auth": "open",
+  "handler": "get_manifest_json",
+  "file": "backend/open_webui/main.py",
+  "line": 2688,
+  "depends": []
+ },
+ {
+  "method": "POST",
+  "path": "/oauth/backchannel-logout",
+  "auth": "open",
+  "handler": "oauth_backchannel_logout",
+  "file": "backend/open_webui/main.py",
+  "line": 2678,
+  "depends": [
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "GET",
+  "path": "/oauth/clients/{client_id}/authorize",
+  "auth": "user",
+  "handler": "oauth_client_authorize",
+  "file": "backend/open_webui/main.py",
+  "line": 2590,
+  "depends": [
+   "get_verified_user"
+  ]
+ },
+ {
+  "method": "GET",
+  "path": "/oauth/clients/{client_id}/callback",
+  "auth": "user",
+  "handler": "oauth_client_callback",
+  "file": "backend/open_webui/main.py",
+  "line": 2633,
+  "depends": [
+   "get_verified_user"
+  ]
+ },
+ {
+  "method": "GET",
+  "path": "/oauth/{provider}/callback",
+  "auth": "open",
+  "handler": "oauth_login_callback",
+  "file": "backend/open_webui/main.py",
+  "line": 2654,
+  "depends": [
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "GET",
+  "path": "/oauth/{provider}/login",
+  "auth": "open",
+  "handler": "oauth_login",
+  "file": "backend/open_webui/main.py",
+  "line": 2648,
+  "depends": []
+ },
+ {
+  "method": "GET",
+  "path": "/oauth/{provider}/login/callback",
+  "auth": "open",
+  "handler": "oauth_login_callback",
+  "file": "backend/open_webui/main.py",
+  "line": 2654,
+  "depends": [
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "GET",
+  "path": "/ollama/",
+  "auth": "open",
+  "handler": "get_status",
+  "file": "backend/open_webui/routers/ollama.py",
+  "line": 242,
+  "depends": []
+ },
+ {
+  "method": "HEAD",
+  "path": "/ollama/",
+  "auth": "open",
+  "handler": "get_status",
+  "file": "backend/open_webui/routers/ollama.py",
+  "line": 242,
+  "depends": []
+ },
+ {
+  "method": "POST",
+  "path": "/ollama/api/chat",
+  "auth": "user",
+  "handler": "generate_chat_completion",
+  "file": "backend/open_webui/routers/ollama.py",
+  "line": 1088,
+  "depends": [
+   "get_verified_user"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/ollama/api/chat/{url_idx}",
+  "auth": "user",
+  "handler": "generate_chat_completion",
+  "file": "backend/open_webui/routers/ollama.py",
+  "line": 1088,
+  "depends": [
+   "get_verified_user"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/ollama/api/copy",
+  "auth": "admin",
+  "handler": "copy_model",
+  "file": "backend/open_webui/routers/ollama.py",
+  "line": 750,
+  "depends": [
+   "get_admin_user"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/ollama/api/copy/{url_idx}",
+  "auth": "admin",
+  "handler": "copy_model",
+  "file": "backend/open_webui/routers/ollama.py",
+  "line": 750,
+  "depends": [
+   "get_admin_user"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/ollama/api/create",
+  "auth": "admin",
+  "handler": "create_model",
+  "file": "backend/open_webui/routers/ollama.py",
+  "line": 719,
+  "depends": [
+   "get_admin_user"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/ollama/api/create/{url_idx}",
+  "auth": "admin",
+  "handler": "create_model",
+  "file": "backend/open_webui/routers/ollama.py",
+  "line": 719,
+  "depends": [
+   "get_admin_user"
+  ]
+ },
+ {
+  "method": "DELETE",
+  "path": "/ollama/api/delete",
+  "auth": "admin",
+  "handler": "delete_model",
+  "file": "backend/open_webui/routers/ollama.py",
+  "line": 788,
+  "depends": [
+   "get_admin_user"
+  ]
+ },
+ {
+  "method": "DELETE",
+  "path": "/ollama/api/delete/{url_idx}",
+  "auth": "admin",
+  "handler": "delete_model",
+  "file": "backend/open_webui/routers/ollama.py",
+  "line": 788,
+  "depends": [
+   "get_admin_user"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/ollama/api/embed",
+  "auth": "user",
+  "handler": "embed",
+  "file": "backend/open_webui/routers/ollama.py",
+  "line": 876,
+  "depends": [
+   "get_verified_user"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/ollama/api/embed/{url_idx}",
+  "auth": "user",
+  "handler": "embed",
+  "file": "backend/open_webui/routers/ollama.py",
+  "line": 876,
+  "depends": [
+   "get_verified_user"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/ollama/api/embeddings",
+  "auth": "user",
+  "handler": "embeddings",
+  "file": "backend/open_webui/routers/ollama.py",
+  "line": 927,
+  "depends": [
+   "get_verified_user"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/ollama/api/embeddings/{url_idx}",
+  "auth": "user",
+  "handler": "embeddings",
+  "file": "backend/open_webui/routers/ollama.py",
+  "line": 927,
+  "depends": [
+   "get_verified_user"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/ollama/api/generate",
+  "auth": "user",
+  "handler": "generate_completion",
+  "file": "backend/open_webui/routers/ollama.py",
+  "line": 986,
+  "depends": [
+   "get_verified_user"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/ollama/api/generate/{url_idx}",
+  "auth": "user",
+  "handler": "generate_completion",
+  "file": "backend/open_webui/routers/ollama.py",
+  "line": 986,
+  "depends": [
+   "get_verified_user"
+  ]
+ },
+ {
+  "method": "GET",
+  "path": "/ollama/api/ps",
+  "auth": "admin",
+  "handler": "get_ollama_loaded_models",
+  "file": "backend/open_webui/routers/ollama.py",
+  "line": 500,
+  "depends": [
+   "get_admin_user"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/ollama/api/pull",
+  "auth": "admin",
+  "handler": "pull_model",
+  "file": "backend/open_webui/routers/ollama.py",
+  "line": 642,
+  "depends": [
+   "get_admin_user"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/ollama/api/pull/{url_idx}",
+  "auth": "admin",
+  "handler": "pull_model",
+  "file": "backend/open_webui/routers/ollama.py",
+  "line": 642,
+  "depends": [
+   "get_admin_user"
+  ]
+ },
+ {
+  "method": "DELETE",
+  "path": "/ollama/api/push",
+  "auth": "admin",
+  "handler": "push_model",
+  "file": "backend/open_webui/routers/ollama.py",
+  "line": 678,
+  "depends": [
+   "get_admin_user"
+  ]
+ },
+ {
+  "method": "DELETE",
+  "path": "/ollama/api/push/{url_idx}",
+  "auth": "admin",
+  "handler": "push_model",
+  "file": "backend/open_webui/routers/ollama.py",
+  "line": 678,
+  "depends": [
+   "get_admin_user"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/ollama/api/show",
+  "auth": "user",
+  "handler": "show_model_info",
+  "file": "backend/open_webui/routers/ollama.py",
+  "line": 830,
+  "depends": [
+   "get_verified_user"
+  ]
+ },
+ {
+  "method": "GET",
+  "path": "/ollama/api/tags",
+  "auth": "user",
+  "handler": "get_ollama_tags",
+  "file": "backend/open_webui/routers/ollama.py",
+  "line": 477,
+  "depends": [
+   "get_verified_user"
+  ]
+ },
+ {
+  "method": "GET",
+  "path": "/ollama/api/tags/{url_idx}",
+  "auth": "user",
+  "handler": "get_ollama_tags",
+  "file": "backend/open_webui/routers/ollama.py",
+  "line": 477,
+  "depends": [
+   "get_verified_user"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/ollama/api/unload",
+  "auth": "admin",
+  "handler": "unload_model",
+  "file": "backend/open_webui/routers/ollama.py",
+  "line": 584,
+  "depends": [
+   "get_admin_user"
+  ]
+ },
+ {
+  "method": "GET",
+  "path": "/ollama/api/version",
+  "auth": "user",
+  "handler": "get_ollama_versions",
+  "file": "backend/open_webui/routers/ollama.py",
+  "line": 540,
+  "depends": [
+   "get_verified_user"
+  ]
+ },
+ {
+  "method": "GET",
+  "path": "/ollama/api/version/{url_idx}",
+  "auth": "user",
+  "handler": "get_ollama_versions",
+  "file": "backend/open_webui/routers/ollama.py",
+  "line": 540,
+  "depends": [
+   "get_verified_user"
+  ]
+ },
+ {
+  "method": "GET",
+  "path": "/ollama/config",
+  "auth": "admin",
+  "handler": "get_config",
+  "file": "backend/open_webui/routers/ollama.py",
+  "line": 289,
+  "depends": [
+   "get_admin_user"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/ollama/config/update",
+  "auth": "admin",
+  "handler": "update_config",
+  "file": "backend/open_webui/routers/ollama.py",
+  "line": 306,
+  "depends": [
+   "get_admin_user"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/ollama/models/download",
+  "auth": "admin",
+  "handler": "download_model",
+  "file": "backend/open_webui/routers/ollama.py",
+  "line": 1591,
+  "depends": [
+   "get_admin_user"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/ollama/models/download/{url_idx}",
+  "auth": "admin",
+  "handler": "download_model",
+  "file": "backend/open_webui/routers/ollama.py",
+  "line": 1591,
+  "depends": [
+   "get_admin_user"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/ollama/models/upload",
+  "auth": "admin",
+  "handler": "upload_model",
+  "file": "backend/open_webui/routers/ollama.py",
+  "line": 1619,
+  "depends": [
+   "get_admin_user"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/ollama/models/upload/{url_idx}",
+  "auth": "admin",
+  "handler": "upload_model",
+  "file": "backend/open_webui/routers/ollama.py",
+  "line": 1619,
+  "depends": [
+   "get_admin_user"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/ollama/v1/chat/completions",
+  "auth": "user",
+  "handler": "generate_openai_chat_completion",
+  "file": "backend/open_webui/routers/ollama.py",
+  "line": 1309,
+  "depends": [
+   "get_verified_user"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/ollama/v1/chat/completions/{url_idx}",
+  "auth": "user",
+  "handler": "generate_openai_chat_completion",
+  "file": "backend/open_webui/routers/ollama.py",
+  "line": 1309,
+  "depends": [
+   "get_verified_user"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/ollama/v1/completions",
+  "auth": "user",
+  "handler": "generate_openai_completion",
+  "file": "backend/open_webui/routers/ollama.py",
+  "line": 1205,
+  "depends": [
+   "get_verified_user"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/ollama/v1/completions/{url_idx}",
+  "auth": "user",
+  "handler": "generate_openai_completion",
+  "file": "backend/open_webui/routers/ollama.py",
+  "line": 1205,
+  "depends": [
+   "get_verified_user"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/ollama/v1/embeddings",
+  "auth": "user",
+  "handler": "generate_openai_embeddings",
+  "file": "backend/open_webui/routers/ollama.py",
+  "line": 1260,
+  "depends": [
+   "get_verified_user"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/ollama/v1/embeddings/{url_idx}",
+  "auth": "user",
+  "handler": "generate_openai_embeddings",
+  "file": "backend/open_webui/routers/ollama.py",
+  "line": 1260,
+  "depends": [
+   "get_verified_user"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/ollama/v1/messages",
+  "auth": "user",
+  "handler": "generate_anthropic_messages",
+  "file": "backend/open_webui/routers/ollama.py",
+  "line": 1368,
+  "depends": [
+   "get_verified_user"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/ollama/v1/messages/{url_idx}",
+  "auth": "user",
+  "handler": "generate_anthropic_messages",
+  "file": "backend/open_webui/routers/ollama.py",
+  "line": 1368,
+  "depends": [
+   "get_verified_user"
+  ]
+ },
+ {
+  "method": "GET",
+  "path": "/ollama/v1/models",
+  "auth": "user",
+  "handler": "get_openai_models",
+  "file": "backend/open_webui/routers/ollama.py",
+  "line": 1478,
+  "depends": [
+   "get_verified_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "GET",
+  "path": "/ollama/v1/models/{url_idx}",
+  "auth": "user",
+  "handler": "get_openai_models",
+  "file": "backend/open_webui/routers/ollama.py",
+  "line": 1478,
+  "depends": [
+   "get_verified_user",
+   "get_async_session"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/ollama/v1/responses",
+  "auth": "user",
+  "handler": "generate_responses",
+  "file": "backend/open_webui/routers/ollama.py",
+  "line": 1426,
+  "depends": [
+   "get_verified_user"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/ollama/v1/responses/{url_idx}",
+  "auth": "user",
+  "handler": "generate_responses",
+  "file": "backend/open_webui/routers/ollama.py",
+  "line": 1426,
+  "depends": [
+   "get_verified_user"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/ollama/verify",
+  "auth": "admin",
+  "handler": "verify_connection",
+  "file": "backend/open_webui/routers/ollama.py",
+  "line": 253,
+  "depends": [
+   "get_admin_user"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/openai/audio/speech",
+  "auth": "user",
+  "handler": "speech",
+  "file": "backend/open_webui/routers/openai.py",
+  "line": 456,
+  "depends": [
+   "get_verified_user"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/openai/chat/completions",
+  "auth": "user",
+  "handler": "generate_chat_completion",
+  "file": "backend/open_webui/routers/openai.py",
+  "line": 1182,
+  "depends": [
+   "get_verified_user"
+  ]
+ },
+ {
+  "method": "GET",
+  "path": "/openai/config",
+  "auth": "admin",
+  "handler": "get_config",
+  "file": "backend/open_webui/routers/openai.py",
+  "line": 393,
+  "depends": [
+   "get_admin_user"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/openai/config/update",
+  "auth": "admin",
+  "handler": "update_config",
+  "file": "backend/open_webui/routers/openai.py",
+  "line": 405,
+  "depends": [
+   "get_admin_user"
+  ]
+ },
+ {
+  "method": "GET",
+  "path": "/openai/models",
+  "auth": "user",
+  "handler": "get_models",
+  "file": "backend/open_webui/routers/openai.py",
+  "line": 716,
+  "depends": [
+   "get_verified_user"
+  ]
+ },
+ {
+  "method": "GET",
+  "path": "/openai/models/{url_idx}",
+  "auth": "user",
+  "handler": "get_models",
+  "file": "backend/open_webui/routers/openai.py",
+  "line": 716,
+  "depends": [
+   "get_verified_user"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/openai/responses",
+  "auth": "user",
+  "handler": "responses",
+  "file": "backend/open_webui/routers/openai.py",
+  "line": 1565,
+  "depends": [
+   "get_verified_user"
+  ]
+ },
+ {
+  "method": "POST",
+  "path": "/openai/verify",
+  "auth": "admin",
+  "handler": "verify_connection",
+  "file": "backend/open_webui/routers/openai.py",
+  "line": 796,
+  "depends": [
+   "get_admin_user"
+  ]
+ },
+ {
+  "method": "GET",
+  "path": "/opensearch.xml",
+  "auth": "open",
+  "handler": "get_opensearch_xml",
+  "file": "backend/open_webui/main.py",
+  "line": 2729,
+  "depends": []
+ },
+ {
+  "method": "GET",
+  "path": "/ready",
+  "auth": "open",
+  "handler": "readiness_check",
+  "file": "backend/open_webui/main.py",
+  "line": 2774,
+  "depends": []
+ }
+]
