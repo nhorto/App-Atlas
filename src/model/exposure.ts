@@ -177,6 +177,19 @@ export function classifyOpenDoors(nodes: AtlasNode[], edges: AtlasEdge[]): Map<s
       continue;
     }
 
+    // A route named in a routing table whose handler was never located (#139). The URL
+    // is served — that is why the door stays — but every check the handler carries is
+    // written where this reader has not been, so counting it would report our own blind
+    // spot as the application's. Sits below `generated` because a build artifact is a
+    // stronger and more specific claim than "not followed yet".
+    if (meta.handlerUnlinked) {
+      verdicts.set(node.id, {
+        kind: 'unlinked',
+        because: 'declared in a routing table — App Atlas has not followed it to the code that answers it',
+      });
+      continue;
+    }
+
     // A page that writes data is not the harmless marketing page this rule is about,
     // so it keeps its place in the list that gets read.
     if (meta.method === 'PAGE' && !meta.writes) {
@@ -201,15 +214,18 @@ export interface OpenTally {
   unreadable: number;
   /** Catch-alls a build wrote, whose real routes are counted individually (#123). */
   generated: number;
+  /** Routes whose handler was named in a routing table but never followed (#139). */
+  unlinked: number;
 }
 
 export function tallyOpenDoors(verdicts: Iterable<OpenVerdict>): OpenTally {
-  const tally: OpenTally = { worthALook: 0, page: 0, authMount: 0, unreadable: 0, generated: 0 };
+  const tally: OpenTally = { worthALook: 0, page: 0, authMount: 0, unreadable: 0, generated: 0, unlinked: 0 };
   for (const verdict of verdicts) {
     if (verdict.kind === 'page') tally.page++;
     else if (verdict.kind === 'auth-mount') tally.authMount++;
     else if (verdict.kind === 'unreadable') tally.unreadable++;
     else if (verdict.kind === 'generated') tally.generated++;
+    else if (verdict.kind === 'unlinked') tally.unlinked++;
     else tally.worthALook++;
   }
   return tally;
@@ -264,21 +280,40 @@ export function authHeadline(stats: AtlasStats): AuthHeadline | null {
     };
   }
 
+  // A route whose handler was never followed has not been judged, so it cannot sit in
+  // the denominator of a sentence about how many were (#139). netbox declares all 84 of
+  // its routes as `path('x/', SomeView.as_view())`; with them counted, the same sentence
+  // read "84 of 84 have no auth check" before the set-aside and "every one of the 84 has
+  // an auth check" after it. Both were the tool describing its own reach as the app's.
+  const unlinked = stats.unlinkedRoutes ?? 0;
+  const assessed = Math.max(0, routes - unlinked);
+
   let headline: string;
   let mentionedPublic = false;
+  if (assessed === 0) {
+    // Nothing was judged at all. The number of doors is still a real finding, and it is
+    // the only one this sentence is entitled to make.
+    return {
+      tone: 'warn',
+      headline:
+        `${routes === 1 ? 'the one route is' : `all ${routes} routes are`} declared in a routing table App Atlas ` +
+        'has not followed to its handler — no auth verdict was reached for any of them',
+      caveats: [],
+    };
+  }
   if (open > 0) {
     headline =
-      routes === 1
+      assessed === 1
         ? 'the one route has no auth check App Atlas can see'
-        : `${open} of ${routes} routes have no auth check App Atlas can see`;
+        : `${open} of ${assessed} routes have no auth check App Atlas can see`;
   } else if (unknown > 0) {
-    headline = `nothing is left unexplained, but ${unknown} of the ${routes} routes lean on a file App Atlas could not read`;
+    headline = `nothing is left unexplained, but ${unknown} of the ${assessed} routes lean on a file App Atlas could not read`;
   } else if (public_ > 0) {
-    headline = `every one of the ${routes} routes is checked, or open on purpose`;
+    headline = `every one of the ${assessed} routes is checked, or open on purpose`;
     mentionedPublic = true;
   } else {
     headline =
-      routes === 1 ? 'the one route has an auth check' : `every one of the ${routes} routes has an auth check`;
+      assessed === 1 ? 'the one route has an auth check' : `every one of the ${assessed} routes has an auth check`;
   }
 
   // A clean sweep is the one sentence people repeat in a meeting, and it must not read
@@ -292,12 +327,12 @@ export function authHeadline(stats: AtlasStats): AuthHeadline | null {
   // of unprotected doors is the more urgent fact and already carries "App Atlas can
   // see"; two hedges in one sentence is a sentence nobody finishes.
   const likelyOnly = stats.likelyOnlyRoutes ?? 0;
-  const clean = open === 0 && unknown === 0;
+  const clean = open === 0 && unknown === 0 && unlinked === 0;
   const hedged = clean && likelyOnly > 0;
   if (hedged) {
     headline +=
-      likelyOnly === routes - public_
-        ? routes - public_ === 1
+      likelyOnly === assessed - public_
+        ? assessed - public_ === 1
           ? ' — matched, not proven'
           : ' — all matched, none proven'
         : `, though ${likelyOnly} of those were matched rather than proven`;
@@ -312,6 +347,13 @@ export function authHeadline(stats: AtlasStats): AuthHeadline | null {
   if (public_ > 0 && !mentionedPublic) {
     caveats.push(`${public_} more are pages or the door people sign in through, open on purpose`);
   }
+  if (unlinked > 0) {
+    caveats.push(
+      `${unlinked} more ${unlinked === 1 ? 'is' : 'are'} declared in a routing table App Atlas has not followed to ` +
+        `${unlinked === 1 ? 'its handler' : 'their handlers'}; ${unlinked === 1 ? 'it is' : 'they are'} ` +
+        'in no number above, protected or not',
+    );
+  }
   if (unread > 0) {
     caveats.push(
       `App Atlas could not read ${unread} ${unread === 1 ? 'file' : 'files'}; whatever they declare is missing from every number here`,
@@ -319,13 +361,13 @@ export function authHeadline(stats: AtlasStats): AuthHeadline | null {
   }
   if (hedged) {
     caveats.push(
-      likelyOnly === routes - public_
+      likelyOnly === assessed - public_
         ? 'every check was matched by a pattern rather than proven — open the doors and read what guards them'
         : `${likelyOnly} of the checks were matched by a pattern rather than proven — worth reading those doors yourself`,
     );
   }
 
-  return { tone: open > 0 || unknown > 0 ? 'warn' : 'ok', headline, caveats };
+  return { tone: open > 0 || unknown > 0 || unlinked > 0 ? 'warn' : 'ok', headline, caveats };
 }
 
 /** Files that could not be parsed, so the reader can see what the map is missing. */

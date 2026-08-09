@@ -1,0 +1,6 @@
+[workspace]
+members = ["crates/server", "crates/db"]
+
+[workspace.dependencies]
+actix-web = { version = "4.13.0", default-features = false }
+diesel = { version = "2.3.7" }

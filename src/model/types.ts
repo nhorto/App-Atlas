@@ -284,7 +284,7 @@ export interface EnvVarInfo {
  * mounted on, and a handler that calls the provider's own sign-in routine. Both are
  * "the door people sign in through", which is what every screen already calls this.
  */
-export type OpenKind = 'worth-a-look' | 'page' | 'auth-mount' | 'unreadable' | 'generated';
+export type OpenKind = 'worth-a-look' | 'page' | 'auth-mount' | 'unreadable' | 'generated' | 'unlinked';
 
 export interface OpenVerdict {
   kind: OpenKind;
@@ -364,6 +364,19 @@ export interface EndpointMeta {
    * app whose routes are all accounted for.
    */
   generatedEntry?: boolean;
+  /**
+   * The route was declared in a routing table, away from the code that answers it, and
+   * that code was not located — a Django `path('x/', SomeView.as_view())` names a class
+   * this reader cannot yet follow.
+   *
+   * The door stays on the map, because the URL is served and that is a fact. What it
+   * must not do is join the auth count: every check such a handler carries is written
+   * somewhere this atlas never looked, so "no auth check" would not be a finding but a
+   * confession of where it stopped reading. netbox declares all 84 of its routes this
+   * way, and counting them said "84 of 84 have no auth check" about an application
+   * whose views are behind a permission mixin (#139).
+   */
+  handlerUnlinked?: boolean;
   /** Cron expression, when a scheduler is what knocks. */
   schedule?: string;
   /** Only on the single `env` endpoint. */
@@ -487,6 +500,15 @@ export interface AtlasStats {
   unreadTestFiles?: number;
   /** Unchecked, but a file they import could not be read — unknown, not open (#36). */
   unreadableRoutes: number;
+  /**
+   * Routes declared in a routing table whose handler this atlas never followed (#139).
+   *
+   * Deliberately not folded into `publicRoutes`: those are unchecked *for a reason we
+   * can state*, and these are unchecked because we stopped reading. They come out of
+   * the denominator rather than joining the numerator — an unassessed door is not
+   * evidence of safety and not evidence of danger.
+   */
+  unlinkedRoutes?: number;
   /**
    * Guarded routes whose every guard is below `certain` — a check matched through a
    * pattern, a policy read out of a migration, a filter reached one hop away.

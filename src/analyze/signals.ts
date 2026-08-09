@@ -165,6 +165,18 @@ export interface ProjectSignals {
    */
   cargoPackages: Set<string>;
   /**
+   * Crates in the repo that build something you run: one with a `[[bin]]` section, or
+   * one with a `src/main.rs` beside its manifest. Cargo's own rule, and readable
+   * without a compiler.
+   *
+   * The Rust half of `dotnetOutputTypes`, and it exists for the same reason (#140).
+   * `pub` in a Cargo workspace is not a public API — it is how sibling crates see each
+   * other at all — so with nothing here to say otherwise, a server fell through
+   * `classifyArchetype` to `library` and 971 internal `pub` items became its front
+   * door. LemmyNet/lemmy reported 1,065 ways in, of which 13 were real.
+   */
+  cargoBinaries: Set<string>;
+  /**
    * `<OutputType>` values across the repo's project files — `Exe`, `WinExe`, `Library`.
    *
    * The .NET equivalent of a `bin` entry in package.json: a line somebody wrote saying
@@ -262,7 +274,10 @@ export function readSignals(
     ...readPythonPackages(root),
     ...readGoModule(root),
     ...readDotnetProjects(root),
-    cargoPackages: readCargoManifests(root),
+    ...(() => {
+      const cargo = readCargoManifests(root);
+      return { cargoPackages: cargo.packages, cargoBinaries: cargo.binaries };
+    })(),
     ...readEnvExample(root),
     declaresAPackage: readsAsAPackage(root, packageJson),
     entryPoints: readEntryPoints(root, packageJson),
@@ -671,8 +686,9 @@ function readDotnetProjects(root: string): {
  * `engine/Cargo.toml`, `app/src-tauri/Cargo.toml` — and the root manifest often
  * declares nothing but the member list.
  */
-function readCargoManifests(root: string): Set<string> {
+function readCargoManifests(root: string): { packages: Set<string>; binaries: Set<string> } {
   const packages = new Set<string>();
+  const binaries = new Set<string>();
 
   const files: string[] = [];
   const scan = (dir: string, depth: number) => {
@@ -699,6 +715,12 @@ function readCargoManifests(root: string): Set<string> {
   const INLINE_DEPENDENCY = /^\[(?:workspace\.|target\.[^\]]+\.)?(?:dependencies|dev-dependencies|build-dependencies)\.([A-Za-z0-9_-]+)\]$/;
 
   for (const file of files) {
+    const crateDir = path.dirname(file);
+    // Cargo's convention, and it needs no manifest entry: a crate with `src/main.rs`
+    // builds a binary. Lemmy's server is exactly this — three `main.rs` files and a
+    // single `[[bin]]` between them.
+    if (fs.existsSync(path.join(crateDir, 'src', 'main.rs'))) binaries.add(path.relative(root, crateDir) || '.');
+
     let inDependencies = false;
     for (const raw of splitLines(readText(file))) {
       const line = raw.replace(/#.*$/, '').trim();
@@ -706,6 +728,7 @@ function readCargoManifests(root: string): Set<string> {
       if (line.startsWith('[')) {
         const inline = INLINE_DEPENDENCY.exec(line);
         if (inline) packages.add(inline[1]);
+        if (/^\[\[bin\]\]$/.test(line)) binaries.add(path.relative(root, crateDir) || '.');
         inDependencies = DEPENDENCY_SECTION.test(line);
         continue;
       }
@@ -715,7 +738,7 @@ function readCargoManifests(root: string): Set<string> {
     }
   }
 
-  return packages;
+  return { packages, binaries };
 }
 
 /** PyPI treats `-`, `_` and `.` as the same character, and so does everyone else. */

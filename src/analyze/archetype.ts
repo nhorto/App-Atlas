@@ -118,11 +118,23 @@ export function classifyArchetype({ project, nodes }: ArchetypeInput): Archetype
   // was handed a public API of 154 of its own window classes — because it exports names
   // and answers no URL, which is every desktop application ever written.
   const executables = [...(project.signals.dotnetOutputTypes ?? [])].filter((type) => /^(Win)?Exe$/i.test(type));
+  // Cargo's version of the same line. Without it a Rust workspace answers no URL, has
+  // no `bin` in a package.json it does not have, and exports `pub` items because that
+  // is the only way one crate can see another — so it landed on `library` and handed
+  // back 971 of its own internals as a public API (#140).
+  const crates = [...(project.signals.cargoBinaries ?? [])];
 
-  if (doors.declaredCli > 0 || bin.length > 0 || executables.length > 0) {
+  if (doors.declaredCli > 0 || bin.length > 0 || executables.length > 0 || crates.length > 0) {
     if (doors.declaredCli > 0) because.push(plural(doors.declaredCli, 'command-line entry point'));
     if (bin.length > 0) because.push(`${plural(bin.length, 'command')} in package.json`);
     if (executables.length > 0) because.push('a .NET project that builds an executable');
+    if (crates.length > 0) {
+      because.push(
+        crates.length === 1
+          ? 'a crate that builds an executable'
+          : `${crates.length} crates that build an executable`,
+      );
+    }
     if (doors.scheduled > 0) because.push(plural(doors.scheduled, 'scheduled job'));
     because.push('nothing answers a URL');
     return verdict('pipeline', 'Something you run', because);

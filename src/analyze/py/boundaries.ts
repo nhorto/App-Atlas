@@ -82,6 +82,7 @@ export function detectPythonBoundaries(input: PythonBoundaryInput): BoundaryFind
   });
 
   detectRoutes(input, modules, findings, site);
+  if (has('django')) detectDjangoRoutes(input, findings, site);
   detectTasks(input, has, findings, site);
   detectEnv(input, findings, site);
   detectOutbound(input, modules, findings, site);
@@ -200,30 +201,66 @@ function detectRoutes(
     }
   }
 
-  // Django keeps its routes in a list rather than on the handler.
-  if (/(^|\/)urls\.py$/.test(input.file.path)) {
-    for (const call of input.file.calls ?? []) {
-      if (call.callee !== 'path' && call.callee !== 're_path' && call.callee !== 'url') continue;
-      const route = strArg(call.args[0]);
-      if (route === null) continue;
-      const view = nameArg(call.args[1]);
-      const shown = `/${route}`.replace(/\/+/g, '/');
-      findings.push({
-        type: 'endpoint',
-        endpointKind: 'http-route',
-        key: `GET ${shown}`,
-        // Django does not declare the method here; the view decides. Saying GET would
-        // be a guess, so the name says what is actually known: a URL is served.
-        name: shown,
-        method: null,
-        route: shown,
-        framework: 'Django',
-        writes: false,
-        guards: [],
-        site: site(call.line, view ? `path("${route}", ${view})` : undefined),
-        handlerId: null,
-      });
-    }
+}
+
+/**
+ * Django keeps its routes in a list rather than on the handler.
+ *
+ * Its own function, and called unconditionally, because for two releases this lived at
+ * the bottom of `detectRoutes` — below the `if (!framework) return` that picks between
+ * FastAPI, Flask, Quart and Sanic. A Django `urls.py` imports `django.urls` and none of
+ * those, so the gate returned first and this was unreachable: netbox-community/netbox,
+ * 1,266 files and several hundred routes, mapped as twelve ways in and not one of them
+ * HTTP (#139). Adding `import flask` to a `urls.py` made every route appear, which is
+ * how the gate was identified as the cause rather than the reader.
+ *
+ * The gate that belongs here is the manifest, not the file's imports: `path()` inside a
+ * file named `urls.py` is already specific enough that only Django's presence needs
+ * confirming.
+ */
+function detectDjangoRoutes(
+  input: PythonBoundaryInput,
+  findings: BoundaryFinding[],
+  site: (line: number, snippet?: string) => CodeSite,
+): void {
+  if (!/(^|\/)urls\.py$/.test(input.file.path)) return;
+
+  for (const call of input.file.calls ?? []) {
+    if (call.callee !== 'path' && call.callee !== 're_path' && call.callee !== 'url') continue;
+    const route = strArg(call.args[0]);
+    if (route === null) continue;
+    const view = nameArg(call.args[1]);
+    // `path('providers/', include(...))` mounts another URLconf: a prefix, not an
+    // endpoint. netbox writes 290 of its 377 `path()` calls this way, so counting them
+    // would trade an undercount for an overcount — and every one of those prefixes
+    // would be a door with no handler and therefore no visible auth.
+    if (view !== null && /^include\(/.test(view)) continue;
+    // `re_path(r'^legacy/widgets/$', …)` serves `/legacy/widgets/`. The anchors are
+    // regex punctuation, not part of the address, and leaving them in prints a URL
+    // nobody can visit. Only the anchors come off: the rest of the pattern is left
+    // exactly as written, because a capture group is a real part of the route and
+    // rewriting it into something prettier would be inventing an address.
+    const pattern = call.callee === 'path' ? route : route.replace(/^\^/, '').replace(/\$$/, '');
+    const shown = `/${pattern}`.replace(/\/+/g, '/');
+    findings.push({
+      type: 'endpoint',
+      endpointKind: 'http-route',
+      key: `GET ${shown}`,
+      // Django does not declare the method here; the view decides. Saying GET would
+      // be a guess, so the name says what is actually known: a URL is served.
+      name: shown,
+      method: null,
+      route: shown,
+      framework: 'Django',
+      writes: false,
+      guards: [],
+      site: site(call.line, view ? `path("${route}", ${view})` : undefined),
+      handlerId: null,
+      // The view lives in another file and this reader does not follow it there yet, so
+      // whatever guards it is invisible from `urls.py`. Say that, rather than counting
+      // it as a door nobody checks — see EndpointMeta.handlerUnlinked.
+      handlerUnlinked: true,
+    });
   }
 }
 
