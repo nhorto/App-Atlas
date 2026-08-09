@@ -150,3 +150,53 @@ Not stars, not downloads.
 
 Each one is a real user, on a real codebase, describing a real gap — and it is the input
 that converts everything in [DIRECTION.md](DIRECTION.md) from speculation into a backlog.
+
+---
+
+## Appendix — the phase 2 kit (written 9 Aug 2026, against 0.24.0)
+
+### The message, ready to personalize
+
+> I shipped a thing: **App Atlas** — run one command in a repo and get an interactive
+> map of the app: every way in, where the data goes, which routes have no auth check.
+> All local; nothing leaves your machine.
+>
+> ```
+> npx @app-atlas/cli .
+> ```
+>
+> (Needs Node 22.5+. Python repos also want python3 on the PATH.)
+>
+> The favor I'm asking is specific: run it on one of your repos and tell me **one place
+> where the map is wrong**. A wrong-map report is worth ten compliments to me.
+>
+> If you drive coding agents: it also ships an MCP server — add
+> `npx @app-atlas/cli mcp` to your agent config and tell me whether the agent does
+> noticeably better with the map. That question is the whole product.
+
+### What to write down from every reply
+
+One wrong-map report = one GitHub issue, before any fix — the standing rule. Capture:
+the repo's language and framework, the wrong claim **verbatim** (screenshot or paste),
+and what the truth is. "It felt off" is a conversation; "route X shows likely-guarded
+and has no auth" is a finding. A week later, ask the second question: *did you keep it?*
+
+### Honest limits, for when they ask
+
+- **Read deeply:** TypeScript/JavaScript, Python. **Read by grammar** (links likely, not
+  certain — and the map says so): Go, C#, Rust. **Counted and hedged, not read:** Ruby,
+  PHP, Java, Kotlin, Swift, Elixir and friends — as of 0.24.0 the map says this out
+  loud instead of presenting the sliver as the app.
+- `.vue` / `.svelte` / `.astro` components are counted, not parsed — import links
+  through them are missing and the unimported-file view hedges accordingly.
+- Auth verdicts carry confidence: `certain` is a check proven on the handler, `likely`
+  is matched rather than proven — the tool will tell you to read those doors yourself.
+- Descriptions come from the repo's own docstrings first; AI fills gaps only if a
+  backend is configured, never silently spends money, and `--no-ai` turns it off.
+
+### Why now is the right moment to send it
+
+Eleven unfamiliar repositories have been dogfooded and all eleven produced defects —
+the fixture suite was green the whole time. The findings that class of testing can
+reach are thinning; other people's repos are the next distribution of shapes, and
+their wrong-map reports are the triggers DIRECTION.md waits on.
