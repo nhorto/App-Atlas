@@ -44,6 +44,14 @@ test('a door with no address is exactly as behind the catch-all', () => {
   );
 });
 
+test('a guard mocked in a spec file locks nothing (#180)', () => {
+  // status.controller.spec.ts wires FakeAuthGuard as APP_GUARD, with a body that
+  // genuinely decides — only the file's zone keeps it off the map, which is the point.
+  for (const route of routes) {
+    assert.ok(!route.meta.guards.some((g) => g.name === 'FakeAuthGuard'), route.name);
+  }
+});
+
 test('the always-true sentinel wired globally counts for nothing', () => {
   for (const route of routes) {
     assert.ok(!route.meta.guards.some((g) => g.name === 'EveryoneGuard'), route.name);
