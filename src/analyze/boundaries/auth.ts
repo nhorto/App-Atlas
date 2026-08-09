@@ -487,7 +487,7 @@ export const functionRefusalDetector: BoundaryDetector = {
       ctx.emit({
         type: 'guard',
         guard: {
-          name: fn.name,
+          name: guardName(fn.name),
           how: 'call',
           provider: 'custom',
           path: ctx.ref.relPath,
@@ -508,6 +508,34 @@ export const functionRefusalDetector: BoundaryDetector = {
     }
   },
 };
+
+/**
+ * What to call the check when the function holding it has no name worth reading (#190).
+ *
+ * In Go this reads well — `ArticleDelete` tells a reader which handler does its own
+ * checking. In a Next.js route file the exported handler's name *is* the HTTP verb,
+ * because the framework requires it, so the security screen said `POST /api/rename` is
+ * protected by **POST**. True, correctly graded, and useless: an evidence column a
+ * reader cannot verify is how the whole column stops being read.
+ *
+ * The site link does the pointing either way; only the label changes.
+ */
+function guardName(fnName: string): string {
+  return HTTP_HANDLER_NAMES.has(fnName) ? 'a 401 in the handler' : fnName;
+}
+
+/** The names Next.js, Remix and friends *require* of a route handler. */
+const HTTP_HANDLER_NAMES = new Set([
+  'GET',
+  'POST',
+  'PUT',
+  'PATCH',
+  'DELETE',
+  'HEAD',
+  'OPTIONS',
+  'handler',
+  'default',
+]);
 
 interface TopLevelFn {
   name: string;

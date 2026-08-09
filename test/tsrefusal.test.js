@@ -56,3 +56,17 @@ test('a 401 in a catch block is an upstream failure, not a lock on our door', ()
   assert.deepEqual(products.meta.guards, []);
   assert.equal(products.meta.open?.kind, 'worth-a-look');
 });
+
+test('a check inside the handler is not labelled with the framework\'s verb (#190)', () => {
+  // The exported handler must be called POST, so the guard cannot be named after it
+  // and stay meaningful: "protected by POST" gives a reader nothing to verify.
+  const door = named('POST /api/rename');
+  assert.ok(door, `have: ${routes.map((n) => n.name).join(', ')}`);
+  assert.deepEqual(
+    door.meta.guards.map((g) => g.name),
+    ['a 401 in the handler'],
+  );
+  assert.equal(door.meta.guards[0].confidence, 'likely');
+  // The site is what a reader follows, so it still has to point at the refusal.
+  assert.match(door.meta.guards[0].path, /rename\/route\.ts$/);
+});
