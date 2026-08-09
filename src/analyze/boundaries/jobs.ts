@@ -50,6 +50,19 @@ function callExpression(call: CallExpression, ctx: DetectorContext): void {
     if (id) return emitQueue(ctx, call, id, 'Trigger.dev');
   }
 
+  // --- the desktop app's other half ---
+  // `ipcMain.handle('renderer:open-preferences', …)` is the door between an Electron
+  // renderer and the privileged process that can touch the filesystem and the shell.
+  // The Rust tier reached this conclusion first, for `#[tauri::command]`, and the
+  // argument transfers without a word changed: same architecture, and Electron is by
+  // some distance the more common of the two. usebruno/bruno registers 255 of these and
+  // was reported as having two ways in, both incidental (#149).
+  if ((last === 'handle' || last === 'on' || last === 'handleOnce' || last === 'once') && root === 'ipcMain') {
+    const channel = literalString(argAt(call, 0));
+    if (channel) return emitIpc(ctx, call, channel, dotted);
+    return;
+  }
+
   // --- webhook signature verification ---
   // `constructEventAsync` is not a variant worth skipping: it is the *only* one that
   // works on an edge runtime, where there is no synchronous crypto to hash the body
@@ -155,6 +168,39 @@ function emitRealtime(ctx: DetectorContext, at: Node, name: string, framework: s
     writes: false,
     guards: [],
     site: ctx.site(at),
+    handlerId: ctx.enclosing(at),
+  });
+}
+
+/**
+ * One Electron IPC channel, which is a door and is not a route.
+ *
+ * No auth verdict, deliberately, and the reason is quoted from the Rust tier that
+ * settled it: the caller is the app's own interface, not a stranger on the internet, so
+ * badging one "no auth check" would be the false alarm the C# desktop work exists to
+ * avoid. Doing that 255 times on one repo would teach a reader to skip the auth line
+ * entirely, which is #116 arriving from the other side.
+ *
+ * `handle` and `on` are kept apart in the snippet and nowhere else. Request/response
+ * versus fire-and-forget matters to somebody tracing a call and does not change what
+ * the boundary screen is for, so it is recorded as evidence rather than promoted to a
+ * distinction the reader has to learn.
+ */
+function emitIpc(ctx: DetectorContext, at: Node, channel: string, dotted: string): void {
+  ctx.emit({
+    type: 'endpoint',
+    endpointKind: 'ipc',
+    key: `ipc ${channel}`,
+    name: channel,
+    method: 'IPC',
+    route: channel,
+    framework: 'Electron',
+    // Not knowable from the registration, and the handler is a callback this detector
+    // does not follow. Claiming a write would put an arrow on the screen somebody reads
+    // to find out what writes.
+    writes: false,
+    guards: [],
+    site: ctx.site(at, `${dotted}("${channel}")`),
     handlerId: ctx.enclosing(at),
   });
 }
