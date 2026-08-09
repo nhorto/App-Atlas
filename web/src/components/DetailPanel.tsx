@@ -477,7 +477,11 @@ function OverviewPanel({
 }) {
   if (!overview) return <aside className="panel" />;
   const { meta, whereToLookFirst } = overview;
-  const documented = meta.stats.files > 0 ? Math.round((meta.stats.documentedFiles / meta.stats.files) * 100) : 0;
+  // Null, not zero, when there is nothing to score (#184). `0%` is the worst mark on
+  // the scale and reads as "you documented none of it"; the truth on a Java repo is
+  // that there was no file here this tool could read, which the map says elsewhere.
+  const documented =
+    meta.stats.files > 0 ? Math.round((meta.stats.documentedFiles / meta.stats.files) * 100) : null;
 
   return (
     <aside className="panel">
@@ -528,10 +532,12 @@ function OverviewPanel({
             <dt>Services & stores</dt>
             <dd>{(meta.stats.services + meta.stats.stores).toLocaleString()}</dd>
           </div>
-          <div className="fact-row">
-            <dt>Documented</dt>
-            <dd>{documented}% of files</dd>
-          </div>
+          {documented === null ? null : (
+            <div className="fact-row">
+              <dt>Documented</dt>
+              <dd>{documented}% of files</dd>
+            </div>
+          )}
         </dl>
       </section>
 
