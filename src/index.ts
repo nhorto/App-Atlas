@@ -35,7 +35,7 @@ export { classifyArchetype } from './analyze/archetype.js';
 export { buildSchemaNodes } from './analyze/schema.js';
 export { catalogSchema } from './analyze/sql.js';
 export { classifyZone, dominantZone } from './analyze/zones.js';
-export { findScopes } from './analyze/workspace.js';
+export { findScopes, findWorkspace } from './analyze/workspace.js';
 export type { Scope } from './analyze/workspace.js';
 export { renderAtlasMarkdown } from './export/markdown.js';
 export { buildTours, tourFor } from './model/tours.js';

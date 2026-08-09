@@ -26,7 +26,7 @@ import { backbonePhrase, unreadBackbone } from './model/coverage.js';
 import { analyzeProject, computeStats, TOOL_VERSION } from './analyze/index.js';
 import { readComposePorts } from './analyze/boundaries/compose.js';
 import type { PublishedPort } from './analyze/signals.js';
-import { findScopes } from './analyze/workspace.js';
+import { findWorkspace } from './analyze/workspace.js';
 import type { Scope } from './analyze/workspace.js';
 import { BACKEND_IDS } from './enrich/backends/index.js';
 import type { EnrichReport } from './enrich/index.js';
@@ -335,13 +335,13 @@ async function runAnalysis(dir: string, options: SharedOptions): Promise<Analysi
     console.log('');
   }
 
-  const found = await findScopes(root);
+  const { scopes: found, hiddenTests } = await findWorkspace(root);
   const scopes = options.scope ? found.filter((s) => s.id === options.scope || s.name === options.scope) : found;
   if (options.scope && scopes.length === 0) {
     const names = found.map((s) => s.id).join(', ') || 'none';
     throw new Error(`No app called "${options.scope}" in this workspace. Found: ${names}`);
   }
-  if (scopes.length > 1) return runWorkspaceAnalysis(root, scopes, options);
+  if (scopes.length > 1) return runWorkspaceAnalysis(root, scopes, options, hiddenTests);
 
   // One app in a workspace is still one app: analyze it where it lives, so its cache
   // and its atlas end up beside it exactly as they would in a repo of its own. The
@@ -528,6 +528,8 @@ async function runWorkspaceAnalysis(
   root: string,
   scopes: Scope[],
   options: SharedOptions,
+  /** Declared workspace members left out because they are test fixtures (#185). */
+  hiddenTests = 0,
 ): Promise<AnalysisOutcome> {
   const quiet = Boolean(options.quiet);
   const started = Date.now();
@@ -538,6 +540,17 @@ async function runWorkspaceAnalysis(
       `  ${pc.bold(String(scopes.length))} ${plural(scopes.length, 'package', 'packages')} in this workspace` +
         (apps > 0 && apps < scopes.length ? pc.dim(`, ${apps} of them ${plural(apps, 'an app', 'apps')}`) : ''),
     );
+    // Said, not silently dropped (#185, and #143's aside is the precedent). A list that
+    // quietly omits a third of what the manifest declares reads as "this is all there
+    // is", and somebody looking for a fixture would conclude the tool cannot see it.
+    if (hiddenTests > 0) {
+      console.log(
+        pc.dim(
+          `  ${hiddenTests} more ${plural(hiddenTests, 'is a test fixture', 'are test fixtures')} the workspace ` +
+            'declares — left out, because a fixture is not an app',
+        ),
+      );
+    }
     console.log('');
   }
 

@@ -1,0 +1,5 @@
+{
+  "name": "monotests",
+  "private": true,
+  "workspaces": ["packages/*", "test/fixtures/*"]
+}
