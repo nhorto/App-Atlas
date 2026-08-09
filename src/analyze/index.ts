@@ -102,6 +102,7 @@ import { dominantZone } from './zones.js';
  * this comment is about. The third change — an unreadable *test* file no longer hedging
  * the auth sentence — touches no cached finding at all, and would not have moved this on
  * its own.
+ *
  * 0.22.0 is the strongest case yet for this number existing, and it came with its own
  * demonstration. Three of the four changes alter what a cached finding *means*: a Django
  * project's routes went from absent to present (#139), a Rust workspace's thousand `pub`
@@ -149,6 +150,12 @@ export interface AnalyzeOptions {
    * exactly what it says.
    */
   repoRoot?: string;
+  /**
+   * Whether a deployment file above this app describes this app (#143). Defaults to
+   * true, which is right for the single-app-in-a-repo case `repoRoot` exists for, and
+   * wrong for one package of a workspace — see `DiscoverOptions.inheritDeploymentFiles`.
+   */
+  inheritDeploymentFiles?: boolean;
   onProgress?: (stage: string, done: number, total: number) => void;
 }
 
@@ -176,6 +183,7 @@ export async function analyzeProject(rootDir: string, options: AnalyzeOptions = 
     maxFiles,
     extraIgnores: options.ignore,
     repoRoot: options.repoRoot,
+    inheritDeploymentFiles: options.inheritDeploymentFiles,
   });
   options.onProgress?.('Finding source files', 1, 1);
 

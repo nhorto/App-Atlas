@@ -23,6 +23,8 @@ import { Command } from 'commander';
 import pc from 'picocolors';
 import open from 'open';
 import { analyzeProject, computeStats, TOOL_VERSION } from './analyze/index.js';
+import { readComposePorts } from './analyze/boundaries/compose.js';
+import type { PublishedPort } from './analyze/signals.js';
 import { findScopes } from './analyze/workspace.js';
 import type { Scope } from './analyze/workspace.js';
 import { BACKEND_IDS } from './enrich/backends/index.js';
@@ -250,6 +252,8 @@ async function produceAtlas(
      * own argument survives: everything below has already been narrowed.
      */
     repoRoot?: string;
+    /** False for one package of a workspace — see DiscoverOptions.inheritDeploymentFiles. */
+    inheritDeploymentFiles?: boolean;
     onProgress?: (stage: string, done: number, total: number) => void;
   },
 ): Promise<{ atlas: Atlas; words: EnrichReport | null; dbPath: string; jsonPath: string; ignoredNow: boolean }> {
@@ -259,6 +263,7 @@ async function produceAtlas(
     followReferences: options.refs !== false,
     cache: options.fresh ? 'refresh' : 'use',
     repoRoot: run.repoRoot,
+    inheritDeploymentFiles: run.inheritDeploymentFiles,
     onProgress: run.onProgress,
   });
 
@@ -526,6 +531,12 @@ async function runWorkspaceAnalysis(
         neverAsk: true,
         name: scope.name,
         repoRoot: root,
+        // The compose file at the top of a monorepo describes the stack the *repo*
+        // deploys, not this one package. Handing it to every scope gave documenso's
+        // `packages/assets` — which contains no source files at all — fourteen published
+        // ports, and turned fourteen facts into 224 (#143). A package that keeps its own
+        // compose file still gets it: the search now starts at the package.
+        inheritDeploymentFiles: false,
       });
       results.push({ scope, atlas });
       if (!quiet) console.log(`  ${pc.bold(scope.name.padEnd(width))}  ${scopeLine(atlas)}`);
@@ -544,6 +555,27 @@ async function runWorkspaceAnalysis(
   );
 
   if (!quiet) {
+    // The stack the repo deploys, reported once at the level it is true of. No package
+    // inherits these any more (#143), and the alternative to saying it here is not
+    // saying it at all — a published database port is exactly the fact #73 added them
+    // for, and dropping it to fix a duplication would be trading one wrong map for
+    // another.
+    const stack = repoPublishedPorts(root);
+    if (stack.length > 0) {
+      console.log('');
+      const files = new Set(stack.map((p) => p.configPath)).size;
+      console.log(
+        `  ${pc.dim('the repo publishes')} ${pc.bold(String(stack.length))} ` +
+          pc.dim(`${plural(stack.length, 'port', 'ports')} from ${files} ${plural(files, 'deployment file', 'deployment files')}, ` +
+            'belonging to the stack rather than to any one package'),
+      );
+      for (const port of stack.slice(0, 6)) {
+        const where = port.bindAddress ?? 'every interface';
+        console.log(pc.dim(`    ${port.configPath}  ${port.hostPort ?? '?'} on ${where} → ${port.target}`));
+      }
+      if (stack.length > 6) console.log(pc.dim(`    …and ${stack.length - 6} more`));
+    }
+
     console.log('');
     console.log(pc.dim(`  atlas    ${displayPath(scopesPath(root))}`));
     console.log(pc.dim(`  analyzed in ${((Date.now() - started) / 1000).toFixed(1)}s`));
@@ -552,6 +584,27 @@ async function runWorkspaceAnalysis(
   }
 
   return { atlas: results[0].atlas, scopes: results };
+}
+
+/**
+ * The ports the repo's own deployment files publish, minus any that belong to a package.
+ *
+ * Scopes stopped inheriting deployment files from above in #143, which is right — no
+ * package publishes the repo's Postgres port — but it would have taken fourteen real
+ * doors off documenso's map entirely, and #73 exists because a missing published port is
+ * the thing an exported brief must never omit. So they are reported once, here, at the
+ * only level they are true of.
+ *
+ * A compose file that lives *inside* a package is that package's own and is already on
+ * its map, so it is dropped here rather than said twice.
+ */
+function repoPublishedPorts(root: string): PublishedPort[] {
+  const scopeDirs = readScopes(root)
+    .map((scope) => scope.dir)
+    .filter((dir) => dir && dir !== '.');
+  return readComposePorts(root, root).filter(
+    (port) => !scopeDirs.some((dir) => port.configPath === dir || port.configPath.startsWith(`${dir}/`)),
+  );
 }
 
 /** One line per app: size, doors, and the number worth interrupting for. */
