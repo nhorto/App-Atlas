@@ -1189,9 +1189,14 @@ function pushGuard(endpoint: MergedEndpoint, guard: GuardInfo): void {
   // decided to call it. A controller that declares `@UseGuards(SessionGuard)` reaches
   // this twice — once as the decorator, once as the chain that inherits it — and
   // listing the same lock twice on a security screen reads as two locks.
+  //
+  // Same name from two files is also one check (#155): `requireAuth` seen where its
+  // 401 lives and again where `admin.use(requireAuth)` wires it is one function with
+  // two kinds of evidence. On a single door, two genuinely different checks sharing a
+  // name is a curiosity; the same check counted twice is a miscount every time.
   const already = endpoint.meta.guards.find(
     (g) =>
-      (g.name === guard.name && g.path === guard.path) ||
+      g.name === guard.name ||
       (g.path !== null && g.path === guard.path && g.line !== null && g.line === guard.line),
   );
   if (already) {

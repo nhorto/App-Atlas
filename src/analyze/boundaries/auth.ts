@@ -323,6 +323,119 @@ function checkerClass(cls: ClassDeclaration, ctx: DetectorContext): void {
   }
 }
 
+// ---------------------------------------------------------------------------
+// A check written as a plain function: the hand-rolled secret comparison
+// ---------------------------------------------------------------------------
+
+/**
+ * A top-level function that turns a caller away is a check, whatever it is called and
+ * whatever framework failed to bless it (#155).
+ *
+ * The 401 vocabulary above was fenced twice — inside a class, implementing a NestJS
+ * contract, in a project depending on Nest — so vercel/commerce's `/api/revalidate`,
+ * which compares a query secret against `SHOPIFY_REVALIDATION_SECRET` and refuses on
+ * mismatch, sat on the worry list of Vercel's own reference storefront. Every Next.js
+ * revalidation webhook, every `CRON_SECRET` cron endpoint, every handler comparing a
+ * header against an env var is this shape, and none of them names an auth provider.
+ * The Go tier has read behaviour this way from the start; this is the flagship tier
+ * catching up. Svelte and Remix keep their own sharper rule (`refusalDetector`), which
+ * is gated on those frameworks' own refusal calls — this one steps aside where it runs.
+ *
+ * Three deliberate narrowings, because the risk here is `checkerClass`'s own warning —
+ * an unrelated 401 in an error handler making a formatter look like a guard:
+ *
+ * - Top-level functions only. Class methods are where response formatters and API
+ *   clients live, and the class-shaped checks (NestJS) have their own detector.
+ * - A rejection inside a `catch` does not count. A guard refuses a *caller*; a catch
+ *   block describes an *upstream failure*, and "the vendor said 401" is not a lock on
+ *   our door. (The NestJS rule keeps catch rejections on purpose — `try jwt.verify
+ *   catch throw new UnauthorizedException` is that framework's ordinary guard — which
+ *   is why this exclusion lives here and not in `rejectionLine`.)
+ * - `likely`, never `certain`, for the reason #148 settled: one function's behaviour
+ *   standing in for a decision no framework confirmed.
+ *
+ * The door finds the check through the reference graph — `POST /api/revalidate` calls
+ * `revalidate`, one hop, cross-file — which also bounds the claim: only a function a
+ * handler actually mentions can ever reach that handler's door.
+ *
+ * Decided here rather than inherited by accident: commerce writes `NextResponse.json({
+ * status: 401 })`, which puts the 401 in the *body* and answers 200 on the wire. It
+ * counts. The code refuses the caller and the author locked the door; the response
+ * shape is their bug to find, and "nobody is checking who calls this" would be false.
+ */
+export const functionRefusalDetector: BoundaryDetector = {
+  id: 'function-refusals',
+  enabled: (ctx) => !ctx.signals.svelteKitRoutesDir && !ctx.signals.remixRoutesDir,
+  fileScan(ctx) {
+    if (!REJECT_STATUS.test(ctx.sf.getFullText())) return;
+    for (const fn of topLevelFunctions(ctx.sf)) {
+      const body = fn.node.getBody?.() ?? fn.node;
+      const line = rejectionOutsideCatch(body);
+      if (line === null) continue;
+      ctx.emit({
+        type: 'guard',
+        guard: {
+          name: fn.name,
+          how: 'call',
+          provider: 'custom',
+          path: ctx.ref.relPath,
+          // The refusal itself, so the evidence link lands on the line that proves it.
+          line,
+          confidence: 'likely',
+        },
+        // Reach is the function itself; build.ts and the reference walk decide which
+        // doors that means.
+        scope: 'node',
+        nodeId: ctx.enclosing(fn.node),
+        matchers: [],
+        // Found where the check lives, not where anybody calls it — so the reference
+        // walk must not credit a mere import (see GuardFinding.definitionSite).
+        definitionSite: true,
+        sourceId: ctx.fileId,
+      });
+    }
+  },
+};
+
+interface TopLevelFn {
+  name: string;
+  node: Node & { getBody?(): Node | undefined };
+}
+
+/** Named function declarations and `const x = () => …` at module scope. */
+function topLevelFunctions(sf: SourceFile): TopLevelFn[] {
+  const out: TopLevelFn[] = [];
+  for (const fn of sf.getFunctions()) {
+    const name = fn.getName();
+    if (name) out.push({ name, node: fn });
+  }
+  for (const decl of sf.getVariableDeclarations()) {
+    const init = decl.getInitializer();
+    if (init && (Node.isArrowFunction(init) || Node.isFunctionExpression(init))) {
+      out.push({ name: decl.getName(), node: init });
+    }
+  }
+  return out;
+}
+
+/** `rejectionLine`, minus anything a catch block says. */
+function rejectionOutsideCatch(node: Node): number | null {
+  let line: number | null = null;
+  node.forEachDescendant((child) => {
+    if (line !== null) return;
+    if (child.getFirstAncestor((a) => Node.isCatchClause(a))) return;
+    if (Node.isThrowStatement(child)) {
+      if (REJECT_STATUS.test(child.getText())) line = child.getStartLineNumber();
+      return;
+    }
+    if (!Node.isCallExpression(child)) return;
+    const callee = dottedName(child.getExpression())?.split('.').pop();
+    if (!callee || !REJECT_CALLS.has(callee)) return;
+    if (REJECT_STATUS.test(child.getText())) line = child.getStartLineNumber();
+  });
+  return line;
+}
+
 /**
  * `consumer.apply(AuthMiddleware).forRoutes({ path: 'user', method: RequestMethod.GET })`
  * — the whole of a NestJS application's auth, written in files no controller imports.

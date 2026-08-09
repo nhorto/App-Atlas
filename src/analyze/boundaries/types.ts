@@ -179,6 +179,16 @@ export interface GuardFinding {
    * the merge layer puts the address in front of it.
    */
   routerVar?: string | null;
+  /**
+   * The guard was found where the check is *defined*, not where somebody calls it
+   * (#155). The reference walk must not carry it through a `file:` node, because for a
+   * definition-site guard the file-level reference that survives every edit is the
+   * import — and "this file imports a rejecting function" is exactly what remains
+   * after the wiring is deleted, which is the lost-check case the diff exists to
+   * catch. Call-site guards keep the file hop: `export const GET = withTeam(…)` wires
+   * its check in a module-scope call, and that reference disappears with the wiring.
+   */
+  definitionSite?: boolean;
   /** The atlas node that implements the check, for the `protected-by` edge. */
   sourceId: string;
 }
