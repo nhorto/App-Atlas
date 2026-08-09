@@ -46,9 +46,34 @@ export function detectRustBoundaries(input: BoundaryInput): BoundaryFinding[] {
  * can reach.
  */
 function detectCommands(input: BoundaryInput, findings: BoundaryFinding[]): void {
+  // Both spellings, and the bare one is the *common* one (#195). Rust imports the macro
+  // and uses the short name — `use tauri::{command, AppHandle}` then `#[command]` — so
+  // matching only the qualified path recognised the form this tier's fixture happens to
+  // write and missed the form real apps do. lencx/ChatGPT has eleven commands and was
+  // reported as a Tauri app with no ways in at all, which is the sentence the docstring
+  // above exists to prevent.
+  //
+  // The import is the gate, exactly as narrow as the qualified path was: clap and
+  // several other crates define a `#[command]` of their own, and one of those without
+  // `use tauri::command` above it proves nothing.
+  //
+  // Unaliased only. `use tauri::command as tcmd` would be the same fact under another
+  // name, but the import record keeps the local name and not the leaf it renamed, so
+  // there is nothing here to tell that apart from any other tauri import — and reading
+  // every name a file imports from tauri as a command attribute is how a rule stops
+  // being about evidence. Renaming this macro is close to unheard of; a missed door is
+  // the cheaper side of that trade.
+  const importsCommand = input.file.imports.some(
+    (imp) => (imp.module === 'tauri' || imp.module.startsWith('tauri.')) && imp.local === 'command' && !imp.alias,
+  );
+  const isCommand = (attr: string): boolean => {
+    const name = attr.split('(')[0].trim();
+    return name === 'tauri::command' || (importsCommand && name === 'command');
+  };
+
   for (const def of input.file.defs) {
     if (def.kind !== 'function') continue;
-    if (!def.decorators.some((attr) => attr === 'tauri::command' || attr.startsWith('tauri::command('))) continue;
+    if (!def.decorators.some(isCommand)) continue;
 
     findings.push({
       type: 'endpoint',
