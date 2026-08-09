@@ -154,12 +154,29 @@ test('a file is described by its //! block, and only by that', () => {
 
 test('#[tauri::command] is a door, and a helper beside it is not', () => {
   const commands = atlas.nodes.filter((n) => n.kind === 'endpoint' && n.meta.endpointKind === 'ipc');
-  assert.deepEqual(commands.map((n) => n.name).sort(), ['load_dashboard', 'save_note']);
+  assert.deepEqual(commands.map((n) => n.name).sort(), ['load_dashboard', 'save_note', 'view_reload']);
   for (const command of commands) {
     assert.equal(command.meta.framework, 'Tauri');
   }
   // The attribute with arguments still counts: #[tauri::command(rename_all = …)].
   assert.ok(commands.some((n) => n.name === 'save_note'));
+});
+
+test('the bare #[command] counts, because that is how Rust is written (#195)', () => {
+  // `use tauri::{command}` then `#[command]` is the *common* spelling, and matching
+  // only the qualified path recognised this fixture's own habit and missed real apps:
+  // lencx/ChatGPT writes eleven commands this way and reported no doors at all.
+  const commands = atlas.nodes.filter((n) => n.kind === 'endpoint' && n.meta.endpointKind === 'ipc');
+  assert.ok(commands.some((n) => n.name === 'view_reload'), commands.map((n) => n.name).join(', '));
+});
+
+test("another crate's #[command] is not a Tauri door", () => {
+  // clap defines one too. The import is the evidence, and `#[clap::command]` has none
+  // of it — a rule that read every bare attribute would be guessing, not reading.
+  const names = atlas.nodes
+    .filter((n) => n.kind === 'endpoint' && n.meta.endpointKind === 'ipc')
+    .map((n) => n.name);
+  assert.ok(!names.includes('cli_entry'), names.join(', '));
 });
 
 test('commands never enter the auth count — the caller is the app itself', () => {
@@ -174,7 +191,7 @@ test('the boundary view files commands beside the screens, under their own famil
   const commands = view.inputs.find((group) => group.family === 'commands');
   assert.ok(commands, `expected a commands card, got ${view.inputs.map((g) => g.family).join(', ')}`);
   assert.equal(commands.name, 'Commands your screens call');
-  assert.deepEqual(commands.members.map((e) => e.name).sort(), ['load_dashboard', 'save_note']);
+  assert.deepEqual(commands.members.map((e) => e.name).sort(), ['load_dashboard', 'save_note', 'view_reload']);
   // No open-door count on the card: these are not doors a stranger can knock on, and a
   // number there would read as one.
   assert.equal(commands.openCount ?? undefined, undefined);
