@@ -15,6 +15,7 @@ import path from 'node:path';
 import fg from 'fast-glob';
 import { toPosix } from '../util/paths.js';
 import { DEFAULT_IGNORES, SOURCE_GLOB } from './project.js';
+import { classifyZone } from './zones.js';
 
 export interface Scope {
   /** Stable id, derived from the directory: `apps-web`. Used in URLs and paths. */
@@ -59,6 +60,14 @@ const APP_SCRIPTS = ['dev', 'start', 'serve'];
  * repo. Callers treat "no scopes" and "one scope" the same way: analyze the root.
  */
 export async function findScopes(root: string): Promise<Scope[]> {
+  return (await findWorkspace(root)).scopes;
+}
+
+/**
+ * The same answer, plus what was left out of it — for the one caller that prints the
+ * list and therefore owes the reader an account of what is not in it (#185).
+ */
+export async function findWorkspace(root: string): Promise<{ scopes: Scope[]; hiddenTests: number }> {
   const byDir = new Map<string, Scope>();
 
   const globs = workspaceGlobs(root);
@@ -87,13 +96,32 @@ export async function findScopes(root: string): Promise<Scope[]> {
     if (!byDir.has(scope.dir)) byDir.set(scope.dir, scope);
   }
 
-  const scopes = [...byDir.values()];
-  // One package in a workspace is not a monorepo worth a switcher.
-  if (scopes.length < 2) return [];
+  const declared = [...byDir.values()];
+  // A test fixture is a declared workspace member and is not an app (#185). nuxt's
+  // `pnpm-workspace.yaml` lists `test/fixtures/*`, which is how pnpm links them for the
+  // test run and how the switcher came to offer 43 entries, 33 of them fixtures and
+  // seventeen of those a single file each — the six packages somebody ships buried in a
+  // list four-fifths noise. #174 settled this one level down (a package of tests is not
+  // code other code imports) and `describesTheApp()` has kept test-zone findings out of
+  // the merge all along; scope discovery simply never asked.
+  //
+  // Never down to nothing: a repo whose only packages are fixtures still gets them,
+  // because an empty switcher on a repo that has packages is the worse answer — the
+  // same floor `scopes.length < 2` draws below.
+  const shipped = declared.filter((scope) => classifyZone(`${scope.dir}/package.json`) !== 'test');
+  const scopes = shipped.length > 0 ? shipped : declared;
+  const hiddenTests = declared.length - scopes.length;
 
-  const files = await measure(root, scopes);
+  // One package in a workspace is not a monorepo worth a switcher.
+  if (scopes.length < 2) return { scopes: [], hiddenTests: 0 };
+
+  // Measured against *every* declared scope, hidden ones included. A dropped fixture's
+  // files are still owned by that fixture — counting them as leftovers the root has
+  // would hand them straight back through `includeTheRootWhenItIsTheProject`, which is
+  // the fix undoing itself one function later.
+  const files = await measure(root, declared);
   const all = includeTheRootWhenItIsTheProject(root, scopes, files);
-  return leadWithTheMainApp(all.sort(byKindThenName), files);
+  return { scopes: leadWithTheMainApp(all.sort(byKindThenName), files), hiddenTests };
 }
 
 /** Where files belong that no declared package claims. */
