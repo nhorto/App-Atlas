@@ -29,12 +29,19 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 const MONO = path.join(here, 'fixtures', 'monotests');
 
 test('the fixtures are declared, and the switcher offers only the packages', async () => {
-  const { scopes, hiddenTests } = await findWorkspace(MONO);
+  const { scopes, hidden } = await findWorkspace(MONO);
   assert.deepEqual(
     scopes.map((s) => s.dir).sort(),
     ['packages/api', 'packages/ui'],
   );
-  assert.equal(hiddenTests, 2);
+  assert.deepEqual(hidden.map((s) => s.dir).sort(), ['test/fixtures/basic', 'test/fixtures/minimal']);
+});
+
+test('a hidden scope is still reachable when somebody names it', async () => {
+  // The heuristic decides what is worth *listing*. Somebody who types the name has
+  // out-argued it, and must not be told their own workspace member does not exist.
+  const { hidden } = await findWorkspace(MONO);
+  assert.ok(hidden.some((s) => s.name === 'fixture-basic' || s.id === 'test-fixtures-basic'), JSON.stringify(hidden));
 });
 
 test('a workspace of nothing but fixtures still gets mapped', async () => {
@@ -51,8 +58,8 @@ test('a workspace of nothing but fixtures still gets mapped', async () => {
     fs.writeFileSync(path.join(pkg, 'index.js'), 'export const a = 1;\n');
   }
 
-  const { scopes, hiddenTests } = await findWorkspace(dir);
+  const { scopes, hidden } = await findWorkspace(dir);
   assert.equal(scopes.length, 2, 'the fixtures are all there is, so they are the map');
-  assert.equal(hiddenTests, 0, 'nothing was hidden, so nothing is claimed to be');
+  assert.deepEqual(hidden, [], 'nothing was hidden, so nothing is claimed to be');
   fs.rmSync(dir, { recursive: true, force: true });
 });
