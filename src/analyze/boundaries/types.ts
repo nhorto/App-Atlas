@@ -33,9 +33,25 @@ export interface EndpointFinding {
   /** The handler writes data somewhere. Raises the stakes of an unprotected door. */
   writes: boolean;
   guards: GuardInfo[];
+  /**
+   * How often it runs, when the code declared it — `every 5 minutes` read off a
+   * `PeriodicTimer`. Never set when the interval is configuration: "runs continuously"
+   * is true and "every 5 minutes" would be invented.
+   */
+  schedule?: string;
+  /** The handler is a build output rather than source somebody wrote — see EndpointMeta. */
+  generatedEntry?: boolean;
   site: CodeSite;
   /** The atlas node that answers this door. */
   handlerId: string | null;
+  /**
+   * Where the handler's code sits when it is a lambda the source never named (#99):
+   * `app.MapGet("/x", () => …)`. A lambda is not a definition, so `handlerId` can only
+   * say "the method that registered it" — which, in a file registering twenty routes,
+   * is the same 200-line method for all twenty. The language plugin turns this span
+   * into a function node named after the door, and repoints `handlerId` at it.
+   */
+  handlerSpan?: { startIndex: number; endIndex: number; line: number; endLine: number };
   /**
    * Type names the handler's signature mentions that this file could not resolve. A
    * FastAPI dependency alias is normally one of them and is declared a file away, so
@@ -91,6 +107,29 @@ export interface StoreFinding {
    * would be a second box for the same database.
    */
   generic?: boolean;
+  /**
+   * This finding is the *declaration* of its table — a `DbSet<Order> Orders` property —
+   * rather than a use of it. The declarations are what `table-receiver` pairing (#104)
+   * resolves against, and marking them beats inferring them from a null operation,
+   * which a SQL statement whose direction was unreadable also has.
+   */
+  declares?: boolean;
+  /**
+   * The dotted receiver the call was written on — `_db.Orders` — when `table` is null
+   * because the file that declares the tables is a different file. Matched against the
+   * project's declared tables once every file has been read (#104): the same deferred
+   * pairing `reach.ts` does, so it survives incremental runs, because both halves are
+   * findings that persist in the slice cache.
+   */
+  tableReceiver?: string;
+  /**
+   * The finding is evidence only if `tableReceiver` resolves to a declared table.
+   * `Where`, `Select` and `Add` are LINQ before they are Entity Framework: written on a
+   * DbSet they are a query, written on a list they are nothing, and which one they are
+   * is exactly what the pairing decides. Unresolved, the finding is dropped — never
+   * kept with a null table, because that would count somebody's list as a database.
+   */
+  requiresTable?: boolean;
   site: CodeSite;
 }
 
@@ -98,6 +137,15 @@ export interface StoreFinding {
 export interface EnvFinding {
   type: 'env';
   name: string;
+  /**
+   * The read went through a configuration stack rather than the environment (#101) —
+   * `builder.Configuration["Stripe:Key"]`, where the value may come from
+   * appsettings.json, user secrets, a vault, or the environment last. The key is a
+   * setting this app requires either way; the flag is what keeps it from being
+   * presented as an environment variable no deployment has ever set, and what says
+   * which file — settings or `.env.example` — documents it.
+   */
+  config?: boolean;
   site: CodeSite;
 }
 

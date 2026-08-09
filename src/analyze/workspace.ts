@@ -59,26 +59,32 @@ const APP_SCRIPTS = ['dev', 'start', 'serve'];
  * repo. Callers treat "no scopes" and "one scope" the same way: analyze the root.
  */
 export async function findScopes(root: string): Promise<Scope[]> {
-  const globs = workspaceGlobs(root);
-  if (globs.length === 0) return [];
-
-  const found = await fg(
-    globs.map((glob) => `${glob.replace(/\/$/, '')}/{package.json,pyproject.toml}`),
-    {
-      cwd: root,
-      dot: false,
-      onlyFiles: true,
-      followSymbolicLinks: false,
-      suppressErrors: true,
-      ignore: ['**/node_modules/**', '**/.venv/**', '**/dist/**', '**/build/**'],
-    },
-  );
-
   const byDir = new Map<string, Scope>();
-  for (const manifest of found.map(toPosix).sort()) {
-    const dir = path.posix.dirname(manifest);
-    if (dir === '.' || byDir.has(dir)) continue;
-    byDir.set(dir, describeScope(root, dir));
+
+  const globs = workspaceGlobs(root);
+  if (globs.length > 0) {
+    const found = await fg(
+      globs.map((glob) => `${glob.replace(/\/$/, '')}/{package.json,pyproject.toml}`),
+      {
+        cwd: root,
+        dot: false,
+        onlyFiles: true,
+        followSymbolicLinks: false,
+        suppressErrors: true,
+        ignore: ['**/node_modules/**', '**/.venv/**', '**/dist/**', '**/build/**'],
+      },
+    );
+
+    for (const manifest of found.map(toPosix).sort()) {
+      const dir = path.posix.dirname(manifest);
+      if (dir === '.' || byDir.has(dir)) continue;
+      byDir.set(dir, describeScope(root, dir));
+    }
+  }
+
+  // A .NET solution is a monorepo, declared in a different file format (#98).
+  for (const scope of dotnetScopes(root)) {
+    if (!byDir.has(scope.dir)) byDir.set(scope.dir, scope);
   }
 
   const scopes = [...byDir.values()];
@@ -231,6 +237,108 @@ function workspaceGlobs(root: string): string[] {
   }
 
   return [...globs].filter((glob) => !glob.startsWith('!'));
+}
+
+/**
+ * The projects a .NET repo declares, each its own scope (#98).
+ *
+ * A solution's split *is* the architecture — `Api → Store → Core`, arrows one way,
+ * enforced by the compiler — and flattened into one map the single most useful fact
+ * about the codebase is the one thing you cannot see. It also mixes archetypes: the
+ * merged map has to pick one verdict for a service, a CLI and a library, and whichever
+ * it picks is wrong for the other two.
+ *
+ * The `.sln` is read where one exists, because it says which projects are in the
+ * solution at all; a repo with bare `.csproj` files scattered and no solution gets a
+ * scope per project file instead. Either way a single-project repo produces one scope,
+ * and one scope is below the switcher's threshold — a repo with one `.csproj` at the
+ * root does not gain a switcher it has no use for.
+ */
+function dotnetScopes(root: string): Scope[] {
+  const out: Scope[] = [];
+
+  const describe = (projectFile: string): Scope | null => {
+    const rel = toPosix(path.relative(root, projectFile));
+    const dir = path.posix.dirname(rel);
+    // A project at the repo root is the ordinary single-project shape, not a monorepo.
+    if (dir === '.' || rel.startsWith('..')) return null;
+    const name = path.posix.basename(rel).replace(/\.(cs|fs|vb)proj$/i, '');
+    const text = readText(projectFile);
+    // `<OutputType>Exe</OutputType>`, or the web/worker SDKs: .NET's ways of writing
+    // "this is a thing you run". Everything else is code other projects reference.
+    const runs =
+      /<OutputType>\s*(Exe|WinExe)\s*<\/OutputType>/i.test(text) ||
+      /Sdk\s*=\s*"Microsoft\.NET\.Sdk\.(Web|Worker|BlazorWebAssembly)/i.test(text);
+    return {
+      id: dir.replace(/[^A-Za-z0-9]+/g, '-').replace(/^-|-$/g, '').toLowerCase() || 'root',
+      name,
+      dir,
+      kind: runs ? 'app' : 'library',
+    };
+  };
+
+  // The solution file, searched shallowly — `connector/Glance.sln` is the normal shape
+  // for a repo whose .NET half lives in a subdirectory.
+  const solutions: string[] = [];
+  const scan = (dir: string, depth: number) => {
+    if (depth > 2 || solutions.length > 8) return;
+    let entries: fs.Dirent[];
+    try {
+      entries = fs.readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const entry of entries) {
+      if (entry.isDirectory()) {
+        if (/^(node_modules|\.git|bin|obj|packages|dist|build)$/i.test(entry.name)) continue;
+        scan(path.join(dir, entry.name), depth + 1);
+      } else if (/\.sln$/i.test(entry.name)) {
+        solutions.push(path.join(dir, entry.name));
+      }
+    }
+  };
+  scan(root, 0);
+
+  if (solutions.length > 0) {
+    for (const sln of solutions) {
+      const slnDir = path.dirname(sln);
+      for (const match of readText(sln).matchAll(/^Project\("[^"]*"\)\s*=\s*"[^"]+",\s*"([^"]+)"/gim)) {
+        const projectPath = match[1].replace(/\\/g, '/');
+        // A solution also lists solution *folders*, whose "path" is just a name.
+        if (!/\.(cs|fs|vb)proj$/i.test(projectPath)) continue;
+        const scope = describe(path.resolve(slnDir, projectPath));
+        if (scope && !out.some((s) => s.dir === scope.dir)) out.push(scope);
+      }
+    }
+    return out;
+  }
+
+  // No solution: every project file is a scope, found with the same shallow walk the
+  // signals reader uses.
+  const projects: string[] = [];
+  const scanProjects = (dir: string, depth: number) => {
+    if (depth > 3 || projects.length > 100) return;
+    let entries: fs.Dirent[];
+    try {
+      entries = fs.readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const entry of entries) {
+      if (entry.isDirectory()) {
+        if (/^(node_modules|\.git|bin|obj|packages|dist|build)$/i.test(entry.name)) continue;
+        scanProjects(path.join(dir, entry.name), depth + 1);
+      } else if (/\.(cs|fs|vb)proj$/i.test(entry.name)) {
+        projects.push(path.join(dir, entry.name));
+      }
+    }
+  };
+  scanProjects(root, 0);
+  for (const project of projects.sort()) {
+    const scope = describe(project);
+    if (scope && !out.some((s) => s.dir === scope.dir)) out.push(scope);
+  }
+  return out;
 }
 
 function describeScope(root: string, dir: string): Scope {

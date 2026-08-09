@@ -37,10 +37,44 @@ const door = (route) => atlas.nodes.find((n) => n.kind === 'endpoint' && n.meta.
 const why = (route) => door(route)?.meta.open?.kind ?? null;
 
 test('the headline counts only the doors nothing explains', () => {
-  // Six doors, none of them checked. The old headline said six.
+  // Six doors, none of them checked. The old headline said six. The Stripe webhook the
+  // fixture also carries is not among them: a verified webhook is not a route with no
+  // auth, it is a route whose auth is a signature.
   assert.equal(atlas.meta.stats.routes, 6);
   assert.equal(atlas.meta.stats.unprotectedRoutes, 3);
   assert.equal(atlas.meta.stats.publicRoutes, 3);
+});
+
+/**
+ * Issue #122, found by running the published package over a real repo.
+ *
+ * A payment webhook was reported in the tool's most alarming words — "nothing checks
+ * these, and nothing explains why" — while its handler verified an HMAC of the raw body
+ * against the endpoint secret. Nothing gets past that without the shared secret, which
+ * makes it a stronger check than a session cookie, not the absence of one.
+ *
+ * The machinery to say so was already here: a `webhook` finding promotes the door and
+ * marks it verified. What was missing was one spelling. The detector matched
+ * `constructEvent` and not `constructEventAsync` — and the async form is the only one
+ * that works on an edge runtime, where there is no synchronous crypto. So the repos most
+ * likely to have a Stripe webhook at all were exactly the ones it could not see.
+ */
+test('a signature is a check, even though it never mentions a user', () => {
+  const webhook = door('/api/stripe/webhook');
+  assert.ok(webhook, 'the webhook is on the map');
+  assert.equal(webhook.meta.endpointKind, 'webhook', 'the verification is what makes it one');
+  assert.equal(webhook.meta.verified, true);
+
+  const guards = webhook.meta.guards ?? [];
+  assert.equal(guards.length, 1);
+  assert.equal(guards[0].name, 'Stripe signature check');
+  assert.equal(guards[0].provider, 'Stripe');
+  assert.equal(
+    guards[0].confidence,
+    'certain',
+    'the call cannot succeed without the secret, so it is graded like a check inside the handler',
+  );
+  assert.equal(why('/api/stripe/webhook'), null, 'and it never reaches the unchecked-door classification at all');
 });
 
 test('the buckets account for every door, so nothing is quietly dropped', () => {
@@ -121,7 +155,10 @@ test('the unreadable file is named on the security screen, not only in a warning
     auth.unread.map((f) => f.path),
     ['app/deps.py'],
   );
-  assert.match(auth.unread[0].because, /parenthesized/);
+  // The reason carries Python's own words for why it refused the file. The fixture's
+  // broken line is a Python 2 `print`, whose message has been stable since 3.6 —
+  // unlike the `except A, B:` message this used to match, which PEP 758 deleted.
+  assert.match(auth.unread[0].because, /[Mm]issing parentheses/);
 });
 
 // ---------------------------------------------------------------------------
@@ -153,6 +190,75 @@ test('nothing to protect means nothing to say', () => {
   assert.equal(authHeadline({ routes: 0, unprotectedRoutes: 0, publicRoutes: 0, unreadableRoutes: 0, unreadFiles: 0 }), null);
 });
 
+// ---------------------------------------------------------------------------
+// The clean sweep does not read greener than the evidence (#116)
+
+test('a headline where nothing was proven says so', () => {
+  // Found on a real Expo app: 21 doors, every check an RLS policy read out of a
+  // migration — real evidence, honestly graded `likely` on every card, and the
+  // headline told its owner the app was fully locked. The cards keep the grade M2
+  // promised; the sentence people repeat in a meeting was dropping it.
+  const line = authHeadline({
+    routes: 4,
+    unprotectedRoutes: 0,
+    publicRoutes: 0,
+    unreadableRoutes: 0,
+    unreadFiles: 0,
+    likelyOnlyRoutes: 4,
+  });
+  assert.equal(line.headline, 'every one of the 4 routes has an auth check — all matched, none proven');
+  assert.match(line.caveats.join(' '), /matched by a pattern rather than proven/);
+});
+
+test('a headline where some were proven counts the ones that were not', () => {
+  // The real shape of that app: 20 doors behind policies, one behind a call the
+  // analyzer could point at. "None proven" would be as wrong in the other direction.
+  const line = authHeadline({
+    routes: 21,
+    unprotectedRoutes: 0,
+    publicRoutes: 0,
+    unreadableRoutes: 0,
+    unreadFiles: 0,
+    likelyOnlyRoutes: 20,
+  });
+  assert.match(line.headline, /^every one of the 21 routes has an auth check, though 20 of those were matched/);
+});
+
+test('a proven sweep keeps the clean sentence it earned', () => {
+  const line = authHeadline({
+    routes: 4,
+    unprotectedRoutes: 0,
+    publicRoutes: 0,
+    unreadableRoutes: 0,
+    unreadFiles: 0,
+    likelyOnlyRoutes: 0,
+  });
+  assert.equal(line.headline, 'every one of the 4 routes has an auth check');
+  assert.deepEqual(line.caveats, []);
+});
+
+test('the hedge never lands on a headline that already has worse news', () => {
+  // A count of unprotected doors is the more urgent fact and carries "App Atlas can
+  // see" already. Two hedges in one sentence is a sentence nobody finishes.
+  const line = authHeadline({
+    routes: 10,
+    unprotectedRoutes: 3,
+    publicRoutes: 0,
+    unreadableRoutes: 0,
+    unreadFiles: 0,
+    likelyOnlyRoutes: 7,
+  });
+  assert.equal(line.headline, '3 of 10 routes have no auth check App Atlas can see');
+  assert.doesNotMatch(line.caveats.join(' '), /matched by a pattern/);
+});
+
+test('an atlas from before this stat existed still produces a sentence', () => {
+  // `likelyOnlyRoutes` is absent from every atlas written by an earlier version, and a
+  // missing number must read as "nothing to add" rather than as a hedge or a crash.
+  const line = authHeadline({ routes: 4, unprotectedRoutes: 0, publicRoutes: 0, unreadableRoutes: 0, unreadFiles: 0 });
+  assert.equal(line.headline, 'every one of the 4 routes has an auth check');
+});
+
 /**
  * Issue #58. A Python project analyzed on a machine whose interpreter never answered has
  * no doors for the same reason a blindfolded person has no traffic to report, and every
@@ -174,4 +280,41 @@ test('the brief an agent reads is caveated before its numbers, not after them', 
   const caveat = markdown.indexOf('**App Atlas could not read 1 file**');
   assert.ok(caveat > numbers, 'the caveat sits inside the section it qualifies');
   assert.ok(caveat < markdown.indexOf('## Ways in'), 'and before anything derived from those numbers');
+});
+
+/**
+ * Issue #132, found on sharkdp/bat. Its `tests/syntax-tests/highlighted/Python/battest.py`
+ * is a syntax-*highlighting* fixture full of ANSI escapes, in a project whose whole job is
+ * colourising files. Refusing to parse it is right; hedging the auth claim with it is not.
+ *
+ * The hedge says "a check may live in there", and a guard for a production route does not
+ * live in a highlighting fixture — so the caveat was bought with a fact that could never
+ * have changed the answer. A hedge that fires when nothing is uncertain teaches a reader
+ * to skip hedges, which is #116's failure arriving from the other side.
+ */
+test('an unreadable test fixture does not soften a claim it could not affect', () => {
+  const line = authHeadline({
+    routes: 0,
+    unprotectedRoutes: 0,
+    publicRoutes: 0,
+    unreadableRoutes: 0,
+    unreadFiles: 1,
+    unreadTestFiles: 1,
+  });
+  assert.equal(line, null, 'no routes and nothing genuinely unseen is simply no routes');
+});
+
+test('…but an unreadable source file still does', () => {
+  // The other half. #58 exists because zero doors on a repo nobody could read is the most
+  // confidently wrong sentence this tool can print, and that must keep working.
+  const line = authHeadline({
+    routes: 0,
+    unprotectedRoutes: 0,
+    publicRoutes: 0,
+    unreadableRoutes: 0,
+    unreadFiles: 3,
+    unreadTestFiles: 1,
+  });
+  assert.equal(line.tone, 'warn');
+  assert.match(line.headline, /could not read 2 files/, 'the two outside the test zone are what counts');
 });

@@ -1,6 +1,6 @@
 {
-  "name": "app-atlas",
-  "version": "0.18.0",
+  "name": "@app-atlas/cli",
+  "version": "0.21.0",
   "description": "Understand any app - including the one your AI built. An interactive, always-accurate atlas of your application.",
   "license": "MIT",
   "author": "nhorto",
@@ -37,9 +37,13 @@
     "golang",
     "csharp",
     "dotnet",
+    "rust",
     "documentation",
     "ai-agents",
-    "vibe-coding"
+    "vibe-coding",
+    "mcp",
+    "model-context-protocol",
+    "code-map"
   ],
   "scripts": {
     "build": "npm run build:node && npm run build:web",

@@ -22,8 +22,12 @@ export type GValue =
    * thing to the reader, so the callee is carried the same way a name is.
    */
   | { t: 'call'; v: string }
-  /** A function written inline. Its body is in `calls` like any other code. */
-  | { t: 'func'; startIndex: number; endIndex: number }
+  /**
+   * A function written inline. Its body is in `calls` like any other code. The line
+   * range is carried beside the character range because the two answer different
+   * questions: containment is asked in characters, and a reader is sent to a line.
+   */
+  | { t: 'func'; startIndex: number; endIndex: number; line: number; endLine: number }
   | { t: 'other' };
 
 export interface GCall {
@@ -84,6 +88,20 @@ export interface GDef {
    * that a Rust function is a door.
    */
   decorators: string[];
+  /**
+   * What a type declares it extends or implements, by name — `BackgroundService` from
+   * `class Sync : BackgroundService`. Base names only, type arguments stripped, because
+   * a detector matches them against a closed list of framework types and
+   * `IHandler<Order>` is `IHandler` to that question. Empty for functions, and for
+   * languages whose dialect does not collect them.
+   */
+  bases: string[];
+  /**
+   * One part of a type the language allows to be split across files — C#'s `partial`.
+   * Set on every part or on none: a class without the keyword cannot be split, which is
+   * what lets the parts merge without ever merging two types that merely share a name.
+   */
+  partial?: boolean;
   /** Struct, class or interface members. */
   fields: GField[];
   /** Every bare identifier mentioned inside, for the reference pass to resolve. */

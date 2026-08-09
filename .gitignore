@@ -2,6 +2,9 @@ node_modules/
 dist/
 .app-atlas/
 *.log
+# npm pack output. The verification habit means these get made constantly, and one
+# rode into 64f1b2a on a git add -A.
+*.tgz
 .DS_Store
 .vite/
 __pycache__/

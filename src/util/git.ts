@@ -7,6 +7,7 @@
  * into `ATLAS.md` (issue #69), and the only way to know it is to ask git.
  */
 import { spawnSync } from 'node:child_process';
+import fs from 'node:fs';
 import path from 'node:path';
 
 /**
@@ -21,6 +22,54 @@ import path from 'node:path';
  * work tree, a hung binary — is reported as untracked, which keeps the map's own
  * behaviour the same on a machine with no git as it is in a directory nobody shares.
  */
+/**
+ * Adds `.app-atlas/` to the repo's `.gitignore`, and says whether it had to (#113).
+ *
+ * The first run writes `.app-atlas/atlas.db` into somebody's project, and until this
+ * existed nothing added it to `.gitignore`, nothing suggested it, and nothing in the
+ * summary mentioned it. The next `git status` showed an untracked directory the user
+ * never asked for — to a reader already uneasy about what an agent did to their repo,
+ * one more mystery folder.
+ *
+ * It also protects the baseline. What powers "what changed since the last run" lives
+ * in there and is *meant* to be local; committing it by accident — the natural
+ * `git add -A` outcome — ships a database and then diffs it forever, which is the
+ * other half of the lesson #69 recorded.
+ *
+ * Deliberately conservative about somebody else's file. It only writes when there is a
+ * `.git` directory (so no stray `.gitignore` appears in a plain folder), only appends,
+ * only when no existing line already covers the directory, and never rewrites what is
+ * there. Any failure is silent and reported as "did nothing": a map-drawing tool that
+ * cannot draw a map because of a permissions error on `.gitignore` has its priorities
+ * backwards.
+ */
+export function ignoreAtlasDirectory(root: string): boolean {
+  const ENTRY = '.app-atlas/';
+  try {
+    if (!fs.existsSync(path.join(root, '.git'))) return false;
+
+    const file = path.join(root, '.gitignore');
+    const existing = fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : null;
+    if (existing !== null) {
+      // Any spelling somebody may already have used, negations included: a `!` line
+      // means they want it tracked, and overriding that would be the tool arguing
+      // with its user.
+      for (const raw of existing.split(/\r?\n/)) {
+        const line = raw.trim().replace(/\/$/, '');
+        if (line === '.app-atlas' || line === '/.app-atlas' || line === '!.app-atlas') return false;
+      }
+    }
+
+    const needsNewline = existing !== null && existing.length > 0 && !existing.endsWith('\n');
+    const block =
+      `${needsNewline ? '\n' : ''}${existing ? '\n' : ''}# App Atlas keeps its map here. Local to this machine.\n${ENTRY}\n`;
+    fs.appendFileSync(file, block, 'utf8');
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export function isTrackedByGit(filePath: string): boolean {
   try {
     const result = spawnSync('git', ['ls-files', '--error-unmatch', '--', path.basename(filePath)], {

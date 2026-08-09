@@ -165,6 +165,18 @@ export function classifyOpenDoors(nodes: AtlasNode[], edges: AtlasEdge[]): Map<s
       continue;
     }
 
+    // A catch-all a build generated (#123). The adapter re-serves routes this atlas has
+    // already found and graded one at a time, so counting it says "a route nobody
+    // protects" about an app whose routes are all accounted for — and there is nowhere
+    // to put a check in a file nobody wrote. Kept on the map, taken out of the count.
+    if (meta.generatedEntry) {
+      verdicts.set(node.id, {
+        kind: 'generated',
+        because: 'a build wrote this entry — the routes it serves are on the map already, checked one by one',
+      });
+      continue;
+    }
+
     // A page that writes data is not the harmless marketing page this rule is about,
     // so it keeps its place in the list that gets read.
     if (meta.method === 'PAGE' && !meta.writes) {
@@ -187,14 +199,17 @@ export interface OpenTally {
   page: number;
   authMount: number;
   unreadable: number;
+  /** Catch-alls a build wrote, whose real routes are counted individually (#123). */
+  generated: number;
 }
 
 export function tallyOpenDoors(verdicts: Iterable<OpenVerdict>): OpenTally {
-  const tally: OpenTally = { worthALook: 0, page: 0, authMount: 0, unreadable: 0 };
+  const tally: OpenTally = { worthALook: 0, page: 0, authMount: 0, unreadable: 0, generated: 0 };
   for (const verdict of verdicts) {
     if (verdict.kind === 'page') tally.page++;
     else if (verdict.kind === 'auth-mount') tally.authMount++;
     else if (verdict.kind === 'unreadable') tally.unreadable++;
+    else if (verdict.kind === 'generated') tally.generated++;
     else tally.worthALook++;
   }
   return tally;
@@ -226,7 +241,13 @@ export function authHeadline(stats: AtlasStats): AuthHeadline | null {
   const open = stats.unprotectedRoutes;
   const unknown = stats.unreadableRoutes ?? 0;
   const public_ = stats.publicRoutes ?? 0;
-  const unread = stats.unreadFiles ?? 0;
+  // Test files excluded (#132). The hedge means "a check may live in there", and a check
+  // for a production route does not live in a test fixture — bat's unparseable
+  // syntax-highlighting asset was softening a claim it could never have changed. A hedge
+  // that fires when nothing is actually uncertain teaches a reader to skip hedges, which
+  // is #116's failure arriving from the other side. The file is still reported and still
+  // counted in `unreadFiles`; only this sentence stops leaning on it.
+  const unread = Math.max(0, (stats.unreadFiles ?? 0) - (stats.unreadTestFiles ?? 0));
 
   // Zero doors reads as good news, and it is only good news when the analyzer could see.
   // A Python project mapped on a machine whose interpreter never answered has zero doors
@@ -260,6 +281,28 @@ export function authHeadline(stats: AtlasStats): AuthHeadline | null {
       routes === 1 ? 'the one route has an auth check' : `every one of the ${routes} routes has an auth check`;
   }
 
+  // A clean sweep is the one sentence people repeat in a meeting, and it must not read
+  // greener than the evidence under it. Every card carries `likely · Clerk` rather than
+  // rounding up to "protected" (M2); dropping that grade here broke the same promise in
+  // the most quotable place on the page. On a real Expo app, 20 of 21 doors were behind
+  // RLS policies read out of migrations — real evidence, honestly graded `likely` — and
+  // the headline told its owner the app was fully locked (#116).
+  //
+  // The hedge is only ever added to a headline that had nothing else to say. A number
+  // of unprotected doors is the more urgent fact and already carries "App Atlas can
+  // see"; two hedges in one sentence is a sentence nobody finishes.
+  const likelyOnly = stats.likelyOnlyRoutes ?? 0;
+  const clean = open === 0 && unknown === 0;
+  const hedged = clean && likelyOnly > 0;
+  if (hedged) {
+    headline +=
+      likelyOnly === routes - public_
+        ? routes - public_ === 1
+          ? ' — matched, not proven'
+          : ' — all matched, none proven'
+        : `, though ${likelyOnly} of those were matched rather than proven`;
+  }
+
   const caveats: string[] = [];
   if (open > 0 && unknown > 0) {
     caveats.push(
@@ -272,6 +315,13 @@ export function authHeadline(stats: AtlasStats): AuthHeadline | null {
   if (unread > 0) {
     caveats.push(
       `App Atlas could not read ${unread} ${unread === 1 ? 'file' : 'files'}; whatever they declare is missing from every number here`,
+    );
+  }
+  if (hedged) {
+    caveats.push(
+      likelyOnly === routes - public_
+        ? 'every check was matched by a pattern rather than proven — open the doors and read what guards them'
+        : `${likelyOnly} of the checks were matched by a pattern rather than proven — worth reading those doors yourself`,
     );
   }
 

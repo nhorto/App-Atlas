@@ -76,7 +76,13 @@ export type EndpointKind =
   // map (it is how anything reaches the engine), and kept out of the auth-coverage
   // count for the reason `screen` is: the caller is the app's own interface, not a
   // stranger, and "no auth check" on one would be a false alarm.
-  | 'ipc';
+  | 'ipc'
+  // Code that starts with the application and runs on its own — a .NET
+  // `BackgroundService`, a hosted service. Not `cron`, because it declared no schedule
+  // and inventing one would put a time on the screen nobody wrote; not `queue`, because
+  // nothing enqueues to it. Kept out of the auth-coverage count like both of them: a
+  // stranger cannot knock on it.
+  | 'worker';
 
 /** What a third party does for you — drives the grouping in the boundary view. */
 export type ServiceCategory =
@@ -259,6 +265,13 @@ export interface EnvVarInfo {
    * meant to say "you forgot to write this down" into noise the reader learns to skip.
    */
   platform: boolean;
+  /**
+   * A configuration key, not an environment variable (#101): read through .NET's
+   * provider stack, documented (or not) by `appsettings*.json` rather than
+   * `.env.example`. The distinction is the whole reason the old rule refused to report
+   * these at all — a JSON settings key must never appear as a name a deployment sets.
+   */
+  config?: boolean;
 }
 
 /** meta for kind === 'endpoint' */
@@ -271,7 +284,7 @@ export interface EnvVarInfo {
  * mounted on, and a handler that calls the provider's own sign-in routine. Both are
  * "the door people sign in through", which is what every screen already calls this.
  */
-export type OpenKind = 'worth-a-look' | 'page' | 'auth-mount' | 'unreadable';
+export type OpenKind = 'worth-a-look' | 'page' | 'auth-mount' | 'unreadable' | 'generated';
 
 export interface OpenVerdict {
   kind: OpenKind;
@@ -340,6 +353,17 @@ export interface EndpointMeta {
    * webhook does not.
    */
   verified?: boolean;
+  /**
+   * This door's handler is a file a build wrote, not a file a person did — a Cloudflare
+   * Worker whose `main` is `.open-next/worker.js` is a Next.js app on the edge, and the
+   * routes it serves are already on the map one by one, graded individually (#123).
+   *
+   * The door stays: #29 is the bug where a Worker repo was told nothing answers a URL.
+   * It is only excused from the auth count, because a catch-all generated at build time
+   * has nowhere to put a check and counting it says "a route nobody protects" about an
+   * app whose routes are all accounted for.
+   */
+  generatedEntry?: boolean;
   /** Cron expression, when a scheduler is what knocks. */
   schedule?: string;
   /** Only on the single `env` endpoint. */
@@ -457,8 +481,22 @@ export interface AtlasStats {
   unprotectedRoutes: number;
   /** Unchecked, with a reason: a page the browser renders, or the sign-in door. */
   publicRoutes: number;
+  /** Files a code generator wrote. Counted apart from docstring coverage (#126). */
+  generatedFiles?: number;
+  /** Of those, the ones in the test zone — excluded from the auth hedge (#132). */
+  unreadTestFiles?: number;
   /** Unchecked, but a file they import could not be read — unknown, not open (#36). */
   unreadableRoutes: number;
+  /**
+   * Guarded routes whose every guard is below `certain` — a check matched through a
+   * pattern, a policy read out of a migration, a filter reached one hop away.
+   *
+   * The grade is carried faithfully on every card, and the headline used to drop it:
+   * a real app whose 21 doors are all behind `likely`-grade RLS policies was told
+   * "every one of the 21 routes has an auth check", which reads as proven and is the
+   * one direction this tool must never be wrong in (#116).
+   */
+  likelyOnlyRoutes: number;
   /** Files that could not be parsed at all. Every count above is short by their contents. */
   unreadFiles: number;
   services: number;

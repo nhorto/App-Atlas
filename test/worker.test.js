@@ -145,6 +145,40 @@ test('the door is real even though the file behind it is not there yet', () => {
   );
 });
 
+/**
+ * Issue #123, found by running the published package over a real OpenNext repo.
+ *
+ * `.open-next/worker.js` is not a door somebody wrote — it is a Next.js app packaged for
+ * the edge, and the routes it serves are already on this map one at a time, each with its
+ * own guards. Counting the adapter too says "a route nobody protects" about an app whose
+ * routes are all accounted for, and there is nowhere to put a check in a file nobody
+ * wrote.
+ *
+ * The door still exists, because #29 above is the bug where a Worker repo was told in
+ * writing that nothing answers a URL. It is excused from the count, not removed from the
+ * map — those are different things, and only one of them hides information.
+ */
+test('a build wrote this entry, so it is a door but not an accusation', () => {
+  const door = edge.nodes.find((n) => n.kind === 'endpoint' && n.meta.framework === 'Cloudflare Workers');
+  assert.equal(door.meta.generatedEntry, true, 'the entry is marked as generated');
+  assert.equal(door.meta.open.kind, 'generated');
+  assert.match(door.meta.open.because, /already/, 'and it says why, rather than going quiet');
+  assert.equal(edge.meta.stats.unprotectedRoutes, 0, 'nothing here is worth a reader opening');
+  assert.ok(edge.meta.stats.publicRoutes >= 1, 'but it is still counted among the doors that were explained');
+});
+
+/**
+ * The rule that was tempting and wrong. Dogfooding turned up a repo with two real
+ * Workers (`main: "src/worker.ts"`) and no other doors, reporting `2 of 2 routes have no
+ * auth check` — which was true, and suppressing it would have hidden two genuinely open
+ * doors on the edge. So the test is the entry path, never "are there other routes".
+ */
+test('a hand-written entry is still a door, however few of them there are', () => {
+  const door = atlas.nodes.find((n) => n.kind === 'endpoint' && n.meta.framework === 'Cloudflare Workers');
+  assert.equal(door.meta.generatedEntry ?? false, false, 'edge/index.ts is source, not output');
+  assert.notEqual(door.meta.open?.kind, 'generated');
+});
+
 test('the databases the platform injects are named, not left generic', () => {
   const stores = edge.nodes
     .filter((n) => n.kind === 'store')

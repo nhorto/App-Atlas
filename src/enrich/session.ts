@@ -3,13 +3,21 @@
  *
  * Owns the one moment in App Atlas where the tool might spend the user's money, and
  * the rule it enforces is the resolution of SPEC.md section 12, question 2: **ask
- * only when it costs.**
+ * only when it costs — and say so always.**
  *
  * A subscription the user already pays for is free at the margin, so stopping to ask
  * about it buys them nothing and trains them to hit Enter without reading. An API key
  * spends real money, so it gets a real question with a real number attached, before
  * anything is sent. Same code path, different answer to "does this cost anything",
- * which is the only question that should decide whether someone is interrupted.
+ * which is the only question that should decide whether someone is *interrupted*.
+ *
+ * What it does not decide is whether they are *told*. The first version of this file
+ * conflated the two, and a bare `analyze` on a fresh install went away for twenty
+ * seconds and came back having written fifteen explanations and reported a real
+ * dollar cost — the number arriving after the money, on the first run somebody ever
+ * did (#111). So the announcement is unconditional and the question is not: nothing
+ * here happens without a line on screen first, and the backend that turns out to bill
+ * gets the full prompt on the evidence of its own probe.
  */
 import { createInterface } from 'node:readline/promises';
 import pc from 'picocolors';
@@ -18,6 +26,7 @@ import { AtlasStore, atlasDbPath } from '../model/store.js';
 import { selectBackend } from './backends/index.js';
 import { enrichAtlas } from './index.js';
 import type { CostEstimate, EnrichReport } from './index.js';
+import type { EnrichBackend } from './types.js';
 
 export interface WordsOptions {
   root: string;
@@ -26,6 +35,12 @@ export interface WordsOptions {
   enabled: boolean;
   /** A specific backend from `--ai <id>`. */
   backendId?: string;
+  /**
+   * A backend to use instead of discovering one. The programmatic seam for a caller
+   * who has already chosen — and what lets the rules in this file be tested without
+   * a real CLI on the machine running the tests.
+   */
+  backend?: EnrichBackend;
   model?: string;
   maxFiles?: number;
   /** Throw away cached explanations and write them again. */
@@ -80,7 +95,9 @@ export async function writeTheWords(options: WordsOptions): Promise<EnrichReport
       return cached;
     }
 
-    const selection = await selectBackend({ prefer: options.backendId, model: options.model });
+    const selection = options.backend
+      ? { backend: options.backend, rejected: [], alternatives: [] }
+      : await selectBackend({ prefer: options.backendId, model: options.model });
     for (const rejection of selection.rejected) {
       say(pc.yellow(`  ! ${rejection.label} is installed but did not answer: ${rejection.reason}`));
     }
@@ -95,6 +112,20 @@ export async function writeTheWords(options: WordsOptions): Promise<EnrichReport
         say(pc.dim('  or set ANTHROPIC_API_KEY. Run with --no-ai to stop this message.'));
       }
       return cached;
+    }
+
+    // A backend that bills gets the question below. One that does not still gets a
+    // sentence, because "free at the margin" is not free: it is a slice of somebody's
+    // plan quota and twenty seconds of their time, and a run that spends either
+    // without a word on screen fails the standard the consent prompt itself sets (#111).
+    if (selection.backend.billing !== 'metered' && !options.neverAsk) {
+      say(
+        pc.dim(
+          `  Writing ${cached.pendingItems} descriptions with ${selection.backend.label}` +
+            `${selection.backend.billing === 'local' ? ' (on this machine)' : ' (your subscription, no API charge)'}` +
+            ` — ${pc.cyan('--no-ai')} to skip.`,
+        ),
+      );
     }
 
     const report = await enrichAtlas({
@@ -141,7 +172,14 @@ async function askPermission(estimate: CostEstimate, options: WordsOptions): Pro
     if (!options.quiet) {
       console.log('');
       console.log(pc.yellow('  Explanations need approval and this is not an interactive terminal.'));
-      console.log(pc.dim(`  Re-run with ${pc.cyan('--ai-yes')} to approve ${money(estimate.costUsd)} of ${backend.label} usage.`));
+      console.log(
+        pc.dim(
+          estimate.costUsd === null
+            ? `  ${backend.label} is billing per token here and App Atlas cannot estimate how much.` +
+                ` Re-run with ${pc.cyan('--ai-yes')} to approve it.`
+            : `  Re-run with ${pc.cyan('--ai-yes')} to approve ${money(estimate.costUsd)} of ${backend.label} usage.`,
+        ),
+      );
     }
     return false;
   }
@@ -151,7 +189,14 @@ async function askPermission(estimate: CostEstimate, options: WordsOptions): Pro
   console.log(`  this app that have no docstring of their own.`);
   console.log('');
   console.log(`    ${pc.bold(String(estimate.items))} things to describe, in ${estimate.requests} ${estimate.requests === 1 ? 'request' : 'requests'}`);
-  console.log(`    about ${pc.bold(compact(estimate.inputTokens + estimate.outputTokens))} tokens — ${pc.bold(money(estimate.costUsd))}, once`);
+  console.log(
+    // A CLI reclassified by its own priced probe (#111) bills per token and publishes no
+    // price list, so there is a token count and no dollar figure. Saying "roughly $0.00"
+    // there would be the one thing this prompt exists to prevent.
+    estimate.costUsd === null
+      ? `    about ${pc.bold(compact(estimate.inputTokens + estimate.outputTokens))} tokens — ${pc.bold('billed per token')}, once`
+      : `    about ${pc.bold(compact(estimate.inputTokens + estimate.outputTokens))} tokens — ${pc.bold(money(estimate.costUsd))}, once`,
+  );
   console.log('');
   console.log(pc.dim(`  Using ${backend.label}${backend.model ? ` (${backend.model})` : ''}.`));
   console.log(pc.dim('  Names, paths and exports are sent. File contents are not.'));

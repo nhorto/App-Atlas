@@ -468,6 +468,10 @@ function trigger(endpoint: AtlasNode): string {
       return `the schedule fires${meta.schedule ? ` (${meta.schedule})` : ''}`;
     case 'queue':
       return `a background job runs`;
+    case 'worker':
+      // The schedule is only ever one the code declared; without one, "with the app"
+      // is the whole truth — it starts when the app does and runs on its own.
+      return `${endpoint.name} runs${meta.schedule ? ` (${meta.schedule})` : ' with the app'}`;
     case 'realtime':
       return `a client subscribes to ${route}`;
     case 'cli':
@@ -506,6 +510,7 @@ const DOOR_NOUNS: Record<string, string> = {
   webhook: 'webhook',
   cron: 'scheduled job',
   queue: 'background worker',
+  worker: 'background service',
   realtime: 'realtime channel',
   cli: 'command',
   env: 'config source',

@@ -83,6 +83,10 @@ function isExported(node: AtlasNode): boolean {
   // FastAPI's template offered `randomEmail` and `findLastEmail` as part of its public
   // API; psf/requests offered its fixtures. Nobody's semver depends on those (#25).
   if (node.zone === 'test') return false;
+  // Nor is a name a code generator emitted. One 42,860-line `schema.gen.ts` supplied
+  // 1,895 of its package's 1,938 doors, burying the twenty-odd its authors actually
+  // committed to (#126). Semver does not bind what a generator will rewrite tomorrow.
+  if (node.meta.generated === true) return false;
   if (node.kind === 'function') {
     const meta = node.meta as unknown as FunctionMeta;
     return meta.isExported === true && meta.isMethod !== true;

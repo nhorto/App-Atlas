@@ -127,7 +127,7 @@ test('a chi service lists its doors at the addresses they answer at', () => {
 });
 
 test('the standard library alone is enough to find doors', () => {
-  assert.deepEqual(doors(std), ['ANY /debug/vars', 'GET /health', 'POST /widgets']);
+  assert.deepEqual(doors(std), ['ANY /admin/backup', 'ANY /debug/vars', 'GET /admin/audit', 'GET /health', 'POST /widgets']);
 });
 
 test('a method written inside the pattern is read out of it', () => {
@@ -419,4 +419,42 @@ test('an unedited Go file is not parsed twice', async () => {
   assert.equal(second.atlas.meta.incremental.analyzed, 0);
   assert.ok(second.atlas.meta.incremental.reused > 0);
   assert.deepEqual(doors(second.atlas), doors(atlas), 'and the answer is the same one');
+});
+
+// ---------------------------------------------------------------------------
+// A router that lives on a struct field (#129)
+// ---------------------------------------------------------------------------
+
+/**
+ * Found by pointing the published package at tailscale/setec, an unfamiliar repo and the
+ * Go tier's first real exercise. A secrets server whose whole purpose is eight `/api/*`
+ * routes reported **no HTTP doors at all** — every one of them is registered as
+ * `cfg.Mux.HandleFunc(…)`, and the receiver of that call is a struct field, so it matched
+ * neither the locals built in the file nor the parameters typed as routers.
+ *
+ * The same failure as #29 in a different language, on the kind of service where being
+ * told "nothing answers a URL" is most expensive.
+ */
+test('a mux carried on a config struct is still a mux', () => {
+  const admin = doors(std).filter((d) => d.includes('/admin/backup') || d.includes('/admin/audit'));
+  assert.deepEqual(admin.sort(), ['ANY /admin/backup', 'GET /admin/audit']);
+});
+
+test('and the door reads as the standard library, not as the type it was written as', () => {
+  const door = std.nodes.find((n) => n.kind === 'endpoint' && n.name === 'ANY /admin/backup');
+  assert.equal(door.meta.framework, 'net/http', 'the same name `http.HandleFunc` produces');
+});
+
+/**
+ * The rule stays "a router is known by its declared type", never by its name. The
+ * shortcut — accept any receiver ending in `.Mux` — would invent doors on any field
+ * somebody happened to call that, and this tier already tells the reader its links are
+ * likely rather than certain.
+ */
+test('a field that is not a router does not become one', () => {
+  assert.equal(
+    doors(std).some((d) => d.includes('/admin/prefix')),
+    false,
+    'AdminConfig.Prefix is a string and registers nothing',
+  );
 });

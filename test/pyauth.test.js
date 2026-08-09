@@ -29,7 +29,7 @@ const guardNames = (name) => (endpoint(name)?.meta.guards ?? []).map((g) => g.na
 
 test('the fixture parsed, so a silent failure cannot pass as a pass', () => {
   assert.deepEqual(atlas.meta.warnings, []);
-  assert.equal(atlas.nodes.filter((n) => n.kind === 'endpoint').length, 7);
+  assert.equal(atlas.nodes.filter((n) => n.kind === 'endpoint').length, 10);
 });
 
 test('a check is recognised by what it does, not by what it is called', () => {
@@ -103,4 +103,41 @@ test('a dependency the whole hierarchy shares is still not a lock', () => {
     .flatMap((n) => n.meta.guards ?? [])
     .map((g) => g.name);
   assert.ok(!everyGuard.some((name) => /fetch_tenant/.test(name)), everyGuard.join(' | '));
+});
+
+// ---------------------------------------------------------------------------
+// The lock written on the decorator (#136)
+// ---------------------------------------------------------------------------
+
+/**
+ * Found by running the published package over FastAPI's own full-stack template, which
+ * reported `11 of 23 routes have no auth check` when the true answer was 6. Five of the
+ * five wrong ones were administrator-only, guarded like this.
+ *
+ * A handler that never touches the user object takes no `CurrentUser` parameter, so the
+ * decorator is the *only* place its lock is written down — and nothing read it. The
+ * signature path and the `@login_required` path each covered half the idiom and left
+ * this between them.
+ */
+test('a dependency on the decorator is a lock, even with nothing in the signature', () => {
+  assert.deepEqual(guardNames('GET /summaries'), ['who_is_asking']);
+});
+
+test('…and stays one when a formatter wraps the decorator', () => {
+  // The first explanation for this bug was that layout mattered. It does not — the
+  // Python tier reads an AST — but the wrapped spelling is what a formatter produces
+  // for any decorator with three arguments, so it is the common case and it is pinned.
+  assert.deepEqual(guardNames('GET /exports'), ['who_is_asking']);
+});
+
+test('a decorator dependency that fetches is still not a check', () => {
+  // The discrimination this file exists for, arriving by a new route. `fetch_tenant`
+  // turns nobody away, so depending on it from the decorator is no more a lock than
+  // depending on it from the signature — which `GET /tenant` already proves.
+  assert.deepEqual(guardNames('GET /pings'), []);
+});
+
+test('the grade is likely, because the check is a fact about another function', () => {
+  const guard = endpoint('GET /summaries').meta.guards[0];
+  assert.equal(guard.confidence, 'likely', 'never certain: what makes it a lock lives elsewhere');
 });

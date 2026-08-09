@@ -32,12 +32,12 @@ Two rules keep it trustworthy:
 
 ## Status
 
-**Milestones M1–M5 are complete.** The CLI, the TypeScript/JavaScript analyzer, the
-Python, Go, C# and Rust analyzers, the atlas data model, incremental re-analysis, watch mode, the
-drill-down architecture map, the boundary view, the security badges, the plain-English
-explanations, the type explorer, guided walkthroughs, monorepo scopes and the
-`ATLAS.md` export all work on real repositories. See [the roadmap](#roadmap) and
-[SPEC.md](SPEC.md) for the full design.
+**Published, and milestones M1–M11 are complete.** The CLI, the TypeScript/JavaScript
+analyzer, the Python, Go, C# and Rust analyzers, the atlas data model, incremental
+re-analysis, watch mode, the drill-down architecture map, the boundary view, the
+security badges, the plain-English explanations, the type explorer, guided walkthroughs,
+monorepo scopes, the `ATLAS.md` export and the MCP server all work on real repositories.
+See [the roadmap](#roadmap) and [SPEC.md](SPEC.md) for the full design.
 
 ## Quick start
 
@@ -46,7 +46,7 @@ nothing to compile). Python projects also need **Python 3.9 or newer** on the ma
 — App Atlas reads Python with Python's own parser rather than guessing at the grammar.
 
 ```bash
-npx app-atlas .
+npx @app-atlas/cli .
 ```
 
 That is the whole install. The analyzer runs, writes the atlas into `.app-atlas/`
@@ -55,12 +55,16 @@ inside that project, and opens the map in your browser.
 It also takes a path, so you never have to leave the directory you are in:
 
 ```bash
-npx app-atlas ~/code/the-thing-my-agent-built
+npx @app-atlas/cli ~/code/the-thing-my-agent-built
 ```
 
-If you would rather have the command permanently, `npm install -g app-atlas` puts
-`app-atlas` on your `PATH`. To work on App Atlas itself, see
-[Development](#development).
+If you would rather have the command permanently, `npm install -g @app-atlas/cli` puts
+`app-atlas` — the short name, without the scope — on your `PATH`. To work on App Atlas
+itself, see [Development](#development).
+
+<sub>The package is published under a scope because npm reserves the unscoped
+`app-atlas` against an unrelated package called `appatlas`. The scope is only ever a
+download address: the command you type is `app-atlas`.</sub>
 
 ### Commands
 
@@ -316,7 +320,7 @@ directly.)
 *does the route I just wrote have an auth check?* — it can ask instead:
 
 ```bash
-claude mcp add app-atlas -- npx -y app-atlas mcp .
+claude mcp add app-atlas -- npx -y @app-atlas/cli mcp .
 ```
 
 `app-atlas mcp` is a Model Context Protocol server over stdin and stdout, so any MCP
@@ -325,12 +329,12 @@ client can start it. In an `.mcp.json`, `mcp.json` or Cursor's config:
 ```json
 {
   "mcpServers": {
-    "app-atlas": { "command": "npx", "args": ["-y", "app-atlas", "mcp", "."] }
+    "app-atlas": { "command": "npx", "args": ["-y", "@app-atlas/cli", "mcp", "."] }
   }
 }
 ```
 
-Six tools, over the same graph the screen draws:
+Seven tools, over the same graph the screen draws:
 
 | Tool | Answers |
 |---|---|
@@ -338,6 +342,7 @@ Six tools, over the same graph the screen draws:
 | `list_doors` | Every way in: routes, server actions, webhooks, crons, queues, exports, screens |
 | `what_calls` | Who reaches this function, type or file — the question you ask before changing it |
 | `where_is` | Where the thing with this name lives, and what it is for |
+| `unimported_files` | Which files nothing else imports — the abandoned drafts an agent left behind |
 | `data_stores` | Every database, bucket and cache, the tables, and what the migrations say guards their rows |
 | `env_vars` | Every environment variable the code reads, and whether anyone wrote it down |
 
@@ -661,13 +666,24 @@ CLI ──▶ Analyzer ──▶ Atlas model ──▶ Enricher ──▶ Local 
 | **M3** | Explanations — docstrings first, provider-agnostic AI for the gaps | ✅ done |
 | **M4** | Type explorer, guided walkthroughs, `ATLAS.md` export for coding agents | ✅ done |
 | **M5** | Incremental re-analysis, `--watch`, Python, monorepo scopes | ✅ done |
+| **M6** | Go, and the tree-sitter seam that makes the next language cheap | ✅ done |
+| **M7** | On npm, more Go shapes, filesystem-routed frameworks, run-to-run diffing | ✅ done |
+| **M8** | More doors — the entry points the analyzer could not see, or described wrongly | ✅ done |
+| **M9** | Rust, and the blank it left on a desktop app's map | ✅ done |
+| **M10** | The .NET tail: partial classes, minimal APIs, workers, `appsettings.json`, EF tables | ✅ done |
+| **M11** | The things a stranger meets first — six defects found by installing the tarball | ✅ done |
 
-After v1.0, in rough order of how useful they'd be: a "what changed" overlay that shows
-what your agent just did to the map, with the new routes glowing; cross-package tracing
-so a monorepo can follow a call from the web app through a shared package into the API;
-and more language plugins — the seam is proven now that Go, C# and Rust all go through it.
+Next, in rough order of how useful they'd be: a "what changed" overlay that shows what
+your agent just did to the map, with the new routes glowing; cross-package tracing so a
+monorepo can follow a call from the web app through a shared package into the API; and
+more language plugins — the seam is proven now that Go, C# and Rust all go through it.
 (The MCP server that used to head this list shipped — see
 [Or let it ask questions](#or-let-it-ask-questions).)
+
+Two larger ideas are deliberately **not** scheduled, and
+[docs/DIRECTION.md](docs/DIRECTION.md) explains what would have to happen first:
+teaching App Atlas your own conventions with a config, and authoring a skeleton of an
+app before the code exists so the map can check what got built against what you meant.
 
 ## Development
 

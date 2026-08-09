@@ -129,6 +129,20 @@
   name: (_) @call.fn
   (attribute_argument_list)? @call.args) @call
 
+; A constructor is a call whose callee is the type: `new PeriodicTimer(…)` is where a
+; worker declares its interval, and `new Uri("https://…")` is where a typed client
+; declares its base address. Without this pattern neither exists to any detector.
+(object_creation_expression
+  type: (_) @call.fn
+  arguments: (argument_list) @call.args) @call
+
+; An indexer, read as a call on what it indexes. `builder.Configuration["Stripe:Key"]`
+; is how most .NET configuration is actually read, and it is the one read shape with no
+; invocation in it anywhere.
+(element_access_expression
+  [(member_access_expression) (identifier)] @call.fn
+  (bracketed_argument_list) @call.args) @call
+
 ; --- names bound to values -------------------------------------------------
 ; `var app = builder.Build();` is the only record that `app` is a web application, and
 ; every route mapped on it afterwards says only `app`.

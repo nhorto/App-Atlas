@@ -32,6 +32,7 @@ import { declaredEntryFor, frameworkOwnerOf } from './owned.js';
 import { buildSchemaNodes, buildSqlSchemaNodes } from './schema.js';
 import type { FileSlice, LanguagePlugin } from './plugin.js';
 import { discoverProject } from './project.js';
+import { markGeneratedFiles } from './generated.js';
 import { markRetiredFiles } from './retired.js';
 import { buildMarkupNodes, readMarkupFiles } from './markup.js';
 import type { ProjectInfo } from './project.js';
@@ -83,8 +84,26 @@ import { dominantZone } from './zones.js';
  * unchanged; its cache is discarded anyway, because the version is part of the
  * fingerprint and a fingerprint that special-cased "probably unaffected" would be a
  * cache that can lie.
+ *
+ * 0.20.0 is the ordinary case three times over, and the first one where the old answers
+ * were not merely thinner but wrong. A Stripe webhook verified with `constructEventAsync`
+ * now reads as checked rather than as a data-writing door nobody guards; a Cloudflare
+ * entry a build wrote is set aside from the auth count instead of inflating it; and the
+ * exports of a generated file stop being doors. Every one of those changes what a cached
+ * finding *means*, so a 0.19.0 cache is not stale here — it holds the wrong verdict about
+ * somebody's payment endpoint, and would keep holding it until this number moved.
+ *
+ * 0.21.0 is 0.20.0's case again, and the two halves show why this number is not
+ * bookkeeping. A Go service whose router is a struct field went from zero routes to ten,
+ * so a 0.20.0 cache holds an *absence* that was never true; and `[Authorize]` written on
+ * a minimal-API lambda is now a guard, so a cache from before it holds three
+ * administrator-only write routes recorded as doors nobody checks. Both are the analyzer
+ * having learned to read a shape, which is exactly the case the paragraph at the top of
+ * this comment is about. The third change — an unreadable *test* file no longer hedging
+ * the auth sentence — touches no cached finding at all, and would not have moved this on
+ * its own.
  */
-export const TOOL_VERSION = '0.18.0';
+export const TOOL_VERSION = '0.21.0';
 
 export interface AnalyzeOptions {
   maxFiles?: number;
@@ -232,6 +251,12 @@ export async function analyzeProject(rootDir: string, options: AnalyzeOptions = 
   // "DEPRECATED — do not run as part of the pipeline" is not part of it (#87). Marked
   // in place: dropping it would hide a backstop somebody still runs by hand.
   const retiredCount = markRetiredFiles(nodes);
+
+  // --- code a generator wrote ---
+  // Beside the pass above and for the same reason: this is a fact about a file that
+  // every later answer depends on, and it must be settled before the boundary is built,
+  // because an exported name in a generated file is not a commitment anybody made (#126).
+  const generatedFiles = markGeneratedFiles(nodes).files;
 
   // --- the database schema ---
   // Read before the containment tree is built, because the schema file has to be in
@@ -594,12 +619,15 @@ export function computeStats(nodes: AtlasNode[], edges: AtlasEdge[]): AtlasStats
   let modules = 0;
   let linesOfCode = 0;
   let documentedFiles = 0;
+  let generatedFiles = 0;
   let documentedFunctions = 0;
   let aiSummaries = 0;
   let aiFiles = 0;
   let endpoints = 0;
   let routes = 0;
+  let likelyOnlyRoutes = 0;
   let unreadFiles = 0;
+  let unreadTestFiles = 0;
   let services = 0;
   let externalServices = 0;
   let stores = 0;
@@ -611,7 +639,19 @@ export function computeStats(nodes: AtlasNode[], edges: AtlasEdge[]): AtlasStats
       case 'file':
         files++;
         linesOfCode += Number(node.meta.loc ?? 0);
-        if (node.meta.unread) unreadFiles++;
+        if (node.meta.unread) {
+          unreadFiles++;
+          // Counted apart so the auth headline can leave it out (#132). bat's
+          // `tests/syntax-tests/highlighted/Python/battest.py` is a syntax-highlighting
+          // fixture full of ANSI escapes: refusing to parse it is right, and hedging the
+          // auth claim with it is not, because no production route's guard is declared
+          // in one. Still reported, still counted here — only the hedge changes.
+          if (node.zone === 'test') unreadTestFiles++;
+        }
+        // Counted apart, not skipped: a generated file is still a file on the map, and
+        // still lines of code somebody's build produces. What it is not is a file
+        // anybody can be asked to document (#126).
+        if (node.meta.generated) generatedFiles++;
         if (node.summarySource === 'docs') documentedFiles++;
         else if (node.summarySource === 'ai') aiFiles++;
         break;
@@ -629,7 +669,13 @@ export function computeStats(nodes: AtlasNode[], edges: AtlasEdge[]): AtlasStats
         endpoints++;
         const meta = node.meta as unknown as EndpointMeta;
         if (meta.endpointKind === 'env') envVars += meta.vars?.length ?? 0;
-        if (isAuthRelevant(meta)) routes++;
+        if (isAuthRelevant(meta)) {
+          routes++;
+          // A door with guards, none of which the analyzer could prove. Counted here so
+          // the headline can carry the grade its cards already carry (#116).
+          const guards = meta.guards ?? [];
+          if (guards.length > 0 && guards.every((guard) => guard.confidence !== 'certain')) likelyOnlyRoutes++;
+        }
         break;
       }
       case 'service':
@@ -665,6 +711,7 @@ export function computeStats(nodes: AtlasNode[], edges: AtlasEdge[]): AtlasStats
     references,
     linesOfCode,
     documentedFiles,
+    generatedFiles,
     documentedFunctions,
     staleDocs: countStaleDocs(nodes),
     aiSummaries,
@@ -672,9 +719,11 @@ export function computeStats(nodes: AtlasNode[], edges: AtlasEdge[]): AtlasStats
     endpoints,
     routes,
     unprotectedRoutes: open.worthALook,
-    publicRoutes: open.page + open.authMount,
+    likelyOnlyRoutes,
+    publicRoutes: open.page + open.authMount + open.generated,
     unreadableRoutes: open.unreadable,
     unreadFiles,
+    unreadTestFiles,
     services,
     externalServices,
     stores,

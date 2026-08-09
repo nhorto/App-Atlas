@@ -21,7 +21,7 @@ import assert from 'node:assert/strict';
 import path from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
-import { analyzeProject, AtlasGraph, grammarTier } from '../dist/node/index.js';
+import { analyzeProject, AtlasGraph, findScopes, grammarTier } from '../dist/node/index.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const result = await analyzeProject(path.join(here, 'fixtures', 'csharpapi'), {
@@ -112,12 +112,19 @@ test('a group prefix composes, and a chained RequireAuthorization locks', () => 
 
 test('the door count is the whole list and nothing else', () => {
   assert.deepEqual(doors.map((door) => door.name), [
+    'DELETE /api/catalog-items/{id}',
+    'GET /api/catalog-items',
     'GET /api/kiosk/ping',
+    'GET /api/kiosk/roster',
     'GET /api/kiosk/today',
     'GET /api/v1/orders/{id:int}',
     'GET /api/v1/orders/public-status',
     'GET /health',
     'POST /admin/reindex',
+    'POST /api/auth/login',
+    'POST /api/auth/logout',
+    'POST /api/auth/setup',
+    'POST /api/catalog-items',
     'POST /api/kiosk/shift/end',
     'POST /api/kiosk/shift/start',
     'POST /api/v1/orders',
@@ -157,6 +164,109 @@ test('a hop-found lock is likely, never certain', () => {
   const guard = doors.find((d) => d.name === 'GET /api/kiosk/today').meta.guards[0];
   assert.equal(guard.confidence, 'likely');
   assert.equal(guard.provider, 'custom');
+});
+
+// ---------------------------------------------------------------------------
+// A door points at the code that answers it (#99)
+// ---------------------------------------------------------------------------
+
+const handlerOf = (doorName) => {
+  const door = doors.find((d) => d.name === doorName);
+  const edge = result.atlas.edges.find((e) => e.kind === 'exposed-by' && e.fromId === door.id);
+  return edge ? nodes.find((n) => n.id === edge.toId) : undefined;
+};
+
+test('an inline handler gets a node named after its door', () => {
+  // The lambda is a real unit of code with a real range; what it lacked was a node.
+  // Before this, every minimal-API route in a file pointed at the one method that
+  // registered them all — clicking a door landed on the registration, not the answer.
+  const handler = handlerOf('GET /health');
+  assert.equal(handler?.name, 'GET /health handler');
+  assert.equal(handler.meta.synthesized, 'route-handler', 'and it says the source never named it');
+});
+
+test('two doors registered side by side get two handlers, not one', () => {
+  // #23's guard walk starts at the handler, so twenty routes sharing one handler node
+  // means a check reachable from any of them looks reachable from all of them.
+  const start = handlerOf('POST /api/kiosk/shift/start');
+  const end = handlerOf('POST /api/kiosk/shift/end');
+  assert.ok(start && end);
+  assert.notEqual(start.id, end.id);
+});
+
+test('a one-liner delegating to a real method points at the method', () => {
+  // `app.MapGet("/api/kiosk/roster", Roster)` — the handler is a definition, so
+  // nothing is synthesized and the door lands on the eight lines that answer it.
+  const handler = handlerOf('GET /api/kiosk/roster');
+  assert.equal(handler?.name, 'Roster');
+  assert.equal(handler.meta.synthesized, undefined);
+});
+
+// ---------------------------------------------------------------------------
+// The door people sign in through (#102)
+// ---------------------------------------------------------------------------
+
+test('a route whose handler issues the session is public by design, and says why', () => {
+  // `HttpContext.SignInAsync(…)` inside the handler is the evidence — #40's rule, in
+  // .NET. A door that hands out sessions cannot require one, and before this it sat on
+  // the worry list as an unexplained open door.
+  const login = doors.find((d) => d.name === 'POST /api/auth/login');
+  assert.equal(login.meta.signInCall?.what, 'sign-in');
+  assert.equal(login.meta.open?.kind, 'auth-mount');
+  assert.match(login.meta.open?.because ?? '', /ASP\.NET Core/);
+});
+
+test('sign-out is the same fact in the other direction', () => {
+  const logout = doors.find((d) => d.name === 'POST /api/auth/logout');
+  assert.equal(logout.meta.signInCall?.what, 'sign-out');
+});
+
+test('nothing is excused by its address', () => {
+  // `POST /api/auth/setup` lives under `/api/auth/` and hands out no session. It is a
+  // deliberate first-run hole and a reader deserves to see it — the trap #71 documents
+  // is a rule that silences a door because of its name.
+  const setup = doors.find((d) => d.name === 'POST /api/auth/setup');
+  assert.equal(setup.meta.signInCall, undefined);
+  assert.equal(setup.meta.open?.kind, 'worth-a-look');
+});
+
+// ---------------------------------------------------------------------------
+// Code that runs without anybody knocking (#100)
+// ---------------------------------------------------------------------------
+
+const workers = nodes.filter((node) => node.kind === 'endpoint' && node.meta.endpointKind === 'worker');
+
+test('a hosted service is a door, named once from two declarations', () => {
+  // `class SyncWorker : BackgroundService` in one file, `AddHostedService<SyncWorker>()`
+  // in another. Either alone is enough to say it runs; together they are one door that
+  // names the type and the place it was wired in — not two.
+  assert.equal(workers.length, 1, workers.map((w) => w.name).join(', '));
+  assert.equal(workers[0].name, 'SyncWorker');
+  assert.equal(workers[0].meta.framework, '.NET Generic Host');
+  const sites = workers[0].meta.sites.map((s) => s.path).sort();
+  assert.deepEqual(sites, ['src/Shop.Api/Program.cs', 'src/Shop.Api/Services/SyncWorker.cs']);
+});
+
+test('the interval it declared is read; one it did not would not be', () => {
+  // `new PeriodicTimer(TimeSpan.FromMinutes(5))` is a literal, so saying "every 5
+  // minutes" is reading, not inventing. A worker whose interval is configuration gets
+  // no schedule at all, because "runs continuously" is true and a number would be made up.
+  assert.equal(workers[0].meta.schedule, 'every 5 minutes');
+});
+
+test('its handler is ExecuteAsync, so its database calls hang off the door', () => {
+  const handler = nodes.find((node) => node.name === 'ExecuteAsync' && node.meta.ownerName === 'SyncWorker');
+  assert.ok(handler, 'the override exists as a node');
+  const answers = result.atlas.edges.filter((edge) => edge.fromId === workers[0].id && edge.toId === handler.id);
+  assert.equal(answers.length, 1, 'the door points at the method the framework calls');
+});
+
+test('a worker never enters the auth count', () => {
+  // A stranger cannot knock on it. The one number people act on must not be inflated
+  // by a door that was never reachable — the same rule crons and queues already follow.
+  assert.equal(workers[0].meta.open, undefined, 'no open-door verdict is ever written on it');
+  const doorNames = doors.map((d) => d.name);
+  assert.ok(!doorNames.includes('SyncWorker'), 'and it is not filed with the HTTP routes');
 });
 
 // ---------------------------------------------------------------------------
@@ -215,6 +325,18 @@ test('Dapper names its table out of the SQL', () => {
   assert.equal(dapper.meta.reads, 1);
 });
 
+test('a query names its table when the DbContext is in another file (#104)', () => {
+  // `_db.Orders.FirstOrDefaultAsync(…)` and `_db.Orders.Add(…)` in the controller,
+  // `_db.Orders.Where(…).ToListAsync(…)` in the worker — every DbSet lives in
+  // Data/ShopContext.cs, so no single file can name the table. The declaration file
+  // says "these names are tables", the query file carries its receiver, and the two
+  // meet once every file has been read. Before this, the reads were counted with no
+  // table and the `Add` was not counted at all.
+  const ef = stores.find((store) => store.meta.client === 'Entity Framework Core');
+  assert.equal(ef.meta.reads, 3, 'FirstOrDefaultAsync, Where, ToListAsync');
+  assert.equal(ef.meta.writes, 3, 'Orders.Add, and SaveChangesAsync twice');
+});
+
 test('LINQ over a list is not a database', () => {
   // `_skus.Where(…).Select(…)`, `_skus.Count()`, `_skus.Add(sku)` in Reporting.cs. Every
   // one of those method names is also Entity Framework's, which is why they only count
@@ -262,6 +384,8 @@ test('a using plus a name this file actually mentions is a link', () => {
     'src/Shop.Api/Controllers/OrdersController.cs -> src/Shop.Api/Data/ShopContext.cs',
     'src/Shop.Api/Program.cs -> src/Shop.Api/Auth.cs',
     'src/Shop.Api/Program.cs -> src/Shop.Api/Data/ShopContext.cs',
+    'src/Shop.Api/Program.cs -> src/Shop.Api/Services/SyncWorker.cs',
+    'src/Shop.Api/Services/SyncWorker.cs -> src/Shop.Api/Data/ShopContext.cs',
   ]);
 });
 
@@ -286,6 +410,69 @@ test('a namespace link is likely, because a name matched a name', () => {
 test('where to look first has something to say', () => {
   const start = new AtlasGraph(result.atlas).getOverview().whereToLookFirst;
   assert.ok(start.length > 0, 'a C# project with links in it can be ranked');
+});
+
+// ---------------------------------------------------------------------------
+// Configuration is in appsettings.json, and now the map reads it (#101)
+// ---------------------------------------------------------------------------
+
+test('the keys the app reads are reported, whatever provider answers them', () => {
+  // The old rule read only `GetEnvironmentVariable`, deliberately — and showed a
+  // configuration surface of three on an app with far more than three settings. The
+  // question on the screen is *what does this app need configured*; where the value
+  // comes from is a deployment question, and it travels on the row instead.
+  const env = nodes.find((node) => node.kind === 'endpoint' && node.meta.endpointKind === 'env');
+  const names = env.meta.vars.map((v) => v.name);
+  for (const key of ['Stripe:Key', 'ConnectionStrings:Shop', 'PowerFab', 'Vendor:ApiToken']) {
+    assert.ok(names.includes(key), `${key} missing from ${names.join(', ')}`);
+  }
+  // …and every one of them is marked as configuration, never as an environment
+  // variable no deployment has ever set — the part of the old rule that was right.
+  for (const key of ['Stripe:Key', 'ConnectionStrings:Shop', 'PowerFab', 'Vendor:ApiToken']) {
+    assert.equal(env.meta.vars.find((v) => v.name === key).config, true);
+  }
+});
+
+test('documented means present in appsettings.json, and the missing key is the finding', () => {
+  const env = nodes.find((node) => node.kind === 'endpoint' && node.meta.endpointKind === 'env');
+  const byName = (name) => env.meta.vars.find((v) => v.name === name);
+  assert.equal(byName('Stripe:Key').documented, true);
+  assert.equal(byName('PowerFab').documented, true);
+  // Read by the code, absent from every settings file — the same distinction
+  // `.env.example` draws for the JavaScript side, and the row a reader acts on.
+  assert.equal(byName('Vendor:ApiToken').documented, false);
+  assert.match(env.meta.envExample, /appsettings\.json/, 'the file it was checked against is named');
+});
+
+test('a connection string is a credential by construction', () => {
+  const env = nodes.find((node) => node.kind === 'endpoint' && node.meta.endpointKind === 'env');
+  const conn = env.meta.vars.find((v) => v.name === 'ConnectionStrings:Shop');
+  assert.equal(conn.secret, true, 'no word in the name matches the secret pattern, and it must not need to');
+});
+
+// ---------------------------------------------------------------------------
+// A solution is a monorepo (#98)
+// ---------------------------------------------------------------------------
+
+const slnScopes = await findScopes(path.join(here, 'fixtures', 'csharpsln'));
+
+test('every project in a .sln is a scope, and the service leads', () => {
+  // The split *is* the architecture — Api → Core, arrows one way, enforced by the
+  // compiler — and flattened into one map that is the one thing you cannot see. It
+  // also mixes archetypes: one merged map had to pick a single verdict for a service,
+  // a CLI and a library, and whichever it picked was wrong for the other two.
+  assert.deepEqual(
+    slnScopes.map((s) => `${s.name} (${s.kind})`),
+    ['Fab.Api (app)', 'Fab.Cli (app)', 'Fab.Core (library)'],
+  );
+  assert.equal(slnScopes[0].dir, 'src/Fab.Api', 'the web service is what somebody calls the project');
+});
+
+test('a single-project repo does not gain a switcher it has no use for', async () => {
+  // Shop.sln declares one project; the console fixture has one .csproj at the root.
+  // "No scopes" and "one scope" mean the same thing everywhere: analyze the root.
+  assert.deepEqual(await findScopes(path.join(here, 'fixtures', 'csharpapi')), []);
+  assert.deepEqual(await findScopes(path.join(here, 'fixtures', 'csharpconsole')), []);
 });
 
 // ---------------------------------------------------------------------------
@@ -316,4 +503,37 @@ test('the map has the shape of the code', () => {
     assert.ok(types.some((type) => type.name === expected), `${expected} is missing`);
   }
   assert.ok(graph.getOverview().app, 'and the app node exists');
+});
+
+// ---------------------------------------------------------------------------
+// `[Authorize]` written on the lambda (#131)
+// ---------------------------------------------------------------------------
+
+/**
+ * Found on Microsoft's own eShopOnWeb, which reported `7 of 7 routes unprotected`. Three
+ * of those seven are administrator-only, and all three write data — the tool's most
+ * alarming sentence, aimed at the three rows that would have mattered most.
+ *
+ * `attributesByScope` groups attributes by enclosing definition, and that is no help
+ * here: the guarded registration and a genuinely public one sit side by side inside the
+ * same method. Attaching by scope would have badged the public route as protected, which
+ * is the single direction this tool must never be wrong in. Containment is what tells
+ * them apart.
+ */
+test('an attribute on the lambda guards that route and not its neighbour', () => {
+  assert.deepEqual(guardsOf('POST /api/catalog-items'), ['[Authorize] on the handler']);
+  assert.deepEqual(guardsOf('GET /api/catalog-items'), [], 'same scope, same method, no attribute of its own');
+});
+
+test('the guard is certain, because the framework runs it', () => {
+  const guard = doors.find((d) => d.name === 'POST /api/catalog-items').meta.guards[0];
+  assert.equal(guard.confidence, 'certain');
+  assert.equal(guard.how, 'decorator');
+  assert.equal(guard.provider, 'ASP.NET Core');
+});
+
+test('an opt-out in the same position still beats it', () => {
+  // `[AllowAnonymous]` is not the absence of `[Authorize]`, it overrides one — the rule
+  // this file already applies to controllers, applied where the attribute now also lands.
+  assert.deepEqual(guardsOf('DELETE /api/catalog-items/{id}'), []);
 });
