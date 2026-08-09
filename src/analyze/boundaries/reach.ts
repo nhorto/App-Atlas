@@ -88,6 +88,13 @@ export function reachableGuards(
       for (const id of frontier) {
         const via = trail.get(id) ?? [];
         for (const caller of callers.get(id) ?? []) {
+          // For a guard found at its *definition*, a `file:` mention is an import, and
+          // an import is not a call — it is what deleted wiring leaves behind, so
+          // walking through it would keep a door "protected" after somebody removed
+          // the check from in front of it (see GuardFinding.definitionSite). A guard
+          // found at a call site keeps the hop: `export const GET = withTeam(…)` wires
+          // its check at module scope, and that reference dies with the wiring.
+          if (finding.definitionSite && !caller.startsWith('func:')) continue;
           if (seen.has(caller)) continue;
           seen.add(caller);
           if (seen.size > MAX_REACHED) break;
@@ -113,9 +120,12 @@ export function reachableGuards(
  * reader looking for a `getServerSession` that is nowhere in their route file.
  */
 export function guardThroughHops(reached: ReachedGuard): GuardInfo {
+  // A function-refusal guard is named after the function that holds it, so the last
+  // hop and the check share a name — `revalidate → revalidate` says one thing twice.
+  const chain = [...reached.via, reached.guard.name].filter((name, i, all) => name !== all[i - 1]);
   return {
     ...reached.guard,
-    name: [...reached.via, reached.guard.name].join(' → '),
+    name: chain.join(' → '),
     // Never `certain`. The reference graph proves the handler mentions the helper,
     // not that every path through the handler runs it.
     confidence: 'likely',
