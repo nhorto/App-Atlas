@@ -583,12 +583,55 @@ function stampSignInCalls(
   }
   if (byHandler.size === 0) return;
 
+  // The mint is rarely in the handler the router named. Gin's realworld app signs a
+  // caller in as `UsersLogin → Response → GenToken`, and only the last of the three
+  // touches the JWT library (#147) — so the sign-in call is followed *up* the
+  // project's own reference graph, two hops and no further. Two is what the observed
+  // shape needs; every hop past that is another chance to call a dashboard that merely
+  // renders a token issuer "the door people sign in through".
+  const refs = new Map<string, string[]>();
+  for (const edge of edges) {
+    if (edge.kind !== 'references') continue;
+    if (byId.get(edge.fromId)?.kind !== 'function' || byId.get(edge.toId)?.kind !== 'function') continue;
+    const list = refs.get(edge.fromId);
+    if (list) list.push(edge.toId);
+    else refs.set(edge.fromId, [edge.toId]);
+  }
+  const reaches = (handlerId: string): SignInCall | null => {
+    const direct = byHandler.get(handlerId);
+    if (direct) return direct;
+    for (const helper of refs.get(handlerId) ?? []) {
+      const oneHop = byHandler.get(helper);
+      if (oneHop) return oneHop;
+      for (const helpersHelper of refs.get(helper) ?? []) {
+        const twoHops = byHandler.get(helpersHelper);
+        if (twoHops) return twoHops;
+      }
+    }
+    return null;
+  };
+
   for (const edge of edges) {
     if (edge.kind !== 'exposed-by') continue;
-    const call = byHandler.get(edge.toId);
+    const call = reaches(edge.toId);
     if (!call) continue;
     const door = byId.get(edge.fromId);
-    if (door?.kind === 'endpoint') (door.meta as unknown as EndpointMeta).signInCall = call;
+    if (door?.kind !== 'endpoint') continue;
+    const meta = door.meta as unknown as EndpointMeta;
+    meta.signInCall = call;
+
+    // The mint outranks the rejection reading. A login handler answers a wrong
+    // password with a 401, and the behavioural guard rule — a function that turns
+    // callers away is a check — read that as the handler guarding itself (#147). Both
+    // readings are honest on their own; together, "issues the credential" is the one
+    // that explains the 401. Only the guard manufactured from this handler's own body
+    // is dropped — its name is the handler's name and its evidence is a call — and a
+    // real check wired in front of the door (middleware, a router's own guard) stays
+    // exactly where somebody put it.
+    const handler = byId.get(edge.toId);
+    if (handler) {
+      meta.guards = meta.guards.filter((guard) => !(guard.how === 'call' && guard.name === handler.name));
+    }
   }
 }
 

@@ -151,9 +151,64 @@ export function detectGoBoundaries(input: BoundaryInput): BoundaryFinding[] {
   detectEnv(file, imports, findings, at);
   detectStores(file, importsModule, findings, at);
   detectOutbound(file, imports, findings, at);
+  detectSignInCalls(input, importsModule, findings, at);
 
   void site;
   return findings;
+}
+
+// ---------------------------------------------------------------------------
+// Sign-in: the calls that hand a credential out
+// ---------------------------------------------------------------------------
+
+/**
+ * The calls that issue or verify a credential — #40's rule reaching Go, by way of the
+ * C# tier's `SIGN_IN_CALLS`: a door whose handler hands the session out cannot demand
+ * one first, and without this finding a login route is indistinguishable from a route
+ * somebody forgot to lock. Worse than indistinguishable, here (#147): Gin's login
+ * answers a wrong password with a 401, the rejection reading turned that into a check,
+ * and the one route in any application that cannot require a caller to be signed in
+ * read as *guarded* — by itself.
+ *
+ * A closed list of the libraries' own methods, not a pattern, and emphatically not the
+ * name `login` — which would miss `authenticate` and excuse anything somebody happened
+ * to call `LoginPage`. `SignedString` exists to mint a token and for no other reason;
+ * `CompareHashAndPassword` is the bcrypt password check, and a handler verifying a
+ * password is authenticating whoever knocked. Each is gated on its own library's
+ * import in the file where the call sits, so a project helper that happens to share a
+ * name proves nothing.
+ *
+ * A hand-rolled scheme gets nothing from this table — the C# docstring's honest limit,
+ * unchanged. What Go adds is distance: the mint is usually two calls away from the
+ * route (`UsersLogin → Response → GenToken`), inside the project's own helper, so the
+ * finding lands on the function that *contains* the call and the merge walks the
+ * reference graph from the handler — see `stampSignInCalls`.
+ */
+const SIGN_IN_CALLS: { method: string; module: string; provider: string }[] = [
+  { method: 'SignedString', module: 'github.com/golang-jwt/jwt', provider: 'JWT' },
+  { method: 'SignedString', module: 'github.com/dgrijalva/jwt-go', provider: 'JWT' },
+  { method: 'CompareHashAndPassword', module: 'golang.org/x/crypto/bcrypt', provider: 'bcrypt' },
+];
+
+function detectSignInCalls(
+  input: BoundaryInput,
+  importsModule: (prefix: string) => boolean,
+  findings: BoundaryFinding[],
+  at: (call: GCall, snippet?: string) => CodeSite,
+): void {
+  for (const call of input.file.calls) {
+    if (!call.method || !call.receiver || !call.scope) continue;
+    const entry = SIGN_IN_CALLS.find((c) => c.method === call.method && importsModule(c.module));
+    if (!entry) continue;
+    findings.push({
+      type: 'sign-in-call',
+      provider: entry.provider,
+      what: 'sign-in',
+      call: `${call.callee}(…)`,
+      nodeId: input.nodeIdForScope(call.scope),
+      site: at(call, `${call.callee}(…)`),
+    });
+  }
 }
 
 // ---------------------------------------------------------------------------
