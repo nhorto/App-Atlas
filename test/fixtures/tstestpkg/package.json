@@ -1,0 +1,8 @@
+{
+  "name": "tstestpkg",
+  "main": "index.js",
+  "devDependencies": {
+    "@playwright/test": "^1.40.0",
+    "vitest": "^1.0.0"
+  }
+}

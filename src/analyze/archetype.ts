@@ -175,6 +175,21 @@ export function classifyArchetype({ project, nodes }: ArchetypeInput): Archetype
     return verdict('pipeline', 'Something you run', because);
   }
 
+  // A test suite exports helpers to its own specs, not an API (#174). immich-e2e — 80
+  // files of Playwright and vitest — took the library branch below and published 72 of
+  // its fixture generators as "ways in" on the workspace summary, a number that spends
+  // the credibility the real ones need. The evidence is the manifest, read the way the
+  // SPA rule above reads it, and all three facts are required because each alone
+  // describes real packages: no runtime dependencies (everything it needs is dev), a
+  // test runner among what it does need, and no entry point that exists — immich-e2e's
+  // `main: index.js` names a file the package does not contain, and an entry point
+  // that is not there declares nothing.
+  if (exported > 0 && isTestSuite(project)) {
+    because.push('no runtime dependencies, and a test runner among the dev ones');
+    because.push('no entry point another package could import');
+    return verdict('unknown', 'A test suite', because);
+  }
+
   if (exported > 0) {
     // Files, not names — `countExports` counts modules on purpose, and "28 exported
     // names" sat one line under a headline reading "118 names in its public API".
@@ -191,6 +206,27 @@ export function classifyArchetype({ project, nodes }: ArchetypeInput): Archetype
   if (project.files.length > 0) because.push(plural(project.files.length, 'source file'));
   because.push('no doors and nothing exported');
   return verdict('unknown', 'A collection of code', because);
+}
+
+/** The runners whose presence in devDependencies is the point of a test package. */
+const TEST_RUNNERS = ['@playwright/test', 'vitest', 'jest', 'cypress', 'mocha', 'ava', 'tap', 'karma'];
+
+/** See the call site — all three facts, because each alone describes real packages. */
+function isTestSuite(project: ProjectInfo): boolean {
+  const manifest = project.packageJson;
+  if (!manifest) return false;
+  const deps = Object.keys((manifest.dependencies as Record<string, unknown> | undefined) ?? {});
+  if (deps.length > 0) return false;
+  const devDeps = Object.keys((manifest.devDependencies as Record<string, unknown> | undefined) ?? {});
+  if (!devDeps.some((name) => TEST_RUNNERS.includes(name))) return false;
+
+  // `exports` and `bin` can be objects with many shapes; their presence is a claim in
+  // itself and enough to disqualify. `main` is a single path — cheap to hold to its
+  // word: an npm-init default pointing at nothing is not an entry point.
+  if (manifest.exports !== undefined || manifest.bin !== undefined || manifest.types !== undefined) return false;
+  const main = typeof manifest.main === 'string' ? manifest.main.replace(/^\.\//, '') : null;
+  if (main && project.files.some((file) => file.relPath === main)) return false;
+  return true;
 }
 
 interface DoorCounts {
