@@ -117,8 +117,19 @@ import { dominantZone } from './zones.js';
  * cache was cleared — and it answered with the verdict of an analyzer that could not yet
  * read `dependencies=[Depends(...)]`. That is this comment's first paragraph happening in
  * front of us, and it is what the number moving prevents for everybody else.
+ *
+ * 0.23.0 moves it for twelve fixes whose common property is that a cached finding is
+ * not merely thinner but *inverted*. Four of them ended false greens — a lock worn by a
+ * door it was never written on, through a colliding key (#151, #153, #159, #160) or a
+ * namesake's alias (#162) — and a cache holding one of those holds "protected" about a
+ * route nobody checks. Two more changed which doors exist at all: Gin repos gained a
+ * door per registration where six fragments stood for twelve (#151), and login routes
+ * moved from "guarded by themselves" to the sign-in shelf (#147). A commerce-style
+ * secret check went from invisible to a likely guard (#155), and a guard that permits
+ * everything went from lock to declared-public (#152). Old caches answer every one of
+ * those questions with the wrong side of the trade this tool exists to get right.
  */
-export const TOOL_VERSION = '0.22.0';
+export const TOOL_VERSION = '0.23.0';
 
 export interface AnalyzeOptions {
   maxFiles?: number;
