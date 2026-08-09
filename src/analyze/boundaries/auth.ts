@@ -15,11 +15,11 @@
  * from the call rather than from anybody's choice of function name.
  */
 import { Node } from 'ts-morph';
-import type { CallExpression, ClassDeclaration, SourceFile } from 'ts-morph';
+import type { CallExpression, ClassDeclaration, ObjectLiteralExpression, SourceFile } from 'ts-morph';
 import type { GuardInfo } from '../../model/types.js';
 import { authEntryForCall, authProviderForPackage } from './catalog.js';
 import type { AuthEntryPoint } from './catalog.js';
-import { argAt, dottedName, literalString, looksLikeRouter, objectProp, stringArray } from './ast.js';
+import { argAt, dottedName, literalString, looksLikeRouter, objectProp, permitsEverything, stringArray } from './ast.js';
 import type { BoundaryDetector, DetectorContext } from './types.js';
 
 /** Function names that exist to answer "is this person allowed in?". */
@@ -288,8 +288,62 @@ export const wiredGuardDetector: BoundaryDetector = {
   visit(node, ctx) {
     if (Node.isClassDeclaration(node)) checkerClass(node, ctx);
     else if (Node.isCallExpression(node)) moduleMiddleware(node, ctx);
+    else if (Node.isObjectLiteralExpression(node)) globalGuard(node, ctx);
   },
 };
+
+/**
+ * `{ provide: APP_GUARD, useClass: AuthGuard }` — the guard the whole application
+ * stands behind, wired in one line no controller imports (#172).
+ *
+ * This is Nest's own way of saying "every route, unless it opts out": a guard provided
+ * under the `APP_GUARD` token runs for the entire application, whichever module
+ * declares it. immich locks all 270 of its routes this way — the per-route
+ * `@Authenticated()` decorators set metadata the global `AuthGuard` *reads*, and apply
+ * no guard of their own — so a reader that only knows `@UseGuards` reported the most
+ * methodically guarded server this dogfooding effort has met as `269 of 270 routes
+ * unprotected`. The largest false alarm to date, and #116's warning at 25× the scale
+ * it was written for.
+ *
+ * A catch-all matcher at `likely`, because "wired in a module, reaches everything" is
+ * exactly what that grade means — the wiring proves reach, and the class body proves it
+ * decides something (the #152 rule keeps an always-true sentinel from counting; a class
+ * we cannot resolve stays a guard, same direction as there). Which individual routes
+ * opt out via metadata (`@Authenticated({ public: true })`) is a custom decorator's
+ * runtime contract and is not claimed: blanket-likely is the truth to the precision we
+ * can read.
+ *
+ * `useClass` and `useExisting` only. A `useFactory` guard is real and is not read —
+ * there is no class name to show a reader, and inventing one would be worse than the
+ * headline hedging on `likely`.
+ */
+function globalGuard(obj: ObjectLiteralExpression, ctx: DetectorContext): void {
+  const provide = obj.getProperty('provide');
+  if (!Node.isPropertyAssignment(provide)) return;
+  if (provide.getInitializer()?.getText() !== 'APP_GUARD') return;
+  const impl = obj.getProperty('useClass') ?? obj.getProperty('useExisting');
+  if (!Node.isPropertyAssignment(impl)) return;
+  const value = impl.getInitializer();
+  const name = value ? dottedName(value) : null;
+  if (!value || !name) return;
+  if (permitsEverything(value)) return;
+  ctx.emit({
+    type: 'guard',
+    guard: {
+      name,
+      how: 'config',
+      provider: guardFromName(name, ctx)?.provider ?? 'custom',
+      path: ctx.ref.relPath,
+      line: obj.getStartLineNumber(),
+      confidence: 'likely',
+    },
+    scope: 'matcher',
+    nodeId: null,
+    matchers: ['/:path*'],
+    routerVar: null,
+    sourceId: ctx.fileId,
+  });
+}
 
 /**
  * A class that answers a framework's "may this request proceed?" contract by saying no.
