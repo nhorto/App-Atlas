@@ -15,6 +15,7 @@ import type {
   ServiceMeta,
   StoreMeta,
 } from '../types';
+import { OPEN_LABELS, OPEN_TONES } from '../openDoors';
 
 export interface AtlasCardData extends Record<string, unknown> {
   node: LevelNode;
@@ -210,16 +211,17 @@ function EndpointBadge({ node }: { node: LevelNode }) {
 
   const guard = meta.guards[0];
   if (!guard) {
-    switch (meta.open?.kind) {
-      case 'page':
-        return <span className="card-badge badge-public" title={meta.open.because ?? ''}>public page</span>;
-      case 'auth-mount':
-        return <span className="card-badge badge-public" title={meta.open.because ?? ''}>the sign-in door</span>;
-      case 'unreadable':
-        return <span className="card-badge badge-unknown" title={meta.open.because ?? ''}>not examined</span>;
-      default:
-        return <span className="card-badge badge-open">no auth check</span>;
+    // The exhaustive map, not a switch with a default: a door set aside with a reason
+    // used to fall through to the red "no auth check" — the false alarm — while the
+    // insights badge fell the other way, to "checked" (#161).
+    if (meta.open) {
+      return (
+        <span className={`card-badge badge-${OPEN_TONES[meta.open.kind]}`} title={meta.open.because ?? ''}>
+          {OPEN_LABELS[meta.open.kind]}
+        </span>
+      );
     }
+    return <span className="card-badge badge-open">no auth check</span>;
   }
   const certain = meta.guards.some((g) => g.confidence === 'certain');
   const name = guard.provider !== 'custom' ? guard.provider : guard.name;

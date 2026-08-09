@@ -21,7 +21,7 @@ import assert from 'node:assert/strict';
 import path from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
-import { analyzeProject } from '../dist/node/index.js';
+import { analyzeProject, AtlasGraph, buildInsights } from '../dist/node/index.js';
 import { authHeadline } from '../dist/node/model/exposure.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -121,4 +121,16 @@ test('the headline counts a declared-public route as open on purpose', () => {
     line.caveats.some((c) => /1 more (is|are) pages or the door people sign in through/.test(c)),
     `expected the public route to be stated, got ${JSON.stringify(line.caveats)}`,
   );
+});
+
+test('every insights bucket lands somewhere — the meter sums to its own total (#161)', () => {
+  // A declared-public door used to fall into no bucket at all: counted in `total`,
+  // absent from every segment, so the meter quietly misstated its proportions.
+  const { auth } = buildInsights(new AtlasGraph(atlas));
+  assert.equal(
+    auth.protectedCount + auth.likelyCount + auth.openCount + auth.publicCount + auth.unreadableCount,
+    auth.total,
+  );
+  // And the declared-public one is in the bucket that says why it is unchecked.
+  assert.equal(auth.publicCount, 1);
 });

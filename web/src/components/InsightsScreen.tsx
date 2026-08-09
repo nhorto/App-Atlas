@@ -10,6 +10,7 @@
 import { useState } from 'react';
 import type { ReactNode } from 'react';
 import type { EnvVarInfo, InsightsView, Protection, RouteInsight, ServiceInsight } from '../types';
+import { OPEN_LABELS, OPEN_TONES } from '../openDoors';
 
 interface Props {
   insights: InsightsView;
@@ -161,35 +162,20 @@ function UnreadFiles({ unread }: { unread: InsightsView['auth']['unread'] }) {
 
 function ProtectionBadge({ route }: { route: RouteInsight }) {
   const guard = route.guards[0];
-  const label = openLabel(route) ?? (guard?.provider && guard.provider !== 'custom' ? guard.provider : (guard?.name ?? 'checked'));
-  const tone = route.open ? badgeTone(route.open.kind) : route.protection;
+  // The verdict map is exhaustive over OpenKind, so an open door can never fall
+  // through to the vocabulary of a guarded one — which is how a door nothing checks
+  // once wore a badge reading "checked" (#161).
+  const label = route.open
+    ? OPEN_LABELS[route.open.kind]
+    : guard?.provider && guard.provider !== 'custom'
+      ? guard.provider
+      : (guard?.name ?? 'checked');
+  const tone = route.open ? OPEN_TONES[route.open.kind] : route.protection;
   return (
     <span className={`badge badge-${tone}`} title={route.open?.because ?? guardTitle(route.guards)}>
       {route.protection === 'likely' ? `likely · ${label}` : label}
     </span>
   );
-}
-
-function openLabel(route: RouteInsight): string | null {
-  switch (route.open?.kind) {
-    case 'worth-a-look':
-      return 'no check found';
-    case 'unreadable':
-      return 'not examined';
-    case 'page':
-      return 'public page';
-    case 'auth-mount':
-      return 'the sign-in door';
-    default:
-      return null;
-  }
-}
-
-/** An unchecked door with a reason must not wear the same red as one without. */
-function badgeTone(kind: NonNullable<RouteInsight['open']>['kind']): string {
-  if (kind === 'worth-a-look') return 'open';
-  if (kind === 'unreadable') return 'unknown';
-  return 'public';
 }
 
 function guardTitle(guards: RouteInsight['guards']): string {
