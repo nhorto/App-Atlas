@@ -17,7 +17,15 @@ import os from 'node:os';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import test from 'node:test';
-import { analyzeProject, AtlasGraph, bundleMaps, parseFrames, traceError } from '../dist/node/index.js';
+import {
+  analyzeProject,
+  AtlasGraph,
+  bundleMaps,
+  installedPackages,
+  packageAt,
+  parseFrames,
+  traceError,
+} from '../dist/node/index.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const BOUNDARY = path.join(here, 'fixtures', 'boundary');
@@ -362,4 +370,273 @@ test('a map pointing at a file this atlas never read is reported, not ignored', 
   assert.equal(frame.nodeId, null);
   assert.equal(frame.reason, 'unknown-file');
   assert.equal(frame.mappedFrom.source, 'src/nowhere/ghost.ts', 'the mapping worked; the file is the problem');
+});
+
+// ---------------------------------------------------------------------------
+// When the whole stack is somebody else's code
+// ---------------------------------------------------------------------------
+
+test('a vendored path gives up the package it is inside', () => {
+  assert.equal(packageAt('/srv/app/node_modules/lodash/get.js'), 'lodash');
+  assert.equal(packageAt('/srv/app/node_modules/@supabase/supabase-js/dist/main/index.js'), '@supabase/supabase-js');
+  assert.equal(packageAt('/usr/lib/python3.11/site-packages/requests/api.py'), 'requests');
+  assert.equal(packageAt('/usr/lib/python3.11/site-packages/six.py'), 'six');
+  assert.equal(packageAt('/root/go/pkg/mod/github.com/gin-gonic/gin@v1.9.1/context.go'), 'github.com/gin-gonic/gin');
+});
+
+test('the innermost copy of a nested package is the one named', () => {
+  // `a` vendored its own `b`. The frame is in `b`, and saying `a` would send the reader
+  // to a package whose code never ran.
+  assert.equal(packageAt('/srv/node_modules/a/node_modules/b/index.js'), 'b');
+});
+
+test("the module cache's escaping is undone rather than passed through", () => {
+  // The cache spells a capital `!x` so case-insensitive filesystems can hold two
+  // modules whose paths differ only in case. `!burnt!sushi` matches no import as-is.
+  assert.equal(
+    packageAt('/root/go/pkg/mod/github.com/!burnt!sushi/toml@v1.3.2/decode.go'),
+    'github.com/BurntSushi/toml',
+  );
+});
+
+test('a package name nobody could look up is not invented', () => {
+  assert.equal(packageAt('/srv/app/src/lib/email.ts'), null, 'not vendored at all');
+  assert.equal(packageAt('/srv/app/node_modules/@supabase'), null, 'a scope is not a package');
+  assert.equal(packageAt('/root/go/pkg/mod/github.com/x/y/z.go'), null, 'no version segment, so no module path');
+});
+
+test('a trace with none of your code in it still says where you reach for that library', () => {
+  const result = traceError(
+    graph,
+    [
+      'PrismaClientKnownRequestError: Unique constraint failed',
+      '    at wrapEngine (/srv/app/node_modules/@prisma/client/runtime/library.js:121:31)',
+      '    at process.processTicksAndRejections (node:internal/process/task_queues:95:5)',
+    ].join('\n'),
+  );
+  assert.equal(result.origin, null, 'nothing of theirs is in the paste');
+  assert.ok(result.intoDependency, 'and yet there is something to say');
+  assert.equal(result.intoDependency.packageName, '@prisma/client');
+  assert.deepEqual(
+    result.intoDependency.importers.map((f) => f.path),
+    ['src/lib/db.ts'],
+  );
+});
+
+test('the files it names carry the ways in that reach them', () => {
+  const result = traceError(
+    graph,
+    '    at wrapEngine (/srv/app/node_modules/@prisma/client/runtime/library.js:121:31)',
+  );
+  const [importer] = result.intoDependency.importers;
+  assert.ok(importer.doors.length > 0, 'db.ts is reachable from the routes that use it');
+  // Same claim the placed-frame path makes: every door that can reach it, not a pick.
+  const named = importer.doors.map((reach) => reach.door.route ?? reach.door.name);
+  assert.ok(new Set(named).size === named.length, 'no door is listed twice');
+});
+
+test('a package nothing here imports is named as one, not passed off as yours', () => {
+  // `postgrest-js` is what supabase-js is built on. A trace can die in it while no file
+  // in the repo has ever mentioned it, and claiming otherwise would be a fabrication.
+  const result = traceError(
+    graph,
+    '    at PostgrestBuilder.then (/srv/app/node_modules/@supabase/postgrest-js/dist/cjs/PostgrestBuilder.js:110:15)',
+  );
+  assert.equal(result.intoDependency.packageName, '@supabase/postgrest-js');
+  assert.deepEqual(result.intoDependency.importers, [], 'nothing imports it directly');
+});
+
+test('the innermost frame that anything imports is the one answered', () => {
+  // The stack passes out of a package nobody imports and into one somebody does. The
+  // second is the useful answer; stopping at the first would give up too early.
+  const result = traceError(
+    graph,
+    [
+      '    at PostgrestBuilder.then (/srv/app/node_modules/@supabase/postgrest-js/dist/cjs/PostgrestBuilder.js:110:15)',
+      '    at SupabaseClient.from (/srv/app/node_modules/@supabase/supabase-js/dist/main/index.js:44:12)',
+    ].join('\n'),
+  );
+  assert.equal(result.intoDependency.packageName, '@supabase/supabase-js');
+  assert.deepEqual(
+    result.intoDependency.importers.map((f) => f.path),
+    ['src/lib/metrics.ts'],
+  );
+});
+
+test('a trace that did place a frame is not also given the weaker answer', () => {
+  // `intoDependency` is what to say *instead of* an origin. Offering both would put a
+  // guess next to a fact and let the reader take them for the same kind of thing.
+  const result = traceError(
+    graph,
+    [
+      '    at wrapEngine (/srv/app/node_modules/@prisma/client/runtime/library.js:121:31)',
+      '    at createUser (/srv/app/src/app/api/users/route.ts:12:5)',
+    ].join('\n'),
+  );
+  assert.ok(result.origin, 'a real frame was placed');
+  assert.equal(result.intoDependency, null);
+});
+
+test('a stack of nothing but the runtime has no library to point at', () => {
+  const result = traceError(graph, '    at process.processTicksAndRejections (node:internal/process/task_queues:95:5)');
+  assert.equal(result.origin, null);
+  assert.equal(result.intoDependency, null, 'the runtime is not a package anybody imports');
+});
+
+// ---------------------------------------------------------------------------
+// The two things a real app taught this, which no fixture had
+// ---------------------------------------------------------------------------
+
+/** A throwaway project on disk, so a test can shape an import graph no fixture has. */
+async function scratch(files) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'atlas-dep-'));
+  fs.writeFileSync(path.join(dir, 'package.json'), JSON.stringify({ name: 'scratch', version: '0.0.0' }));
+  for (const [name, text] of Object.entries(files)) {
+    fs.mkdirSync(path.join(dir, path.dirname(name)), { recursive: true });
+    fs.writeFileSync(path.join(dir, name), text);
+  }
+  const built = (await analyzeProject(dir, { followReferences: true, cache: 'off' })).atlas;
+  return { dir, graph: new AtlasGraph(built) };
+}
+
+test('a package the whole app imports is counted, never sampled', async () => {
+  // Found by tracing a React Native error against a real app: `react-native` had 118
+  // importers and the answer was the first eight alphabetically, which began inside a
+  // `backup/` folder. Eight arbitrary paths read as eight suspects.
+  const files = {};
+  for (let n = 0; n < 20; n++) {
+    files[`src/screen${n}.ts`] = `import { View } from 'everywhere';\nexport const s${n} = View;\n`;
+  }
+  const { graph: wide } = await scratch(files);
+
+  const result = traceError(wide, '    at render (/srv/app/node_modules/everywhere/dist/index.js:41:9)');
+  assert.equal(result.intoDependency.packageName, 'everywhere');
+  assert.equal(result.intoDependency.total, 20, 'the count is the answer');
+  assert.deepEqual(result.intoDependency.importers, [], 'and no file is put forward as the one');
+});
+
+test('few enough importers to be worth naming are named', async () => {
+  const { graph: narrow } = await scratch({
+    'src/one.ts': "import { z } from 'niche';\nexport const a = z;\n",
+    'src/two.ts': "export const b = 2;\n",
+  });
+  const result = traceError(narrow, '    at z (/srv/app/node_modules/niche/index.js:3:1)');
+  assert.equal(result.intoDependency.total, 1);
+  assert.deepEqual(
+    result.intoDependency.importers.map((f) => f.path),
+    ['src/one.ts'],
+  );
+});
+
+test('a package nothing imports is found through the dependency of yours that declares it', () => {
+  // The common shape of a real JavaScript trace: it dies in `@supabase/auth-js`, which
+  // nobody types, because `@supabase/supabase-js` brought it along.
+  const installed = {
+    dependents: (name, among) =>
+      name === '@supabase/auth-js' ? among.filter((p) => p === '@supabase/supabase-js') : [],
+  };
+  const result = traceError(
+    graph,
+    '    at handleError (/srv/app/node_modules/@supabase/auth-js/dist/main/lib/fetch.js:64:11)',
+    undefined,
+    installed,
+  );
+  assert.equal(result.intoDependency.packageName, '@supabase/auth-js', 'still says where it died');
+  assert.equal(result.intoDependency.via, '@supabase/supabase-js', 'and how your code gets there');
+  assert.deepEqual(
+    result.intoDependency.importers.map((f) => f.path),
+    ['src/lib/metrics.ts'],
+  );
+});
+
+test('a parent is only ever a package this project actually imports', () => {
+  // Otherwise the answer is a package name the reader has no relationship with, which is
+  // one more thing to go and look up rather than somewhere to start.
+  let offered = null;
+  const installed = {
+    dependents: (_name, among) => {
+      offered = among;
+      return [];
+    },
+  };
+  traceError(graph, '    at x (/srv/app/node_modules/undici/lib/core/request.js:1:1)', undefined, installed);
+  assert.ok(offered.includes('@prisma/client'), 'the packages this project imports are offered');
+  assert.ok(!offered.includes('undici'), 'and the package it died in is not one of them');
+});
+
+test('importing a package directly beats reaching it through a parent, wherever the frame sits', () => {
+  // A stack that passes through a transitive package and then one this project chose:
+  // the chosen one is the better answer even though its frame is further out.
+  const installed = { dependents: () => ['@clerk/nextjs'] };
+  const result = traceError(
+    graph,
+    [
+      '    at fetchImpl (/srv/app/node_modules/undici/lib/fetch/index.js:88:1)',
+      '    at Stripe._request (/srv/app/node_modules/stripe/cjs/stripe.core.js:200:5)',
+    ].join('\n'),
+    undefined,
+    installed,
+  );
+  assert.equal(result.intoDependency.packageName, 'stripe');
+  assert.equal(result.intoDependency.via, null, 'imported outright, so there is no parent to name');
+});
+
+// ---------------------------------------------------------------------------
+// Reading the installed tree
+// ---------------------------------------------------------------------------
+
+/** A `node_modules` on disk, because that is the only thing `installedPackages` reads. */
+function installTree(packages) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'atlas-nm-'));
+  for (const [name, manifest] of Object.entries(packages)) {
+    const at = path.join(dir, 'node_modules', ...name.split('/'));
+    fs.mkdirSync(at, { recursive: true });
+    fs.writeFileSync(path.join(at, 'package.json'), JSON.stringify({ name, ...manifest }));
+  }
+  return dir;
+}
+
+test('a manifest that declares the package is what makes it the parent', () => {
+  const dir = installTree({
+    '@supabase/supabase-js': { dependencies: { '@supabase/auth-js': '^2.0.0' } },
+    stripe: { dependencies: { qs: '^6.0.0' } },
+  });
+  const installed = installedPackages(dir);
+  assert.deepEqual(installed.dependents('@supabase/auth-js', ['@supabase/supabase-js', 'stripe']), [
+    '@supabase/supabase-js',
+  ]);
+  assert.deepEqual(installed.dependents('qs', ['@supabase/supabase-js', 'stripe']), ['stripe']);
+});
+
+test('peer and optional dependencies count — they are installed and they run', () => {
+  const dir = installTree({
+    a: { peerDependencies: { react: '^19.0.0' } },
+    b: { optionalDependencies: { fsevents: '^2.0.0' } },
+  });
+  const installed = installedPackages(dir);
+  assert.deepEqual(installed.dependents('react', ['a', 'b']), ['a']);
+  assert.deepEqual(installed.dependents('fsevents', ['a', 'b']), ['b']);
+});
+
+test('nothing installed is answered as nothing, not as a crash', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'atlas-bare-'));
+  assert.deepEqual(installedPackages(dir).dependents('anything', ['a', 'b']), []);
+});
+
+test('a manifest that is not JSON is one that declares nothing', () => {
+  const dir = installTree({ broken: {} });
+  fs.writeFileSync(path.join(dir, 'node_modules', 'broken', 'package.json'), '{ not json');
+  assert.deepEqual(installedPackages(dir).dependents('x', ['broken']), []);
+});
+
+test('a name that is a path rather than a package never reaches the filesystem', () => {
+  const dir = installTree({ real: { dependencies: { x: '1' } } });
+  // Package names come from import specifiers this tool wrote down, so this should not
+  // be reachable — which is exactly why it is checked rather than assumed.
+  assert.deepEqual(installedPackages(dir).dependents('x', ['../../etc', 'real']), ['real']);
+});
+
+test('a package does not count as its own parent', () => {
+  const dir = installTree({ self: { dependencies: { self: '1' } } });
+  assert.deepEqual(installedPackages(dir).dependents('self', ['self']), []);
 });
