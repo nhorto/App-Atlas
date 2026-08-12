@@ -9,7 +9,7 @@
  * Nothing in here invents a boundary. If a detector cannot resolve a route path or a
  * table name it says so, and the UI shows the fact it does have.
  */
-import { Node } from 'ts-morph';
+import { Node, SyntaxKind } from 'ts-morph';
 import type { SourceFile } from 'ts-morph';
 import { authDetector, functionRefusalDetector, middlewareDetector, wiredGuardDetector } from './auth.js';
 import { argAt, dottedName, isBareSpecifier, literalString, packageRoot, snippetOf } from './ast.js';
@@ -160,8 +160,21 @@ function buildImports(sf: SourceFile): Map<string, ImportBinding> {
  */
 function buildLocals(sf: SourceFile, imports: Map<string, ImportBinding>): Map<string, LocalBinding> {
   const locals = new Map<string, LocalBinding>();
+  /** Names declared twice in one file with two different callees — see below. */
+  const ambiguous = new Set<string>();
 
-  for (const decl of sf.getVariableDeclarations()) {
+  // Every declaration, not only the top-level ones. `sf.getVariableDeclarations()` stops
+  // at the file scope, and the ordinary way to write an Express app is to build the
+  // router *inside* a factory:
+  //
+  //   module.exports = function setupAdminApp() {
+  //       const adminApp = express('admin');
+  //
+  // Ghost is written this way throughout, so no router in it was ever registered, so no
+  // mount could ever find one, so no prefix was ever applied to the 261 routes that hang
+  // off them (#204). Reading only the file scope made the dominant CommonJS shape
+  // invisible.
+  for (const decl of sf.getDescendantsOfKind(SyntaxKind.VariableDeclaration)) {
     const name = decl.getNameNode();
     if (!Node.isIdentifier(name)) continue;
 
@@ -180,13 +193,28 @@ function buildLocals(sf: SourceFile, imports: Map<string, ImportBinding>): Map<s
     const callee = dottedName(init.getExpression());
     if (!callee) continue;
     const root = callee.split('.')[0];
-    locals.set(name.getText(), {
-      local: name.getText(),
+    const local = name.getText();
+
+    // Two scopes in one file can each declare a `router`, and they are not the same
+    // router. Keyed by name, the second would silently overwrite the first and attach
+    // one function's routes to the other's prefix — so a name that means two things is
+    // dropped rather than guessed at, the same rule `Builds` applies one layer up.
+    const existing = locals.get(local);
+    if (existing && existing.callee !== callee) {
+      ambiguous.add(local);
+      continue;
+    }
+    if (ambiguous.has(local)) continue;
+
+    locals.set(local, {
+      local,
       callee,
       module: imports.get(root)?.external ? (imports.get(root)?.module ?? null) : null,
       isNew: Node.isNewExpression(init),
     });
   }
+
+  for (const name of ambiguous) locals.delete(name);
 
   return locals;
 }

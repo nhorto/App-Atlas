@@ -63,32 +63,54 @@ test('an external require is a package, not a missing file', () => {
   );
 });
 
-test('the routes behind the factory are still found', () => {
+test('the routes carry the prefix they are mounted under', () => {
+  // Two things had to be true at once for this line to be readable, and neither was:
+  // the router arrives as `require('../admin')()`, and it is built inside a factory
+  // function where nothing was looking for it.
   const routes = graph
     .nodesOfKind('endpoint')
     .filter((node) => node.meta.endpointKind === 'http-route')
+    .filter((node) => String(node.path).includes('/admin/'))
     .map((node) => `${node.meta.method} ${node.meta.route}`)
     .sort();
-  assert.deepEqual(routes, ['DELETE /users/:id', 'GET /users', 'POST /users']);
+  assert.deepEqual(routes, ['DELETE /ghost/users/:id', 'GET /ghost/users', 'POST /ghost/users']);
+});
+
+test('a router built inside a factory function is still a router', () => {
+  // `sf.getVariableDeclarations()` stops at the file scope, so `const router =
+  // express.Router()` inside `module.exports = function () {…}` registered nothing —
+  // and a mount can only attach to a router something registered. This is the dominant
+  // CommonJS shape, and it was invisible.
+  const admin = graph
+    .nodesOfKind('endpoint')
+    .filter((node) => node.meta.endpointKind === 'http-route')
+    .filter((node) => String(node.path).includes('/admin/'));
+  assert.equal(admin.length, 3);
+  assert.ok(
+    admin.every((node) => node.meta.route.startsWith('/ghost/')),
+    'every one of them found its prefix, not just the first',
+  );
 });
 
 // ---------------------------------------------------------------------------
 // Still open — the rest of #204
 // ---------------------------------------------------------------------------
 
-test('NOT YET: the mount prefix does not reach a router behind require(…)()', () => {
-  // Ghost serves these at `/ghost/users`. The router arrives as `require('../admin')()`
-  // — a factory call on a dynamic require — so the mount resolver has no name to match
-  // and the prefix is never applied. When this starts failing, that has been fixed and
-  // the assertion should become `/ghost/users`.
-  const routes = graph
+test('NOT YET: a mount through the app’s own wrapper method is not followed', () => {
+  // `frontendApp.lazyUse('/members', require('../members')())`. Ghost assigns `lazyUse`
+  // onto the router in `shared/express.js` and it forwards straight to `app.use` with
+  // the same path — so it *is* a mount, and only the body says so. The method whitelist
+  // is `use` and `route`, and widening it by name would mount whatever anybody happened
+  // to call `lazyUse`, which is how a route gets an address it does not have.
+  //
+  // This is what still costs Ghost its `/ghost/api` prefix: seven `lazyUse` calls carry
+  // every API mount in the repo. When this starts failing, the assertion becomes
+  // `/members/api/session`.
+  const session = graph
     .nodesOfKind('endpoint')
-    .filter((node) => node.meta.endpointKind === 'http-route')
-    .map((node) => node.meta.route);
-  assert.ok(
-    routes.every((route) => !route.startsWith('/ghost')),
-    'the prefix is still being lost',
-  );
+    .find((node) => String(node.meta.route).endsWith('/api/session'));
+  assert.ok(session, 'the route itself is found');
+  assert.equal(session.meta.route, '/api/session', 'still without the prefix it is mounted under');
 });
 
 test('NOT YET: a check written as a require-expression is not seen as a check', () => {
