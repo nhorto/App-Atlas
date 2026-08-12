@@ -958,6 +958,15 @@ function AtlasApp() {
                   ))}
                 </nav>
               ) : null}
+
+              {/* A member of this line rather than something centred over it. Floating
+                  free, it read correctly only while the breadcrumb was short: drilling
+                  two folders down drew the crumb across it and "Click to inspect" became
+                  "ck to inspect". Sharing the row means flexbox keeps them apart. */}
+              <div className="hint">
+                Click to inspect · Press › or double-click to look inside · Backspace to go back
+              </div>
+
               {/* The other half of "I think we kind of need both" (#94): the grouped,
                   named boxes answer what the parts are; this answers where they are. */}
               <button
@@ -1035,9 +1044,6 @@ function AtlasApp() {
               onToggleArrows={() => setShowAllArrows((all) => !all)}
             />
 
-            <div className="hint">
-              Click to inspect · Press › or double-click to look inside · Backspace to go back
-            </div>
           </>
         ) : null}
 

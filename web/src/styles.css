@@ -704,17 +704,25 @@ button.legend-item:hover {
 /* Along the top, between the breadcrumb and the way into the folder tree. It used to
    sit at the bottom centre, where the key — now three rows and a filter rather than a
    row of dots — grew out from under it and read as one overlapping block. Set as a
-   caption under the figure, not a floating pill. */
+   caption under the figure, not a floating pill.
+
+   A flex item of `.map-topline`, not something centred over it: absolutely positioned,
+   it was drawn under a breadcrumb that grows rightward as you drill, and two folders
+   deep "Click to inspect" lost its first three letters. Sharing the row means it gives
+   way instead of being covered — and it truncates rather than pushing the folder-tree
+   button off the edge, because a hint is the least important thing on that line. */
 .hint {
-  position: absolute;
-  left: 50%;
-  transform: translateX(-50%);
-  top: 20px;
+  flex: 1 1 auto;
+  min-width: 0;
+  text-align: center;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  align-self: center;
   font-size: 11.5px;
   color: var(--ink-faint);
   background: rgba(244, 241, 233, 0.9);
   padding: 4px 10px;
-  z-index: 4;
   pointer-events: none;
 }
 
