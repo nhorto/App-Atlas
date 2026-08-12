@@ -20,6 +20,8 @@
  * reads both never has to learn two vocabularies.
  */
 import type { AtlasGraph } from '../model/graph.js';
+import { traceError } from '../model/errortrace.js';
+import type { PlacedFrame, UnplacedReason } from '../model/errortrace.js';
 import { authHeadline } from '../model/exposure.js';
 import { buildInsights } from '../model/insights.js';
 import type { RouteInsight } from '../model/insights.js';
@@ -112,6 +114,31 @@ export const MCP_TOOLS: ToolDefinition[] = [
         },
         limit: { type: 'number', description: `How many to return. Default ${DEFAULT_LIMIT}, maximum ${MAX_LIMIT}.` },
       },
+    },
+  },
+  {
+    name: 'trace_error',
+    description:
+      'Put a stack trace on the map: paste one and get back which of your files and functions each frame lands in, ' +
+      'and which ways into the app can reach the code that failed. Use it when you have an error and do not yet ' +
+      'know where it came from. Reads V8/Node, browser, Python, Go, .NET and JVM traces, and ignores whatever else ' +
+      'is in the paste. Two limits worth stating to whoever asked: the doors are ones that *can* reach the failing ' +
+      'code, found by following references backwards — not a record of the call that actually happened, so when ' +
+      'several are listed the trace does not say which one ran. And a frame in a dependency, in a file this ' +
+      'analysis never read, or in a minified bundle is reported as unplaced rather than guessed at.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        trace: {
+          type: 'string',
+          description:
+            'The error as it was given to you — the whole paste, including the message line and any log noise ' +
+            'around it. Do not tidy it first; the parser skips what it does not recognise.',
+        },
+        ...SCOPE_PROPERTY,
+        limit: { type: 'number', description: `How many doors to return. Default ${DEFAULT_LIMIT}, maximum ${MAX_LIMIT}.` },
+      },
+      required: ['trace'],
     },
   },
   {
@@ -219,6 +246,8 @@ export function callMcpTool(source: AtlasSource, name: string, args: Record<stri
       return unguardedDoors(graph, app, apps, readBoolean(args, 'includeExplained'));
     case 'list_doors':
       return listDoors(graph, app, apps, readString(args, 'kind'), readLimit(args, DEFAULT_LIMIT));
+    case 'trace_error':
+      return traceErrorTool(graph, app, apps, readString(args, 'trace') ?? '', readLimit(args, DEFAULT_LIMIT));
     case 'what_calls':
       return whatCalls(graph, app, apps, readString(args, 'target') ?? '', readLimit(args, DEFAULT_LIMIT));
     case 'where_is':
@@ -403,6 +432,166 @@ function listDoors(
 }
 
 /** Who reaches a thing — the question asked before anything is changed or deleted. */
+/**
+ * A pasted stack trace, joined to the map.
+ *
+ * Written to be read by something that will repeat it. Two failures are worth more care
+ * than the happy path: an agent told "this came in through /checkout" when four doors
+ * reach the code will state it as fact, and an agent shown only the frames that matched
+ * will treat the ones that did not as absent rather than unread. So every door that can
+ * reach the failing code is listed with the chain behind it, and every frame that could
+ * not be placed is listed with the reason.
+ */
+function traceErrorTool(
+  graph: AtlasGraph,
+  app: AtlasApp,
+  apps: AtlasApp[],
+  pasted: string,
+  limit: number,
+): ToolResult {
+  if (!pasted.trim()) return problem('trace_error needs a "trace" — paste the error as you received it.');
+
+  const result = traceError(graph, pasted);
+  const lines: string[] = [];
+
+  if (result.parsedNothing) {
+    lines.push(
+      'Nothing in that paste looked like a stack frame, so there is no file or line to start from. This tool needs ' +
+        'a trace with `file:line` in it — a V8 `at fn (path:1:2)`, a Python `File "path", line 1`, a Go panic, a ' +
+        '.NET `in path:line 1` or a JVM `at pkg.Class.method(File.java:1)`. If all you have is a description of ' +
+        'the symptom, this is the wrong tool: nothing here can turn prose into a location.',
+    );
+    return answer(lines, provenance(app, apps, graph), {
+      ...envelope(app, graph),
+      parsedNothing: true,
+      frames: [],
+      origin: null,
+      doors: [],
+    });
+  }
+
+  lines.push(`${result.frames.length} ${plural(result.frames.length, 'frame', 'frames')} read from the paste:`);
+  for (const found of result.frames) {
+    const where = `${found.frame.rawPath}:${found.frame.line}`;
+    if (found.nodeId) {
+      const drift = found.nameDrifted
+        ? `  ·  the trace called this ${found.frame.functionName}, so the two have drifted`
+        : '';
+      lines.push(`  ${where}  →  ${found.nodeKind} ${found.nodeName}  ·  ${found.path}${drift}`);
+    } else {
+      lines.push(`  ${where}  →  not placed: ${whyUnplaced(found.reason, found.candidates)}`);
+    }
+  }
+  lines.push('');
+
+  if (!result.origin) {
+    lines.push(
+      'None of those frames is code in this project, so there is nothing here to trace back. The failure surfaced ' +
+        'entirely inside dependencies or the runtime — the useful next question is which of your own calls reached ' +
+        'that library, which `what_calls` on the library’s entry point can answer.',
+    );
+    return answer(lines, provenance(app, apps, graph), {
+      ...envelope(app, graph),
+      parsedNothing: false,
+      frames: result.frames.map(frameFact),
+      origin: null,
+      doors: [],
+    });
+  }
+
+  lines.push(
+    `Deepest frame in your own code: ${result.origin.nodeName} — ${result.origin.path}:${result.origin.frame.line}`,
+  );
+  lines.push('');
+
+  const shown = result.doors.slice(0, limit);
+  if (result.doors.length === 0) {
+    lines.push(
+      'No way into the app reaches that code by any reference this analysis can follow. That is "none found", not ' +
+        '"none exists" — code called through a dynamic lookup, a string name or reflection leaves no edge behind.',
+    );
+  } else {
+    lines.push(
+      `${result.doors.length} ${plural(result.doors.length, 'way in can', 'ways in can')} reach it. ` +
+        'Any of them could be the one that ran; the code does not say which.',
+    );
+    for (const reach of shown) {
+      lines.push(
+        `  ${reach.door.method ?? reach.door.endpointKind} ${reach.door.route ?? reach.door.name}  ·  ` +
+          `${reach.hops} ${plural(reach.hops, 'hop', 'hops')}  ·  ${reach.confidence}`,
+      );
+      lines.push(`      ${reach.viaNames.join(' → ')}`);
+    }
+    if (result.doors.length > shown.length) {
+      lines.push(`  …and ${result.doors.length - shown.length} more — raise limit to see them.`);
+    }
+  }
+
+  const footer = [
+    ...provenance(app, apps, graph),
+    'The ways in above are ones that *can* reach the failing code, found by following references backwards. They ' +
+      'are not a record of the call that happened — a stack trace says where the program was, and these edges say ' +
+      'where control can go. Do not report one of several as the cause.',
+  ];
+  if (result.searchTruncated) {
+    footer.push('The backward search hit its ceiling before running out of code, so this list may be short.');
+  }
+
+  return answer(lines, footer, {
+    ...envelope(app, graph),
+    parsedNothing: false,
+    languages: result.languages,
+    frames: result.frames.map(frameFact),
+    origin: frameFact(result.origin),
+    doors: shown.map((reach) => ({
+      id: reach.door.id,
+      name: reach.door.name,
+      endpointKind: reach.door.endpointKind,
+      method: reach.door.method,
+      route: reach.door.route,
+      guards: reach.door.guards.length,
+      writes: reach.door.writes,
+      hops: reach.hops,
+      confidence: reach.confidence,
+      via: reach.via,
+      viaNames: reach.viaNames,
+    })),
+    doorsFound: result.doors.length,
+    searchTruncated: result.searchTruncated,
+  });
+}
+
+function frameFact(found: PlacedFrame): Record<string, unknown> {
+  return {
+    raw: found.frame.raw,
+    rawPath: found.frame.rawPath,
+    line: found.frame.line,
+    column: found.frame.column,
+    functionName: found.frame.functionName,
+    language: found.frame.language,
+    nodeId: found.nodeId,
+    nodeName: found.nodeName,
+    nodeKind: found.nodeKind,
+    path: found.path,
+    unplacedReason: found.reason,
+    candidates: found.candidates,
+    nameDrifted: found.nameDrifted,
+  };
+}
+
+function whyUnplaced(reason: UnplacedReason | null, candidates: string[]): string {
+  switch (reason) {
+    case 'dependency':
+      return 'a dependency, not your code';
+    case 'runtime':
+      return 'the runtime itself, not a file in the repo';
+    case 'ambiguous':
+      return `${candidates.length} files here could be it (${candidates.join(', ')}) — the trace does not say which`;
+    default:
+      return 'no file in this atlas matches that path — it may be generated, minified, or never analysed';
+  }
+}
+
 function whatCalls(
   graph: AtlasGraph,
   app: AtlasApp,
