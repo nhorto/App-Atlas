@@ -691,6 +691,16 @@ export interface ErrorTraceResult {
   intoDependency: DependencyReach | null;
 }
 
+/** A stack trace made of this project's own code, for an empty paste box. */
+export interface ExampleTrace {
+  /** The trace, innermost frame first, as a runtime prints it. */
+  text: string;
+  /** Which dialect it is written in, taken from the files it names. */
+  language: TraceLanguage;
+  /** The `path:line` of each frame, innermost first — real, unlike the error above them. */
+  frames: string[];
+}
+
 export interface SourceSlice {
   path: string;
   startLine: number;

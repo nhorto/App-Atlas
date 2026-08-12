@@ -13,13 +13,14 @@
  * pasting an error, and an hour spent in the wrong file is the worst thing this could
  * do to them.
  */
-import { useState } from 'react';
-import { explainTrace, suggestStart, traceError } from '../api';
+import { useEffect, useState } from 'react';
+import { explainTrace, fetchTraceExample, suggestStart, traceError } from '../api';
 import type {
   DependencyReach,
   DoorReach,
   ErrorTraceResult,
   ErrorWords,
+  ExampleTrace,
   PlacedFrame,
   StartingPoints,
   UnplacedReason,
@@ -37,11 +38,34 @@ interface Props {
 /** Past this many doors the list stops being an answer and becomes a directory. */
 const DOORS_SHOWN = 6;
 
+/**
+ * What to prompt with when the atlas has no function it could print a frame for.
+ *
+ * A sentence rather than a stack, because the alternative is a made-up path — which is
+ * what this screen used to show every project, and the reason the example is built from
+ * the graph now (#214).
+ */
+const NO_EXAMPLE = 'Paste the error line and the frames under it.';
+
 export function ErrorPaste({ onSelect, onFollowDoor, aiEnabled }: Props) {
   const [pasted, setPasted] = useState('');
   const [result, setResult] = useState<ErrorTraceResult | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  /** The example in the empty box, built from this project. Null until it arrives. */
+  const [example, setExample] = useState<ExampleTrace | null>(null);
+
+  useEffect(() => {
+    let stale = false;
+    // A failure here costs nothing worth reporting: the box falls back to a sentence,
+    // and an error banner about a placeholder would be louder than the placeholder.
+    fetchTraceExample()
+      .then((found) => !stale && setExample(found))
+      .catch(() => undefined);
+    return () => {
+      stale = true;
+    };
+  }, []);
 
   const run = async () => {
     if (!pasted.trim()) return;
@@ -71,11 +95,25 @@ export function ErrorPaste({ onSelect, onFollowDoor, aiEnabled }: Props) {
         className="paste-box"
         value={pasted}
         onChange={(event) => setPasted(event.target.value)}
-        placeholder={'TypeError: Cannot read properties of undefined\n    at addBottle (lib/cellar.js:203:18)\n    at AddBottleScreen (app/cellar/add.js:64:5)'}
+        placeholder={example?.text ?? NO_EXAMPLE}
         spellCheck={false}
         rows={8}
         aria-label="Paste a stack trace"
       />
+
+      {/*
+        Only while the example is on screen, and it has to be said while it is. Making the
+        paths real is what fixed the old placeholder, and it is also what makes this
+        necessary: a file from this project, named on a screen about errors, reads as a
+        finding unless something says otherwise.
+      */}
+      {example && !pasted ? (
+        <p className="paste-example-note">
+          {example.frames.length === 1 ? 'That example names a file' : 'That example names files'} from this project,
+          at the {example.frames.length === 1 ? 'line it starts' : 'lines they start'} on. The error above{' '}
+          {example.frames.length === 1 ? 'it' : 'them'} is invented — a shape to copy, not something App Atlas found.
+        </p>
+      ) : null}
 
       <div className="paste-actions">
         <button className="paste-go" onClick={() => void run()} disabled={busy || !pasted.trim()}>

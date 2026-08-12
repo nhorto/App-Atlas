@@ -15,6 +15,7 @@ import type { Atlas } from '../model/types.js';
 import type { ScopeRecord } from '../model/store.js';
 import { buildBoundaryView } from '../model/boundary.js';
 import { traceError } from '../model/errortrace.js';
+import { exampleTrace } from '../model/exampletrace.js';
 import { buildFlow, listDoors } from '../model/flow.js';
 import { AtlasGraph } from '../model/graph.js';
 import { buildInsights } from '../model/insights.js';
@@ -308,6 +309,15 @@ function handleRequest(
         );
         return;
       }
+
+      /**
+       * What to show in the paste box before anybody has pasted anything: a stack built
+       * out of this project's own files rather than the wine-cellar app the placeholder
+       * used to name (#214). GET, and separate from `/api/trace`, because it is a fact
+       * the atlas already holds rather than an answer to something the reader typed.
+       */
+      case '/api/trace/example':
+        return sendJson(res, 200, exampleTrace(graph));
 
       /**
        * The closing paragraph for a traced error — the only generated thing in this

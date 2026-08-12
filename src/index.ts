@@ -53,6 +53,8 @@ export type {
   TraceLanguage,
   UnplacedReason,
 } from './model/errortrace.js';
+export { exampleTrace } from './model/exampletrace.js';
+export type { ExampleTrace } from './model/exampletrace.js';
 export { installedPackages, NO_PACKAGES } from './model/packages.js';
 export type { PackageIndex } from './model/packages.js';
 export { bundleMaps, decodeVlq, looksBuilt, parseSourceMap } from './model/sourcemap.js';
