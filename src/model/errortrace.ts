@@ -850,15 +850,49 @@ function collectDoors(
     const door = doorsById.get(edge.fromId);
     if (!door || found.has(door.id)) continue;
 
-    const chain = [door.id, ...pathBack(cameFrom, id, targetId)];
+    // An exported name is a door *and* the function it stands for, so listing both puts
+    // the same code on the chain twice — `HomeScreen → HomeScreen → index.js`. A route
+    // door is not the same code as its handler (`/api/users` → `POST`) and both steps
+    // earn their place, which is why this is a match on the code rather than on the kind.
+    const walked = pathBack(cameFrom, id, targetId);
+    const exposed = graph.getNodeById(id);
+    const doubled = exposed?.name === door.name && exposed?.path === door.path;
+    const chain = [door.id, ...(doubled ? walked.slice(1) : walked)];
+
     found.set(door.id, {
       door,
       via: chain,
-      viaNames: chain.map((step) => graph.getNodeById(step)?.name ?? step),
+      viaNames: nameChain(graph, chain),
       hops: chain.length - 1,
       confidence: weaker(weakest.get(id) ?? 'certain', edge.confidence),
     });
   }
+}
+
+/**
+ * Name each step of a chain, keeping two steps apart when their names are not.
+ *
+ * A real app produced `/cellar → CellarScreen → cellar.js → cellar.js → supabase.js`.
+ * Those are two different files — `app/(tabs)/cellar.js` and `lib/cellar.js` — and a
+ * name repeated back to back reads as a bug in the tool rather than as two files that
+ * happen to share a basename. Only the ambiguous steps grow a parent directory, because
+ * lengthening every step to be safe would cost every chain its readability to fix the
+ * few that need it.
+ */
+function nameChain(graph: AtlasGraph, chain: string[]): string[] {
+  const nodes = chain.map((step) => graph.getNodeById(step));
+  const names = nodes.map((node, index) => node?.name ?? chain[index]);
+
+  const seen = new Map<string, number>();
+  for (const name of names) seen.set(name, (seen.get(name) ?? 0) + 1);
+
+  return names.map((name, index) => {
+    if ((seen.get(name) ?? 0) < 2) return name;
+    const path = nodes[index]?.path;
+    if (!path) return name;
+    const parts = path.split('/');
+    return parts.length > 1 ? parts.slice(-2).join('/') : name;
+  });
 }
 
 /** The route the walk took to get here, read back the way a reader would follow it. */

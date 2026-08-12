@@ -667,6 +667,9 @@ test('a module that exports a constant is not reported as reached by nobody', as
     importer.doors.some((reach) => reach.viaNames.includes('HomeScreen')),
     `the chain runs through the screen: ${JSON.stringify(importer.doors.map((r) => r.viaNames))}`,
   );
+  // An exported name is the door and the function at once, so it appears once.
+  const [reach] = importer.doors;
+  assert.deepEqual(reach.viaNames, ['HomeScreen', 'index.js', 'client.js']);
 });
 
 test('a stack frame still only follows calls, never imports', () => {
@@ -679,6 +682,36 @@ test('a stack frame still only follows calls, never imports', () => {
     assert.ok(
       reach.via.every((id) => id.startsWith('endpoint:') || id.startsWith('func:')),
       `a call chain is doors and functions, not files: ${reach.viaNames.join(' → ')}`,
+    );
+  }
+});
+
+test('two files with one basename are told apart in the chain', async () => {
+  // A real app produced "/cellar → CellarScreen → cellar.js → cellar.js → supabase.js".
+  // Two different files, and a name repeated back to back reads as a bug in the tool.
+  const { graph: app } = await scratch({
+    'lib/thing.js': "import { createClient } from 'vendorsdk';\nexport const client = createClient();\n",
+    'ui/thing.js': "import { client } from '../lib/thing';\nexport function useThing() {\n  return client;\n}\n",
+    'app/index.js': "import { useThing } from '../ui/thing';\nexport default function HomeScreen() {\n  return useThing();\n}\n",
+  });
+
+  const result = traceError(app, '    at send (/srv/app/node_modules/vendorsdk/dist/index.js:12:3)');
+  const chains = result.intoDependency.importers.flatMap((f) => f.doors.map((d) => d.viaNames));
+  const withBoth = chains.find((names) => names.filter((n) => n.endsWith('thing.js')).length > 1);
+  assert.ok(withBoth, `expected a chain crossing both files: ${JSON.stringify(chains)}`);
+  assert.equal(new Set(withBoth).size, withBoth.length, `a step is repeated: ${withBoth.join(' → ')}`);
+  assert.ok(withBoth.includes('lib/thing.js') && withBoth.includes('ui/thing.js'), withBoth.join(' → '));
+});
+
+test('a chain with nothing ambiguous keeps its short names', () => {
+  // The disambiguation is per chain, so an unambiguous one must not pay for it. Only the
+  // first step is a door, whose name is its route; every step after it is code.
+  const result = traceError(graph, '    at sendWelcome (/srv/app/src/lib/email.ts:9:5)');
+  assert.ok(result.doors.length > 0, 'the fixture reaches sendWelcome from somewhere');
+  for (const reach of result.doors) {
+    assert.ok(
+      reach.viaNames.slice(1).every((name) => !name.includes('/')),
+      `no step needed lengthening here: ${reach.viaNames.join(' → ')}`,
     );
   }
 });
