@@ -64,23 +64,53 @@
   color: var(--ink-faint);
 }
 
-.wt-dots {
+/*
+ * The route, by name, with an arrow between each step.
+ *
+ * The arrows are drawn rather than written so they never reach a screen reader, which
+ * would otherwise read "right arrow" between every step of a list it is already
+ * announcing as a list.
+ */
+.wt-trail {
+  flex: none;
   display: flex;
-  gap: 6px;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px 0;
+  padding: 7px 15px 8px;
+  border-bottom: 1px solid var(--line);
+  background: var(--surface-press);
 }
 
-.wt-dot {
-  width: 7px;
-  height: 7px;
-  padding: 0;
+.wt-trail-step {
   border: 0;
-  background: var(--line-strong);
+  background: none;
+  padding: 1px 5px;
+  border-radius: 3px;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--ink-faint);
   cursor: pointer;
+  max-width: 22ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.wt-dot.is-current {
-  background: var(--accent);
-  transform: scale(1.25);
+.wt-trail-sep {
+  font-size: 10.5px;
+  color: var(--line-strong);
+  padding: 0 2px;
+}
+
+.wt-trail-step:hover {
+  color: var(--ink);
+  background: var(--surface);
+}
+
+.wt-trail-step.is-current {
+  color: var(--accent);
+  font-weight: 650;
 }
 
 .wt-close {

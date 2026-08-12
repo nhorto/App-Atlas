@@ -18,7 +18,7 @@
  */
 import { authHeadline } from './exposure.js';
 import type { AtlasGraph } from './graph.js';
-import type { AtlasNode, EndpointMeta, ServiceMeta, StoreMeta, SummarySource } from './types.js';
+import type { AtlasNode, EndpointMeta, GuardInfo, ServiceMeta, StoreMeta, SummarySource } from './types.js';
 
 export interface TourStep {
   id: string;
@@ -48,8 +48,17 @@ export interface Tour {
 
 /** How many flows to offer up front. More than a handful stops being a suggestion. */
 const MAX_FLOW_TOURS = 5;
-const MAX_TRACE_DEPTH = 3;
-const MAX_TRACED_NODES = 40;
+const MAX_TRACE_DEPTH = 4;
+const MAX_TRACED_NODES = 60;
+
+/**
+ * How many hops of the path to walk one at a time.
+ *
+ * The whole point of the middle of a tour is that it moves, so the cap is on the walk
+ * rather than on what is reported: past this the remaining hops are still counted, they
+ * are just not each given a step of their own.
+ */
+const MAX_WALK_HOPS = 4;
 
 /**
  * How many doors to weigh before giving up on filling the offered list. Most are
@@ -346,8 +355,8 @@ function flowTour(graph: AtlasGraph, endpoint: AtlasNode): Tour | null {
     .map((edge) => graph.getNodeById(edge.toId))
     .filter((node): node is AtlasNode => Boolean(node));
 
-  const traced = trace(graph, handlers);
-  const outputs = outputsOf(graph, [...handlers, ...traced]);
+  const walk = walkFrom(graph, handlers);
+  const outputs = outputsOf(graph, [...handlers, ...walk.reached]);
   const steps: TourStep[] = [];
 
   // 1. the door
@@ -380,29 +389,50 @@ function flowTour(graph: AtlasGraph, endpoint: AtlasNode): Tour | null {
     });
   }
 
-  // 3. what it reaches
-  if (traced.length > 0) {
-    const named = traced.slice(0, 6);
+  // 3. the walk itself — one hop per step, following one real path
+  walk.hops.forEach((node, index) => {
+    const from = index === 0 ? walk.startedAt : walk.hops[index - 1];
     steps.push({
-      id: `${endpoint.id}:calls`,
-      title: 'And calls on',
-      body: `From there it reaches ${countOf(traced.length, 'other piece')} of your code${
-        traced.length > named.length ? ', including' : ':'
-      } ${list(named.map((node) => node.name))}.`,
-      quote: named.find((node) => node.summary)?.summary ?? null,
-      quoteSource: named.find((node) => node.summary)?.summarySource ?? null,
-      focusIds: named.map((node) => node.id),
-      levelId: parentOf(graph, named[0].id),
-      codeId: named[0].id,
+      id: `${endpoint.id}:hop${index}`,
+      // The name of the thing you are looking at, so the step titles and the dots along
+      // the top finally say something different from each other.
+      title: node.name,
+      body: [
+        `${from.name} uses ${nameAndPlace(node)}.`,
+        // Said once, on the first hop, because it governs every hop after it: these are
+        // references the compiler resolved, and a reference is one piece of code naming
+        // another. No static reading of the source can say what ran.
+        index === 0
+          ? 'Each step from here follows a reference in the source — one piece of code naming another — rather than a recording of a run.'
+          : null,
+      ]
+        .filter(Boolean)
+        .join(' '),
+      quote: node.summary,
+      quoteSource: node.summarySource,
+      // Both ends of the hop, so the step shows the move rather than the destination.
+      focusIds: [from.id, node.id],
+      levelId: parentOf(graph, node.id),
+      codeId: node.id,
     });
-  }
+  });
 
   // 4. where it lands
   if (outputs.length > 0) {
     steps.push({
       id: `${endpoint.id}:out`,
       title: 'And ends up here',
-      body: `Along the way it touches ${list(outputs.map((node) => (node.kind === 'store' ? describeStore(node) : describeService(node))))}.`,
+      body: [
+        `Along the way it touches ${list(
+          outputs.map((node) => (node.kind === 'store' ? describeStore(node) : describeService(node))),
+        )}.`,
+        // The walk followed one path. Leaving the rest unsaid would let a reader take a
+        // four-step line through a screen that touches forty pieces of code as the whole
+        // of what happens here.
+        besides(walk),
+      ]
+        .filter(Boolean)
+        .join(' '),
       quote: null,
       quoteSource: null,
       focusIds: outputs.map((node) => node.id),
@@ -429,9 +459,9 @@ function flowTour(graph: AtlasGraph, endpoint: AtlasNode): Tour | null {
     steps.push({
       id: `${endpoint.id}:auth`,
       title: 'What is guarding it',
-      body: `${guard.provider === 'custom' ? guard.name : guard.provider} checks the caller${
-        guard.path ? ` in ${guard.path}` : ''
-      }${guard.confidence === 'certain' ? '' : ' — App Atlas is fairly, not entirely, sure this covers it'}.`,
+      body: `${checker(guard)} checks the caller${guard.path ? ` in ${guard.path}` : ''}${
+        guard.confidence === 'certain' ? '' : ' — App Atlas is fairly, not entirely, sure this covers it'
+      }.${reachedThrough(guard)}`,
       quote: null,
       quoteSource: null,
       focusIds: [endpoint.id],
@@ -449,30 +479,144 @@ function flowTour(graph: AtlasGraph, endpoint: AtlasNode): Tour | null {
   };
 }
 
-/** Breadth-first through `references`, staying inside the app's own code. */
-function trace(graph: AtlasGraph, from: AtlasNode[]): AtlasNode[] {
-  const seen = new Set(from.map((node) => node.id));
-  const out: AtlasNode[] = [];
-  let frontier = from;
+/** One path out of the door, and everything around it that the path did not take. */
+interface Walk {
+  /** The handler the path leaves from. */
+  startedAt: AtlasNode;
+  /** The path itself, one node per hop, nearest first. */
+  hops: AtlasNode[];
+  /** Everything reachable within the depth limit, for counting what was left out. */
+  reached: AtlasNode[];
+}
 
-  for (let depth = 0; depth < MAX_TRACE_DEPTH && out.length < MAX_TRACED_NODES; depth++) {
+/**
+ * A path through the code behind a door, rather than a list of what it can touch.
+ *
+ * The middle of a tour used to be one step reading "it reaches 41 other pieces of your
+ * code, including" and six names in breadth-first order. Every word of that was true and
+ * it answered nothing: the six were at six different depths, the map could only show one
+ * of them, and the reader was told about the whole middle of their app in a sentence
+ * they could not follow. The question somebody starts a walkthrough to ask is *what
+ * happens next*, which is a path.
+ *
+ * So one path is chosen and walked a hop at a time. Which path: the one that reaches a
+ * store or an outside service, because that is where the consequence is, preferring a
+ * write over a read and the shortest route to it. A flow that touches nothing outside
+ * itself — most screens — falls back to the busiest thing it reaches, which is the piece
+ * of code the rest of the flow is built around.
+ *
+ * The breadth is not thrown away, it is demoted: the landing step says how much of the
+ * neighbourhood this one path did not cover, so a four-step walk through a screen that
+ * touches forty pieces never reads as the whole of what happens there.
+ */
+function walkFrom(graph: AtlasGraph, handlers: AtlasNode[]): Walk {
+  const roots = new Set(handlers.map((node) => node.id));
+  const cameFrom = new Map<string, string>();
+  const depthOf = new Map<string, number>(handlers.map((node) => [node.id, 0]));
+  const seen = new Set(roots);
+  const reached: AtlasNode[] = [];
+  let frontier = handlers;
+
+  /** The node that touches a store or service, and how good a landing it is. */
+  let landing: { via: string; writes: boolean; depth: number } | null = null;
+
+  for (let depth = 1; depth <= MAX_TRACE_DEPTH && frontier.length > 0; depth++) {
     const next: AtlasNode[] = [];
     for (const node of frontier) {
       for (const edge of graph.edgesFrom(node.id)) {
-        if (edge.kind !== 'references' || seen.has(edge.toId)) continue;
         const target = graph.getNodeById(edge.toId);
-        if (!target || (target.kind !== 'function' && target.kind !== 'file')) continue;
+        if (!target) continue;
+
+        if (target.kind === 'store' || target.kind === 'service') {
+          const writes = edge.kind === 'writes-to';
+          const here = { via: node.id, writes, depth: depthOf.get(node.id) ?? depth };
+          if (!landing || better(here, landing)) landing = here;
+          continue;
+        }
+
+        if (edge.kind !== 'references' || seen.has(target.id)) continue;
+        if (target.kind !== 'function' && target.kind !== 'file') continue;
+        if (reached.length >= MAX_TRACED_NODES) continue;
         seen.add(target.id);
+        cameFrom.set(target.id, node.id);
+        depthOf.set(target.id, depth);
         next.push(target);
-        out.push(target);
-        if (out.length >= MAX_TRACED_NODES) break;
+        reached.push(target);
       }
     }
-    if (next.length === 0) break;
     frontier = next;
   }
 
-  return out;
+  const target = landing?.via ?? busiest(graph, reached);
+  const chain = target ? pathBack(cameFrom, target, roots) : [];
+  const nodes = chain.map((id) => graph.getNodeById(id)).filter((node): node is AtlasNode => Boolean(node));
+
+  return {
+    startedAt: nodes[0] ?? handlers[0],
+    hops: nodes.slice(1, 1 + MAX_WALK_HOPS),
+    reached,
+  };
+}
+
+/**
+ * Which landing makes the better walk.
+ *
+ * A path with a hop in it beats one without, and that clause is doing more work than it
+ * looks. The ordinary shape of a route handler is that it writes to the database itself
+ * *and* calls other code — so ranking on "shortest write" alone made the handler its own
+ * landing, the walk collapsed to nothing, and the door with the most going on behind it
+ * was the one that showed the least. Nothing is hidden by preferring the longer way
+ * round: the landing step lists every store and service the whole neighbourhood touches,
+ * direct writes included.
+ *
+ * After that a write beats a read, because that is where the consequence is, and a
+ * shorter route beats a longer one.
+ */
+function better(a: { writes: boolean; depth: number }, b: { writes: boolean; depth: number }): boolean {
+  if (a.depth > 0 !== b.depth > 0) return a.depth > 0;
+  if (a.writes !== b.writes) return a.writes;
+  return a.depth < b.depth;
+}
+
+/**
+ * The piece of code the rest of a flow is built around: whatever names the most others.
+ *
+ * Used when nothing behind the door reaches a store or a service, which is the ordinary
+ * case for a screen that only renders. Walking to the busiest node beats walking to the
+ * first one breadth-first order happened to produce, which was alphabetical noise.
+ */
+function busiest(graph: AtlasGraph, nodes: AtlasNode[]): string | null {
+  let best: { id: string; uses: number; name: string } | null = null;
+  for (const node of nodes) {
+    const uses = graph.edgesFrom(node.id).filter((edge) => edge.kind === 'references').length;
+    if (!best || uses > best.uses || (uses === best.uses && node.name.localeCompare(best.name) < 0)) {
+      best = { id: node.id, uses, name: node.name };
+    }
+  }
+  return best?.id ?? null;
+}
+
+/** The route the search took to get here, read back the way a reader would follow it. */
+function pathBack(cameFrom: Map<string, string>, from: string, roots: Set<string>): string[] {
+  const chain = [from];
+  let at = from;
+  while (!roots.has(at)) {
+    const previous = cameFrom.get(at);
+    if (!previous || chain.includes(previous)) break;
+    chain.push(previous);
+    at = previous;
+  }
+  return chain.reverse();
+}
+
+/** What the walk went past, said plainly, or nothing when it went past nothing. */
+function besides(walk: Walk): string | null {
+  const others = walk.reached.length - walk.hops.length;
+  if (others <= 0) return null;
+  return `That is one path of several: the code behind this door also reaches ${countOf(
+    others,
+    'other piece',
+  )} this walk did not follow.`;
 }
 
 function outputsOf(graph: AtlasGraph, nodes: AtlasNode[]): AtlasNode[] {
@@ -561,6 +705,9 @@ function describeDoors(endpoints: AtlasNode[]): string {
 }
 
 const DOOR_NOUNS: Record<string, string> = {
+  // Without this a file-routed app reports "23 entry points and 21 routes", where the
+  // entry points are its screens and the noun is the one word that does not say so.
+  screen: 'screen',
   'http-route': 'route',
   'server-action': 'server action',
   webhook: 'webhook',
@@ -572,6 +719,39 @@ const DOOR_NOUNS: Record<string, string> = {
   env: 'config source',
   'file-read': 'file read',
 };
+
+/**
+ * The name of the thing doing the checking.
+ *
+ * A custom guard found several calls deep carries its whole route in its name —
+ * `CellarBottleForm → suggest → sendMessage → supabase.auth.getSession` — and using that
+ * as the subject of a sentence produces a line nobody can read. The last segment is the
+ * check; how the code got there is a separate clause, in [[reachedThrough]].
+ */
+function checker(guard: GuardInfo): string {
+  if (guard.provider !== 'custom') return guard.provider;
+  const chain = segments(guard.name);
+  return chain[chain.length - 1] ?? guard.name;
+}
+
+/**
+ * The route to a guard the door does not call directly, as its own sentence or nothing.
+ *
+ * Worth saying whoever provides the check. "Clerk checks the caller in session.ts" is
+ * true and leaves out the part a reader needs to find it — that the door gets there by
+ * calling `requireOwner`, which is the name they would search for.
+ */
+function reachedThrough(guard: GuardInfo): string {
+  const chain = segments(guard.name);
+  return chain.length > 1 ? ` The code reaches it through ${chain.slice(0, -1).join(' → ')}.` : '';
+}
+
+function segments(name: string): string[] {
+  return name
+    .split('→')
+    .map((step) => step.trim())
+    .filter(Boolean);
+}
 
 function describeStore(node: AtlasNode): string {
   const meta = node.meta as unknown as StoreMeta;
