@@ -18,6 +18,7 @@ import path from 'node:path';
 import { Node, Project, SyntaxKind, ts } from 'ts-morph';
 import type {
   ArrowFunction,
+  CallExpression,
   ClassDeclaration,
   EnumDeclaration,
   FunctionDeclaration,
@@ -836,7 +837,86 @@ function extractImports(
     }
   }
 
+  for (const { specifier, symbols } of requireCalls(sf)) {
+    const targetRel = resolveRelative(ref.absPath, specifier, pathToRel);
+    if (targetRel && targetRel !== ref.relPath) {
+      addEdge(edges, {
+        kind: 'imports',
+        fromId,
+        toId: makeFileId(targetRel),
+        weight: Math.max(1, symbols.length),
+        // The same fact a static import states, written the way CommonJS states it: a
+        // literal specifier naming a file in this project. Nothing here is inferred.
+        confidence: 'certain',
+        meta: { symbols },
+      });
+    } else {
+      if (isPathAlias(specifier)) unresolved.add(specifier);
+      if (isBareSpecifier(specifier)) external.add(packageNameOf(specifier));
+    }
+  }
+
   return { external: [...external].sort(), unresolved: [...unresolved].sort() };
+}
+
+/**
+ * `require('./x')` — the half of JavaScript the loops above cannot see (#204).
+ *
+ * Ghost is CommonJS throughout, and App Atlas read 437 import edges across its 2,459
+ * files. Anything the tool concluded about that repo which depended on one file reaching
+ * another was drawn on a small fraction of the edges, and the visible symptom — every
+ * route reported as having no auth check — was the least of it.
+ *
+ * Only a call to the bare name `require` with one string literal in it. `require.resolve`
+ * is a property access and never matches; a specifier built from a variable is
+ * unresolvable by anybody and is left alone rather than approximated; and a `require`
+ * somebody shadowed with their own function still names a module by the same convention,
+ * which is as true as the assumption a static import makes.
+ *
+ * The text guard is what keeps this off the ESM majority: a descendant walk of every
+ * file in a large repo is not free, and a file with no `require(` in its source cannot
+ * contribute an edge.
+ */
+function requireCalls(sf: SourceFile): { specifier: string; symbols: string[] }[] {
+  if (!sf.getFullText().includes('require(')) return [];
+
+  const found: { specifier: string; symbols: string[] }[] = [];
+  for (const call of sf.getDescendantsOfKind(SyntaxKind.CallExpression)) {
+    const callee = call.getExpression();
+    if (!Node.isIdentifier(callee) || callee.getText() !== 'require') continue;
+    const args = call.getArguments();
+    if (args.length !== 1) continue;
+    const first = args[0];
+    if (!Node.isStringLiteral(first) && !Node.isNoSubstitutionTemplateLiteral(first)) continue;
+    found.push({ specifier: first.getLiteralValue(), symbols: requiredNames(call) });
+  }
+  return found;
+}
+
+/**
+ * What a `require` took out of the module, for the same `symbols` list a static import
+ * fills in — `const { a, b } = require('./x')` and `require('./x').y` both say which
+ * names crossed, and that list is what the map draws an edge's weight from.
+ *
+ * An empty list is an honest answer for `require('./x')` on its own, which takes the
+ * module for its side effects and names nothing.
+ */
+function requiredNames(call: CallExpression): string[] {
+  const parent = call.getParent();
+
+  if (Node.isPropertyAccessExpression(parent) && parent.getExpression() === call) {
+    return [parent.getName()];
+  }
+
+  if (Node.isVariableDeclaration(parent)) {
+    const name = parent.getNameNode();
+    if (Node.isIdentifier(name)) return [name.getText()];
+    if (Node.isObjectBindingPattern(name)) {
+      return name.getElements().map((element) => (element.getPropertyNameNode() ?? element.getNameNode()).getText());
+    }
+  }
+
+  return [];
 }
 
 /** Extensions that are a module somebody could have imported code from. */
