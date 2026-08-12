@@ -14,7 +14,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import fg from 'fast-glob';
 import { toPosix } from '../util/paths.js';
-import { DEFAULT_IGNORES, SOURCE_GLOB } from './project.js';
+import { DEFAULT_IGNORES } from './ignores.js';
+import { SOURCE_GLOB } from './project.js';
 import { classifyZone } from './zones.js';
 
 export interface Scope {

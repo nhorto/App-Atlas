@@ -25,6 +25,7 @@ import open from 'open';
 import { backbonePhrase, unreadBackbone } from './model/coverage.js';
 import { analyzeProject, computeStats, TOOL_VERSION } from './analyze/index.js';
 import { readComposePorts } from './analyze/boundaries/compose.js';
+import { buildIgnoreMatcher } from './analyze/ignores.js';
 import type { PublishedPort } from './analyze/signals.js';
 import { findWorkspace } from './analyze/workspace.js';
 import type { Scope } from './analyze/workspace.js';
@@ -605,7 +606,7 @@ async function runWorkspaceAnalysis(
     // saying it at all — a published database port is exactly the fact #73 added them
     // for, and dropping it to fix a duplication would be trading one wrong map for
     // another.
-    const stack = repoPublishedPorts(root);
+    const stack = repoPublishedPorts(root, options.ignore);
     if (stack.length > 0) {
       console.log('');
       const files = new Set(stack.map((p) => p.configPath)).size;
@@ -642,12 +643,16 @@ async function runWorkspaceAnalysis(
  *
  * A compose file that lives *inside* a package is that package's own and is already on
  * its map, so it is dropped here rather than said twice.
+ *
+ * `--ignore` reaches here too. This line is printed from a second scan of the same repo
+ * the atlases came from, and a flag that holds for the maps but not for the summary
+ * under them is the kind of difference nobody can see and everybody has to trust.
  */
-function repoPublishedPorts(root: string): PublishedPort[] {
+function repoPublishedPorts(root: string, ignore: string[] | undefined): PublishedPort[] {
   const scopeDirs = readScopes(root)
     .map((scope) => scope.dir)
     .filter((dir) => dir && dir !== '.');
-  return readComposePorts(root, root).filter(
+  return readComposePorts(root, root, buildIgnoreMatcher(root, ignore ?? [])).filter(
     (port) => !scopeDirs.some((dir) => port.configPath === dir || port.configPath.startsWith(`${dir}/`)),
   );
 }

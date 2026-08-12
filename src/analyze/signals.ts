@@ -12,6 +12,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { readComposePorts } from './boundaries/compose.js';
+import { buildIgnoreMatcher, type IgnoreMatcher } from './ignores.js';
 import { parseSqlMigrations, type SqlPolicy, type SqlTable } from './sql.js';
 import { readWorkers, type WorkerSignal } from './wrangler.js';
 
@@ -244,43 +245,52 @@ export interface ProjectSignals {
  * the top of the repo, while everything else here — the `.env.example`, the Prisma
  * schema, the wrangler config — belongs to the app that owns it and is read from `root`
  * as it always was.
+ *
+ * `ignores` is the caller's `--ignore` list, compiled. Every reader below consults it,
+ * including the ones that open a single file at a known path: a signal is a *fact about
+ * this app*, and a path the caller said is not this app cannot supply one. Nothing here
+ * enforced that for a long time — every reader walks the tree itself, so a fixture tree
+ * no source scan would touch was still naming the frameworks in the summary.
  */
 export function readSignals(
   root: string,
   packageJson: Record<string, unknown> | null,
   repoRoot: string = root,
+  ignores: IgnoreMatcher = buildIgnoreMatcher(root),
 ): ProjectSignals {
   const packages = readPackages(packageJson);
-  const prisma = readPrismaSchema(root);
+  const prisma = readPrismaSchema(root, ignores);
   return {
     packages,
-    nextAppDir: packages.has('next') ? firstExistingDir(root, ['app', 'src/app']) : null,
-    nextPagesDir: packages.has('next') ? firstExistingDir(root, ['pages', 'src/pages']) : null,
+    nextAppDir: packages.has('next') ? firstExistingDir(root, ['app', 'src/app'], ignores) : null,
+    nextPagesDir: packages.has('next') ? firstExistingDir(root, ['pages', 'src/pages'], ignores) : null,
     // Expo Router owns `app/` the same way Next's App Router does, but declares itself
     // through the dependency rather than a config file. Same candidate dirs.
-    expoRouterDir: packages.has('expo-router') ? firstExistingDir(root, ['app', 'src/app']) : null,
+    expoRouterDir: packages.has('expo-router') ? firstExistingDir(root, ['app', 'src/app'], ignores) : null,
     // SvelteKit's route tree can be moved in `svelte.config.js`, which is a JavaScript
     // module this layer will not execute. The default is what all but a handful of
     // projects use, and a directory that is not there produces no signal at all.
-    svelteKitRoutesDir: packages.has('@sveltejs/kit') ? firstExistingDir(root, ['src/routes', 'routes']) : null,
-    remixRoutesDir: hasRemix(packages) ? firstExistingDir(root, ['app/routes']) : null,
-    crons: readVercelCrons(root),
-    workers: readWorkers(root),
-    publishedPorts: readComposePorts(repoRoot, root),
+    svelteKitRoutesDir: packages.has('@sveltejs/kit')
+      ? firstExistingDir(root, ['src/routes', 'routes'], ignores)
+      : null,
+    remixRoutesDir: hasRemix(packages) ? firstExistingDir(root, ['app/routes'], ignores) : null,
+    crons: readVercelCrons(root, ignores),
+    workers: readWorkers(root, ignores),
+    publishedPorts: readComposePorts(repoRoot, root, ignores),
     prisma,
     // When Prisma is present its migrations are generated from schema.prisma, so
     // reading both would declare every table twice.
-    sqlSchema: readSqlSchema(root, prisma !== null),
-    ...readPythonPackages(root),
-    ...readGoModule(root),
-    ...readDotnetProjects(root),
+    sqlSchema: readSqlSchema(root, prisma !== null, ignores),
+    ...readPythonPackages(root, ignores),
+    ...readGoModule(root, ignores),
+    ...readDotnetProjects(root, ignores),
     ...(() => {
-      const cargo = readCargoManifests(root);
+      const cargo = readCargoManifests(root, ignores);
       return { cargoPackages: cargo.packages, cargoBinaries: cargo.binaries };
     })(),
-    ...readEnvExample(root),
-    declaresAPackage: readsAsAPackage(root, packageJson),
-    entryPoints: readEntryPoints(root, packageJson),
+    ...readEnvExample(root, ignores),
+    declaresAPackage: readsAsAPackage(root, packageJson, ignores),
+    entryPoints: readEntryPoints(root, packageJson, ignores),
   };
 }
 
@@ -299,7 +309,11 @@ const ENTRY_FIELDS = ['main', 'module', 'browser', 'types', 'typings', 'source']
  * a shell line, because a shell line has no grammar worth the name and the cost of
  * missing one is a file mentioned that should not have been.
  */
-function readEntryPoints(root: string, pkg: Record<string, unknown> | null): EntryPoint[] {
+function readEntryPoints(
+  root: string,
+  pkg: Record<string, unknown> | null,
+  ignores: IgnoreMatcher,
+): EntryPoint[] {
   const out: EntryPoint[] = [];
   const add = (value: unknown, field: string, command?: string) => {
     if (typeof value !== 'string' || value === '') return;
@@ -348,8 +362,8 @@ function readEntryPoints(root: string, pkg: Record<string, unknown> | null): Ent
   // `mytool = "mypkg.cli:main"` — the module before the colon is a real file, and it is
   // the one thing in a Python project that is started from outside the source tree and
   // says so in writing.
-  const pyproject = path.join(root, 'pyproject.toml');
-  if (fs.existsSync(pyproject)) {
+  const pyproject = readableFile(root, 'pyproject.toml', ignores);
+  if (pyproject) {
     let inScripts = false;
     for (const line of splitLines(readText(pyproject))) {
       const section = /^\s*\[([^\]]+)\]/.exec(line);
@@ -403,11 +417,15 @@ function hasRemix(packages: Set<string>): boolean {
  * `requirements.txt` is deliberately not a signal. It lists what this code needs, which
  * every script also has, and says nothing about what anybody does with this code.
  */
-function readsAsAPackage(root: string, packageJson: Record<string, unknown> | null): boolean {
-  if (fs.existsSync(path.join(root, 'setup.py')) || fs.existsSync(path.join(root, 'setup.cfg'))) return true;
+function readsAsAPackage(
+  root: string,
+  packageJson: Record<string, unknown> | null,
+  ignores: IgnoreMatcher,
+): boolean {
+  if (readableFile(root, 'setup.py', ignores) || readableFile(root, 'setup.cfg', ignores)) return true;
 
-  const pyproject = path.join(root, 'pyproject.toml');
-  if (fs.existsSync(pyproject)) {
+  const pyproject = readableFile(root, 'pyproject.toml', ignores);
+  if (pyproject) {
     const text = readText(pyproject);
     if (/^\s*\[project\]/m.test(text) || /^\s*\[tool\.poetry\]/m.test(text)) return true;
   }
@@ -440,11 +458,16 @@ const MAX_MIGRATION_FILES = 400;
  * application order, because every migration tool timestamps its filenames precisely
  * so that lexical order is run order.
  */
-export function readSqlSchema(root: string, hasPrisma: boolean): SqlSchemaSignal | null {
+export function readSqlSchema(
+  root: string,
+  hasPrisma: boolean,
+  ignores: IgnoreMatcher = buildIgnoreMatcher(root),
+): SqlSchemaSignal | null {
   const files: { path: string; text: string }[] = [];
   for (const dir of MIGRATION_DIRS) {
     if (hasPrisma && dir === 'prisma/migrations') continue;
     const abs = path.join(root, dir);
+    if (ignores.ignores(abs)) continue;
     let entries: fs.Dirent[];
     try {
       entries = fs.readdirSync(abs, { withFileTypes: true, recursive: true });
@@ -454,6 +477,7 @@ export function readSqlSchema(root: string, hasPrisma: boolean): SqlSchemaSignal
     const sqlFiles = entries
       .filter((e) => e.isFile() && e.name.endsWith('.sql'))
       .map((e) => path.join(e.parentPath, e.name))
+      .filter((file) => !ignores.ignores(file))
       .sort()
       .slice(0, MAX_MIGRATION_FILES);
     for (const absFile of sqlFiles) {
@@ -482,13 +506,16 @@ export function readSqlSchema(root: string, hasPrisma: boolean): SqlSchemaSignal
  * All that is needed is the set of distribution names, and a line-by-line read of
  * either file gets that right.
  */
-function readPythonPackages(root: string): { pythonPackages: Set<string>; pythonManifest: string | null } {
+function readPythonPackages(
+  root: string,
+  ignores: IgnoreMatcher,
+): { pythonPackages: Set<string>; pythonManifest: string | null } {
   const packages = new Set<string>();
   let manifest: string | null = null;
 
   for (const name of ['requirements.txt', 'requirements-dev.txt', 'requirements/base.txt']) {
-    const file = path.join(root, name);
-    if (!fs.existsSync(file)) continue;
+    const file = readableFile(root, name, ignores);
+    if (!file) continue;
     manifest ??= name;
     for (const line of splitLines(readText(file))) {
       const stripped = line.split('#')[0].trim();
@@ -498,8 +525,8 @@ function readPythonPackages(root: string): { pythonPackages: Set<string>; python
     }
   }
 
-  const pyproject = path.join(root, 'pyproject.toml');
-  if (fs.existsSync(pyproject)) {
+  const pyproject = readableFile(root, 'pyproject.toml', ignores);
+  if (pyproject) {
     manifest ??= 'pyproject.toml';
     // Covers both spellings: PEP 621 `dependencies = ["fastapi>=0.1"]` and Poetry's
     // `[tool.poetry.dependencies]` table of `fastapi = "^0.1"`.
@@ -513,8 +540,8 @@ function readPythonPackages(root: string): { pythonPackages: Set<string>; python
     }
   }
 
-  const pipfile = path.join(root, 'Pipfile');
-  if (fs.existsSync(pipfile)) {
+  const pipfile = readableFile(root, 'Pipfile', ignores);
+  if (pipfile) {
     manifest ??= 'Pipfile';
     for (const line of splitLines(readText(pipfile))) {
       const match = /^\s*["']?([A-Za-z0-9._-]+)["']?\s*=\s*/.exec(line);
@@ -536,9 +563,12 @@ function readPythonPackages(root: string): { pythonPackages: Set<string>; python
  * by the toolchain rather than by anybody, and treating them as declarations would put a
  * framework label on a repo that has never imported it.
  */
-function readGoModule(root: string): { goModules: Set<string>; goModule: string | null } {
-  const file = path.join(root, 'go.mod');
-  if (!fs.existsSync(file)) return { goModules: new Set(), goModule: null };
+function readGoModule(
+  root: string,
+  ignores: IgnoreMatcher,
+): { goModules: Set<string>; goModule: string | null } {
+  const file = readableFile(root, 'go.mod', ignores);
+  if (!file) return { goModules: new Set(), goModule: null };
 
   const modules = new Set<string>();
   let module: string | null = null;
@@ -591,7 +621,7 @@ function readGoModule(root: string): { goModules: Set<string>; goModule: string 
  * is read too: central package management moves every version, and often every id, out
  * of the project files entirely.
  */
-function readDotnetProjects(root: string): {
+function readDotnetProjects(root: string, ignores: IgnoreMatcher): {
   dotnetPackages: Set<string>;
   dotnetSdks: Set<string>;
   dotnetOutputTypes: Set<string>;
@@ -615,6 +645,7 @@ function readDotnetProjects(root: string): {
     }
     for (const entry of entries) {
       const full = path.join(dir, entry.name);
+      if (ignores.ignores(full)) continue;
       if (entry.isDirectory()) {
         if (/^(node_modules|\.git|bin|obj|packages)$/i.test(entry.name)) continue;
         scan(full, depth + 1);
@@ -686,7 +717,10 @@ function readDotnetProjects(root: string): {
  * `engine/Cargo.toml`, `app/src-tauri/Cargo.toml` — and the root manifest often
  * declares nothing but the member list.
  */
-function readCargoManifests(root: string): { packages: Set<string>; binaries: Set<string> } {
+function readCargoManifests(
+  root: string,
+  ignores: IgnoreMatcher,
+): { packages: Set<string>; binaries: Set<string> } {
   const packages = new Set<string>();
   const binaries = new Set<string>();
 
@@ -701,6 +735,7 @@ function readCargoManifests(root: string): { packages: Set<string>; binaries: Se
     }
     for (const entry of entries) {
       const full = path.join(dir, entry.name);
+      if (ignores.ignores(full)) continue;
       if (entry.isDirectory()) {
         if (/^(node_modules|\.git|target|vendor|dist|build)$/i.test(entry.name)) continue;
         scan(full, depth + 1);
@@ -758,9 +793,10 @@ function readPackages(pkg: Record<string, unknown> | null): Set<string> {
   return names;
 }
 
-function firstExistingDir(root: string, candidates: string[]): string | null {
+function firstExistingDir(root: string, candidates: string[], ignores: IgnoreMatcher): string | null {
   for (const candidate of candidates) {
     const full = path.join(root, candidate);
+    if (ignores.ignores(full)) continue;
     try {
       if (fs.statSync(full).isDirectory()) return candidate;
     } catch {
@@ -771,11 +807,11 @@ function firstExistingDir(root: string, candidates: string[]): string | null {
 }
 
 /** `vercel.json` is where Vercel apps declare their scheduled work. */
-function readVercelCrons(root: string): CronSignal[] {
+function readVercelCrons(root: string, ignores: IgnoreMatcher): CronSignal[] {
   const out: CronSignal[] = [];
   for (const name of ['vercel.json', 'now.json']) {
-    const file = path.join(root, name);
-    if (!fs.existsSync(file)) continue;
+    const file = readableFile(root, name, ignores);
+    if (!file) continue;
     try {
       const parsed = JSON.parse(fs.readFileSync(file, 'utf8')) as { crons?: unknown };
       if (!Array.isArray(parsed.crons)) continue;
@@ -802,11 +838,11 @@ function readVercelCrons(root: string): CronSignal[] {
  * simple, the dependency is not worth it, and anything unrecognised is skipped rather
  * than allowed to fail the analysis.
  */
-function readPrismaSchema(root: string): PrismaSignal | null {
+function readPrismaSchema(root: string, ignores: IgnoreMatcher): PrismaSignal | null {
   const candidates = ['prisma/schema.prisma', 'schema.prisma', 'src/prisma/schema.prisma'];
   for (const candidate of candidates) {
-    const file = path.join(root, candidate);
-    if (!fs.existsSync(file)) continue;
+    const file = readableFile(root, candidate, ignores);
+    if (!file) continue;
     try {
       const text = fs.readFileSync(file, 'utf8');
       const provider = /datasource\s+\w+\s*\{[^}]*?provider\s*=\s*"([^"]+)"/s.exec(text)?.[1] ?? 'sql';
@@ -846,6 +882,22 @@ const PRISMA_SCALARS = new Set([
  */
 function splitLines(text: string): string[] {
   return text.split(/\r?\n/);
+}
+
+/**
+ * A file this app declares at a known place, or null when it is not there — or when the
+ * caller left its path out.
+ *
+ * The second half is the point. Most readers here open a fixed path rather than search
+ * for one, so they look immune to a search-time filter, and the rule `--ignore` states
+ * has nothing to do with searching: a path the caller took out of view supplies no
+ * facts. `--ignore 'prisma/**'` has to mean the schema is gone, not that it is gone from
+ * one of the two places that read it.
+ */
+function readableFile(root: string, relPath: string, ignores: IgnoreMatcher): string | null {
+  const file = path.join(root, relPath);
+  if (ignores.ignores(file) || !fs.existsSync(file)) return null;
+  return file;
 }
 
 /** A config file that will not open tells us nothing, which is not an error. */
@@ -936,7 +988,10 @@ const ENV_EXAMPLE = /^\.?env\b.*\.?(example|sample|template|defaults|dist)\b.*$/
  * in both. Stopping at the first one made the badge report documented variables as
  * missing, which is the direction this tool is least allowed to be wrong in.
  */
-function readEnvExample(root: string): { envExample: Set<string>; envExamplePath: string | null } {
+function readEnvExample(
+  root: string,
+  ignores: IgnoreMatcher,
+): { envExample: Set<string>; envExamplePath: string | null } {
   const names = new Set<string>();
   const found: string[] = [];
 
@@ -951,6 +1006,7 @@ function readEnvExample(root: string): { envExample: Set<string>; envExamplePath
     if (!ENV_EXAMPLE.test(entry)) continue;
     try {
       const file = path.join(root, entry);
+      if (ignores.ignores(file)) continue;
       if (!fs.statSync(file).isFile()) continue;
       for (const line of splitLines(fs.readFileSync(file, 'utf8'))) {
         const match = /^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=/.exec(line);
