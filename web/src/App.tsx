@@ -407,21 +407,8 @@ function AtlasApp() {
   }, [selectedId, revision]);
 
   // --- frame each level as soon as it is laid out ---
-  // Not gated on React Flow's own "nodes measured" signal: these nodes carry explicit
-  // width/height from elk, and React Flow never reports pre-sized nodes as measured,
-  // so that signal simply never fires. Our own state is the reliable one — positions
-  // arrive together with the level. The first call runs a frame after the nodes
-  // render; the delayed one covers React Flow syncing its store just after that.
-  useEffect(() => {
-    if (view !== 'map' || !shown || positions.size === 0) return;
-    const options = { padding: 0.2, maxZoom: 1 };
-    const frame = requestAnimationFrame(() => void fitView(options));
-    const timer = window.setTimeout(() => void fitView({ ...options, duration: 250 }), 150);
-    return () => {
-      cancelAnimationFrame(frame);
-      window.clearTimeout(timer);
-    };
-  }, [view, shown, positions, fitView]);
+  // Lives below the walkthrough state because it frames the current step when there is
+  // one. See the effect itself, further down.
 
   const go = useCallback((next: ViewName, id?: string | null) => {
     setView(next);
@@ -522,6 +509,53 @@ function AtlasApp() {
 
   /** Everything the current step wants lit. Overrides the click-neighbours highlight. */
   const tourFocus = useMemo(() => (step ? new Set(step.focusIds) : null), [step]);
+
+  // How much room the drawer is taking, watched rather than assumed: it grows with the
+  // length of the step and with any wrap at a narrow width, and a stale number here
+  // means the map hands back the wrong strip.
+  const [drawerHeight, setDrawerHeight] = useState(0);
+  useEffect(() => {
+    if (!tour) {
+      setDrawerHeight(0);
+      return;
+    }
+    const drawer = document.querySelector('.walkthrough');
+    if (!drawer) return;
+    const watch = new ResizeObserver(() => {
+      setDrawerHeight(Math.round(drawer.getBoundingClientRect().height) + DRAWER_GAP);
+    });
+    watch.observe(drawer);
+    return () => watch.disconnect();
+  }, [tour]);
+
+  // --- frame the level, or the step's subject, as soon as it is laid out ---
+  // Not gated on React Flow's own "nodes measured" signal: these nodes carry explicit
+  // width/height from elk, and React Flow never reports pre-sized nodes as measured,
+  // so that signal simply never fires. Our own state is the reliable one — positions
+  // arrive together with the level. The first call runs a frame after the nodes
+  // render; the delayed one covers React Flow syncing its store just after that.
+  //
+  // Mid-walkthrough the frame is the step's own subject rather than the whole level,
+  // and it is fitted into the room the drawer leaves. Framing the level instead left
+  // the step's lit card underneath the drawer often enough to measure — the words were
+  // covering the very thing they pointed at.
+  useEffect(() => {
+    if (view !== 'map' || !shown || positions.size === 0) return;
+    const lit = step ? step.focusIds.filter((id) => positions.has(id)) : [];
+    const frameIt = (duration?: number) =>
+      void fitView({
+        ...(lit.length ? { nodes: lit.map((id) => ({ id })) } : {}),
+        padding: 0.2,
+        maxZoom: 1,
+        duration,
+      });
+    const frame = requestAnimationFrame(() => frameIt());
+    const timer = window.setTimeout(() => frameIt(250), 150);
+    return () => {
+      cancelAnimationFrame(frame);
+      window.clearTimeout(timer);
+    };
+  }, [view, shown, positions, fitView, step, drawerHeight]);
 
   /** Bring a node into view on the map, changing level first if it lives elsewhere. */
   const reveal = useCallback(
@@ -828,7 +862,16 @@ function AtlasApp() {
         ) : null}
       </p>
 
-      <main className={view === 'map' ? 'canvas' : 'canvas canvas-page'}>
+      {/* While a walkthrough runs the map gives up the strip the drawer sits on, rather
+          than lying underneath it. React Flow centres what it frames inside its own
+          container, so as long as the container reached under the drawer, a step's lit
+          card could be framed perfectly and still be invisible. Shortening the
+          container is the version of that fix that cannot drift: what the map can use
+          and what the reader can see become the same rectangle. */}
+      <main
+        className={view === 'map' ? 'canvas' : 'canvas canvas-page'}
+        style={tour && view === 'map' ? { paddingBottom: drawerHeight } : undefined}
+      >
         {view === 'boundaries' ? (
           boundaries ? (
             <BoundaryScreen
@@ -1106,6 +1149,9 @@ function writeHash(view: ViewName, levelId: string | null): void {
   const hash = view === 'map' && levelId ? `map/${encodeURIComponent(levelId)}` : view;
   window.history.replaceState(null, '', `#${hash}`);
 }
+
+/** Breathing room between the bottom of the map and the top of the drawer. */
+const DRAWER_GAP = 12;
 
 function zoneColor(zone: Zone): string {
   switch (zone) {

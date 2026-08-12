@@ -12,7 +12,7 @@
  * is compiler fact, and anything a model or a docstring said is quoted separately,
  * labelled, and clearly somebody else's words.
  */
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { fetchSource } from '../api';
 import type { SourceSlice, Tour } from '../types';
 import { TrustLabel } from './Trust';
@@ -33,6 +33,17 @@ export function Walkthrough({
   const step = tour.steps[index];
   const [source, setSource] = useState<SourceSlice | null>(null);
   const [showCode, setShowCode] = useState(false);
+  const headingRef = useRef<HTMLHeadingElement>(null);
+  const started = useRef(false);
+
+  // Starting a tour moves focus into it once, so the keyboard lands where the reading
+  // is. Later steps are left alone: the live region already announces them, and pulling
+  // focus back on every Next would fight anyone who tabbed off to the map on purpose.
+  useEffect(() => {
+    if (started.current) return;
+    started.current = true;
+    headingRef.current?.focus();
+  }, []);
 
   useEffect(() => {
     setSource(null);
@@ -72,12 +83,17 @@ export function Walkthrough({
             Step {index + 1} of {tour.steps.length}
           </span>
         </div>
-        <div className="wt-dots" aria-hidden>
+        {/* Named, not hidden: these were inside an aria-hidden wrapper while staying
+            tabbable, so keyboard focus landed on buttons a screen reader would not
+            announce and a sighted reader could not see it reach. */}
+        <div className="wt-dots">
           {tour.steps.map((one, i) => (
             <button
               key={one.id}
               className={i === index ? 'wt-dot is-current' : 'wt-dot'}
               title={one.title}
+              aria-label={`Step ${i + 1} of ${tour.steps.length}: ${one.title}`}
+              aria-current={i === index ? 'step' : undefined}
               onClick={() => onStep(i)}
             />
           ))}
@@ -87,8 +103,12 @@ export function Walkthrough({
         </button>
       </div>
 
-      <div className="wt-body">
-        <h2>{step.title}</h2>
+      {/* The step is what changes when you press Next, so it is the live region. Without
+          it the panel advanced in complete silence for anyone not watching the map. */}
+      <div className="wt-body" aria-live="polite" aria-atomic="true">
+        <h2 tabIndex={-1} ref={headingRef}>
+          {step.title}
+        </h2>
         <p className="wt-text">{step.body}</p>
 
         {step.quote ? (

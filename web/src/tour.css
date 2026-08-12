@@ -145,6 +145,18 @@
   letter-spacing: 0;
 }
 
+/* Focused by script when a tour opens, so the reading starts at the words rather than
+   wherever the click left the keyboard. It carries tabindex="-1" and is never tabbed
+   to, and a ring around a heading nobody navigated to reads as a rendering fault. */
+.wt-body h2:focus {
+  outline: none;
+}
+
+.wt-body h2:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+}
+
 .wt-text {
   margin: 0;
   max-width: 74ch;
