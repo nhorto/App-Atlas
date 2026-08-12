@@ -26,9 +26,23 @@
 import type { DoorSummary } from './flow.js';
 import { listDoors } from './flow.js';
 import type { AtlasGraph } from './graph.js';
+import type { PackageIndex } from './packages.js';
+import { NO_PACKAGES } from './packages.js';
 import type { SourceMapIndex } from './sourcemap.js';
 import { looksBuilt } from './sourcemap.js';
 import type { AtlasNode, Confidence } from './types.js';
+
+/**
+ * Every door on the map, by id. Built once per question rather than once per walk: a
+ * dependency trace asks the same thing of eight files in a row.
+ */
+function doorIndex(graph: AtlasGraph): Map<string, DoorSummary> {
+  const doorsById = new Map<string, DoorSummary>();
+  for (const group of listDoors(graph).groups) {
+    for (const door of group.doors) doorsById.set(door.id, door);
+  }
+  return doorsById;
+}
 
 /** How far back through the references to look for a way in. */
 const MAX_BACK_HOPS = 6;
@@ -108,6 +122,45 @@ export interface PlacedFrame {
   nameDrifted: boolean;
 }
 
+/** One of this project's files that imports the package a trace died inside. */
+export interface DependencyImporter {
+  nodeId: string;
+  /** Repo-relative path of the importing file. */
+  path: string;
+  /** Ways in that can reach that file, nearest first. */
+  doors: DoorReach[];
+}
+
+/**
+ * Where a trace that never reached this project's own code touches it anyway.
+ *
+ * A stack that is entirely `node_modules` frames still has an answer worth giving: the
+ * library it died in is one this project imports somewhere, and that somewhere is where
+ * the reader has to go. It is a weaker claim than a placed frame and is kept in its own
+ * field for that reason — nothing here says the failing call came from these files, only
+ * that these are the files that reach for that package at all.
+ */
+export interface DependencyReach {
+  /** The package the innermost readable dependency frame was inside. */
+  packageName: string;
+  /** The frame that named it, so the reader can check the reading. */
+  frame: ErrorFrame;
+  /**
+   * The dependency of this project's own that declares `packageName`, when nothing here
+   * imports `packageName` itself. Null when the project imports it directly — then it is
+   * its own route in — and null when no installed manifest admits to bringing it along.
+   */
+  via: string | null;
+  /**
+   * Files that import `via ?? packageName`, or none when there are so many that naming
+   * any of them would be picking. Empty with `total` at zero means nothing here reaches
+   * the package by either route — the trace has left this project behind.
+   */
+  importers: DependencyImporter[];
+  /** How many files import it, listed or not. */
+  total: number;
+}
+
 /** A way in that can reach the code the error happened in. */
 export interface DoorReach {
   door: DoorSummary;
@@ -147,6 +200,13 @@ export interface ErrorTraceResult {
    * saying rather than leaving as one more unplaced frame.
    */
   needsSourceMap: boolean;
+  /**
+   * Set only when nothing in the paste landed on this project's own code and the
+   * innermost dependency frame named a package that can be looked up. The answer to
+   * "which of my code calls into that library", which is the question left over once
+   * the trace itself has nothing of yours in it.
+   */
+  intoDependency: DependencyReach | null;
 }
 
 /**
@@ -159,8 +219,16 @@ export interface ErrorTraceResult {
  * @param maps Where to look up frames that landed in build output. Without it a trace
  *   from a production bundle parses fine and places nothing, which is the honest answer
  *   but not a useful one.
+ * @param installed Where to ask which of this project's own dependencies brought along
+ *   the package a trace died in. Without it that question goes unanswered rather than
+ *   guessed at, and a stack that ends in a transitive dependency stops at its name.
  */
-export function traceError(graph: AtlasGraph, pasted: string, maps?: SourceMapIndex): ErrorTraceResult {
+export function traceError(
+  graph: AtlasGraph,
+  pasted: string,
+  maps?: SourceMapIndex,
+  installed: PackageIndex = NO_PACKAGES,
+): ErrorTraceResult {
   const frames = parseFrames(pasted);
   const placed = frames.map((frame) => place(graph, frame, maps));
   const yours = placed.filter((found) => found.nodeId !== null);
@@ -176,6 +244,7 @@ export function traceError(graph: AtlasGraph, pasted: string, maps?: SourceMapIn
     searchTruncated: back.truncated,
     parsedNothing: frames.length === 0,
     needsSourceMap: placed.some((found) => found.reason === 'minified'),
+    intoDependency: origin ? null : reachIntoDependency(graph, placed, installed),
   };
 }
 
@@ -488,6 +557,194 @@ function dedupe(values: string[]): string[] {
 }
 
 // ---------------------------------------------------------------------------
+// When the whole trace is somebody else's code
+// ---------------------------------------------------------------------------
+
+/**
+ * The package a vendored path is inside, or null when its layout does not say.
+ *
+ * Only the three ecosystems whose import specifiers this can be matched against are
+ * read. A CocoaPod or a crate would parse just as easily and then match nothing, and a
+ * package name with nowhere to look it up is worse than saying nothing at all.
+ */
+export function packageAt(cleaned: string): string | null {
+  // The *last* `node_modules` is the one that counts: a nested copy means the frame is
+  // inside the nested package, not inside whatever vendored it.
+  const npm = cleaned.lastIndexOf('node_modules/');
+  if (npm !== -1) return npmPackage(cleaned.slice(npm + 'node_modules/'.length));
+
+  for (const mark of ['site-packages/', 'dist-packages/']) {
+    const at = cleaned.lastIndexOf(mark);
+    if (at !== -1) {
+      const first = cleaned.slice(at + mark.length).split('/').filter(Boolean)[0];
+      // A flat module is a whole distribution: `site-packages/six.py` is `six`.
+      return first ? first.replace(/\.py$/, '') : null;
+    }
+  }
+
+  const gomod = cleaned.lastIndexOf('go/pkg/mod/');
+  if (gomod !== -1) return goModule(cleaned.slice(gomod + 'go/pkg/mod/'.length));
+
+  return null;
+}
+
+function npmPackage(rest: string): string | null {
+  const parts = rest.split('/').filter(Boolean);
+  if (parts.length === 0) return null;
+  if (!parts[0].startsWith('@')) return parts[0];
+  return parts.length > 1 ? `${parts[0]}/${parts[1]}` : null;
+}
+
+/**
+ * A module path out of the Go module cache: everything up to the segment carrying the
+ * version, with the version dropped and the cache's escaping undone. The cache spells a
+ * capital letter `!x`, because not every filesystem tells `A` and `a` apart.
+ */
+function goModule(rest: string): string | null {
+  const parts = rest.split('/').filter(Boolean);
+  const versioned = parts.findIndex((part) => part.includes('@'));
+  if (versioned === -1) return null;
+  const path = [...parts.slice(0, versioned), parts[versioned].slice(0, parts[versioned].indexOf('@'))];
+  const joined = path.join('/').replace(/!([a-z])/g, (_, letter: string) => letter.toUpperCase());
+  return joined || null;
+}
+
+/** How many importing files to name before the rest become a count. */
+const MAX_IMPORTERS_SHOWN = 8;
+
+/**
+ * Past this many importers, no file is named at all.
+ *
+ * Dogfooding decided this number. A React Native trace in a real app came back with the
+ * first eight of a hundred and eighteen files that import `react-native` — alphabetical,
+ * so the list began inside a `backup/` folder — and every one of them was a file the
+ * reader would have to rule out by hand. Eight arbitrary names read as eight suspects.
+ * A framework everything imports genuinely is not narrowed down by the trace, and the
+ * count on its own says that without pretending otherwise.
+ */
+const TOO_MANY_IMPORTERS = 12;
+
+/**
+ * Answer "which of my own code reaches for that library" for a trace with nothing of the
+ * reader's in it.
+ *
+ * Works outwards from the innermost frame, because a stack that passes through three
+ * libraries died in the first one. The first frame naming a package that anything here
+ * imports wins; if none of them do, the innermost readable package is still reported
+ * with no importers, so the reader is told which library it was rather than nothing.
+ */
+function reachIntoDependency(
+  graph: AtlasGraph,
+  placed: PlacedFrame[],
+  installed: PackageIndex,
+): DependencyReach | null {
+  const named = placed
+    .filter((found) => found.reason === 'dependency')
+    .map((found) => ({ frame: found.frame, packageName: packageAt(cleanPath(found.frame.rawPath)) }))
+    .filter((entry): entry is { frame: ErrorFrame; packageName: string } => entry.packageName !== null);
+  if (named.length === 0) return null;
+
+  const doorsById = doorIndex(graph);
+  const imported = importedPackages(graph);
+
+  // Two passes on purpose. A frame whose package this project imports outright is a
+  // better answer than one reached through a parent, wherever in the stack it sits, so
+  // every frame is tried the direct way before any of them is tried the indirect way.
+  for (const entry of named) {
+    const files = importersOf(graph, entry.packageName);
+    if (files.length > 0) return assemble(graph, entry, null, files, doorsById);
+  }
+
+  for (const entry of named) {
+    const parent = installed.dependents(entry.packageName, imported)[0];
+    if (!parent) continue;
+    const files = importersOf(graph, parent);
+    if (files.length > 0) return assemble(graph, entry, parent, files, doorsById);
+  }
+
+  return { packageName: named[0].packageName, frame: named[0].frame, via: null, importers: [], total: 0 };
+}
+
+/**
+ * Turn a package and the files importing it into the answer.
+ *
+ * Files a way in can reach are listed first, because a file nothing can reach is less
+ * likely to have been running when the trace was taken — the only ordering here with a
+ * reason behind it. Doors are worked out for the listed files alone: it is a graph walk
+ * per declaration, and a hundred importers would pay for it without anything to show.
+ */
+function assemble(
+  graph: AtlasGraph,
+  entry: { frame: ErrorFrame; packageName: string },
+  via: string | null,
+  files: AtlasNode[],
+  doorsById: Map<string, DoorSummary>,
+): DependencyReach {
+  const listed =
+    files.length > TOO_MANY_IMPORTERS
+      ? []
+      : files
+          .map((file) => ({
+            nodeId: file.id,
+            path: file.path ?? '',
+            doors: doorsReachingFile(graph, file, doorsById),
+          }))
+          .sort((a, b) => b.doors.length - a.doors.length || a.path.localeCompare(b.path))
+          .slice(0, MAX_IMPORTERS_SHOWN);
+
+  return { packageName: entry.packageName, frame: entry.frame, via, importers: listed, total: files.length };
+}
+
+/** Every package anything in this project imports — the only names a parent may be. */
+function importedPackages(graph: AtlasGraph): string[] {
+  const out = new Set<string>();
+  for (const node of graph.nodesOfKind('file')) {
+    const imports = (node.meta as { externalImports?: string[] } | undefined)?.externalImports;
+    for (const name of imports ?? []) out.add(name);
+  }
+  return [...out].sort();
+}
+
+/**
+ * Every way in that can reach anything declared in one file.
+ *
+ * Asked of the file *and* each of its declarations, because a reference edge lands on the
+ * function it names rather than on the file around it — walking back from the file node
+ * alone finds nothing and would report a thoroughly reachable module as reachable by
+ * nobody. Nearest first, and a door found by two declarations is listed once, by its
+ * shortest chain.
+ */
+function doorsReachingFile(graph: AtlasGraph, file: AtlasNode, index: Map<string, DoorSummary>): DoorReach[] {
+  const best = new Map<string, DoorReach>();
+  for (const target of [file, ...graph.childrenOf(file.id)]) {
+    if (target !== file && target.kind !== 'function') continue;
+    for (const reach of doorsReaching(graph, target.id, index).doors) {
+      const held = best.get(reach.door.id);
+      if (!held || reach.hops < held.hops) best.set(reach.door.id, reach);
+    }
+  }
+  return [...best.values()].sort(
+    (a, b) => a.hops - b.hops || rank(b.confidence) - rank(a.confidence) || a.door.name.localeCompare(b.door.name),
+  );
+}
+
+/**
+ * Files importing a package, or a path inside it. The subpath match is what makes a Go
+ * frame in `gin` findable from a file that imports `gin/binding`, and costs nothing on
+ * the ecosystems that record the bare package name anyway.
+ */
+function importersOf(graph: AtlasGraph, packageName: string): AtlasNode[] {
+  const prefix = `${packageName}/`;
+  return graph
+    .nodesOfKind('file')
+    .filter((node) => {
+      const imports = (node.meta as { externalImports?: string[] } | undefined)?.externalImports;
+      return !!imports && imports.some((name) => name === packageName || name.startsWith(prefix));
+    })
+    .sort((a, b) => (a.path ?? '').localeCompare(b.path ?? ''));
+}
+
+// ---------------------------------------------------------------------------
 // Walking back to the doors
 // ---------------------------------------------------------------------------
 
@@ -502,11 +759,9 @@ function dedupe(values: string[]): string[] {
 export function doorsReaching(
   graph: AtlasGraph,
   targetId: string,
+  index?: Map<string, DoorSummary>,
 ): { doors: DoorReach[]; truncated: boolean } {
-  const doorsById = new Map<string, DoorSummary>();
-  for (const group of listDoors(graph).groups) {
-    for (const door of group.doors) doorsById.set(door.id, door);
-  }
+  const doorsById = index ?? doorIndex(graph);
 
   const cameFrom = new Map<string, string>();
   const weakest = new Map<string, Confidence>([[targetId, 'certain']]);
