@@ -143,6 +143,8 @@ export class AtlasGraph {
   private readonly incoming = new Map<string, AtlasEdge[]>();
   private readonly outgoing = new Map<string, AtlasEdge[]>();
   private readonly pathCache = new Map<string, string[]>();
+  /** Built on the first stack-frame lookup and kept; most runs never ask for it. */
+  private pathIndex: Map<string, AtlasNode[]> | null = null;
 
   constructor(atlas: Atlas) {
     this.meta = atlas.meta;
@@ -441,6 +443,57 @@ export class AtlasGraph {
       if (this.nodes.get(chain[i])?.kind === kind) return chain[i];
     }
     return undefined;
+  }
+
+  /**
+   * Every file path in the atlas, repo-relative — what a pasted stack frame has to be
+   * matched against before anything else can be said about it.
+   */
+  filePaths(): string[] {
+    return [...this.byPath().keys()];
+  }
+
+  /**
+   * The most specific thing declared at one line of one file.
+   *
+   * A stack frame is a path and a number, and the question it is really asking is
+   * "what is this inside". So the answer is the innermost range that contains the
+   * line — the function rather than the file it sits in — and the file itself only
+   * when the line falls between the things in it, which is where a stray `throw` at
+   * module scope lands.
+   */
+  nodeAt(path: string, line: number): AtlasNode | null {
+    let best: AtlasNode | null = null;
+    let smallest = Infinity;
+    let file: AtlasNode | null = null;
+
+    for (const node of this.byPath().get(path) ?? []) {
+      if (node.kind === 'file') file = node;
+      if (node.startLine === null || node.endLine === null) continue;
+      if (line < node.startLine || line > node.endLine) continue;
+      const span = node.endLine - node.startLine;
+      if (span < smallest) {
+        smallest = span;
+        best = node;
+      }
+    }
+    return best ?? file;
+  }
+
+  /** Path → everything declared in it, built once and kept. */
+  private byPath(): Map<string, AtlasNode[]> {
+    if (this.pathIndex) return this.pathIndex;
+    const index = new Map<string, AtlasNode[]>();
+    for (const node of this.nodes.values()) {
+      // Modules carry the directory they stand for, which is not a file a frame can
+      // name, and would otherwise swallow every lookup for a path inside it.
+      if (!node.path || node.kind === 'module' || node.kind === 'app') continue;
+      const found = index.get(node.path);
+      if (found) found.push(node);
+      else index.set(node.path, [node]);
+    }
+    this.pathIndex = index;
+    return index;
   }
 
   search(query: string, limit = 30): AtlasNode[] {

@@ -41,6 +41,15 @@ export { renderAtlasMarkdown } from './export/markdown.js';
 export { buildTours, tourFor } from './model/tours.js';
 export type { Tour, TourStep } from './model/tours.js';
 export { buildFlow, listDoors } from './model/flow.js';
+export { doorsReaching, parseFrames, traceError } from './model/errortrace.js';
+export type {
+  DoorReach,
+  ErrorFrame,
+  ErrorTraceResult,
+  PlacedFrame,
+  TraceLanguage,
+  UnplacedReason,
+} from './model/errortrace.js';
 export type {
   DoorGroup,
   DoorList,
