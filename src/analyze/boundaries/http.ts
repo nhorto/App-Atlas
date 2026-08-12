@@ -314,8 +314,7 @@ function routerMount(call: CallExpression, ctx: DetectorContext): void {
   if (prefix !== null && !prefix.startsWith('/')) return;
   // Hono's `.route(path, app)` takes exactly one; Express's `.use` takes a chain.
   for (const arg of prefix === null ? args : args.slice(1)) {
-    if (!Node.isIdentifier(arg)) continue;
-    const target = mountTarget(arg.getText(), ctx);
+    const target = mountedRouter(arg, ctx);
     if (!target) continue;
     ctx.emit({
       type: 'router-mount',
@@ -329,6 +328,59 @@ function routerMount(call: CallExpression, ctx: DetectorContext): void {
       line: call.getStartLineNumber(),
     });
   }
+}
+
+/**
+ * The router an argument to `use` stands for, in the four spellings that are one.
+ *
+ * ESM writes the name and CommonJS writes the module, and Ghost writes both at once —
+ * `backendApp.use('/ghost', …, require('../admin')())` mounts a router that has no name
+ * anywhere for a resolver to match on (#204). Four shapes, and every one of them is a
+ * literal specifier or a binding the file already declared:
+ *
+ *   app.use('/api', users)              — the name, which is what ESM produces
+ *   app.use('/api', routes())           — a factory, called on a name bound by a require
+ *   app.use('/api', require('./users')) — the module itself
+ *   app.use('/api', require('./x')())   — a factory on the module, which is Ghost's
+ *
+ * Deliberately not a property access: `app.use(sentry.errorHandler)` and
+ * `app.use(bodyParser.json({…}))` are the overwhelming majority of what sits in these
+ * argument lists, and reading one of them as a router would put every route in the file
+ * under a prefix it does not have. A wrong address is worse than a missing one — it is
+ * printed as a fact and nothing about it looks wrong.
+ */
+function mountedRouter(
+  arg: Node,
+  ctx: DetectorContext,
+): { module: string | null; varName: string | null } | null {
+  if (Node.isIdentifier(arg)) return mountTarget(arg.getText(), ctx);
+
+  if (!Node.isCallExpression(arg)) return null;
+
+  // `require('./users')` — the module handed over whole.
+  const direct = requireSpecifier(arg);
+  if (direct) return { module: importedModule(ctx.ref.relPath, direct), varName: null };
+
+  const callee = arg.getExpression();
+
+  // `require('./admin')()` — the factory Ghost mounts with.
+  if (Node.isCallExpression(callee)) {
+    const inner = requireSpecifier(callee);
+    return inner ? { module: importedModule(ctx.ref.relPath, inner), varName: null } : null;
+  }
+
+  // `routes()` — a factory on a name this file bound. Resolved the same way the plain
+  // identifier is, so a package (`cors()`, `morgan()`) still comes back null.
+  if (Node.isIdentifier(callee)) return mountTarget(callee.getText(), ctx);
+
+  return null;
+}
+
+/** `require('./x')` → `./x`, and null for anything that is not exactly that. */
+function requireSpecifier(call: CallExpression): string | null {
+  const callee = call.getExpression();
+  if (!Node.isIdentifier(callee) || callee.getText() !== 'require') return null;
+  return literalString(argAt(call, 0));
 }
 
 /**
