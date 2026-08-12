@@ -13,7 +13,7 @@ Not recorded here. This file is committed, and what changed since the last run i
 - 356 files · 50,034 lines · 165 folders · 1,484 functions · 432 types
 - 67 ways in · 1 outside service · 5 data stores · 27 env vars
 - Built with Cloudflare Pages, Cloudflare Workers, React, Vite
-- 75% of files carry a docstring App Atlas reads verbatim · 27 describe code that has since changed
+- 75% of files carry a docstring App Atlas reads verbatim
 - **App Atlas could not read 1 file**, so whatever they declare — a route, a check, a table — is missing from everything below
 
 ## Ways in

@@ -426,6 +426,41 @@ test('regenerating a committed map from a fresh checkout destroys nothing', asyn
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
+/**
+ * The same leak as #69, in a line nobody thought of as a comparison.
+ *
+ * "N describe code that has since changed" is derived from the baseline in `.app-atlas/`
+ * exactly as the changes section is, and the flag is sticky, so the number ratchets up on
+ * whichever machine has been running the tool longest. The repository's own map carried
+ * `27` in the committed v0.17.0 file and `177` on a warm cache; every other number under
+ * "By the numbers" was byte-identical across both runs.
+ */
+test('a committed map does not carry a docstring-drift count only one machine can produce', async () => {
+  const dir = scratch('sample', 'md-shared-stale');
+  const atlas = await analyze(dir);
+  const docsLine = (text) => text.split('\n').find((line) => line.includes('carry a docstring'));
+
+  // The fresh checkout: no baseline, so nothing was ever marked stale.
+  const cold = renderAtlasMarkdown(new AtlasGraph(atlas), { shared: true });
+
+  // The machine that has been running the tool for months. Set on the stats rather than
+  // staged across two analyses because what is under test is the renderer's use of the
+  // flag, not the arithmetic that raised it.
+  atlas.meta.stats.staleDocs = 3;
+  const warm = renderAtlasMarkdown(new AtlasGraph(atlas), { shared: true });
+  const mine = renderAtlasMarkdown(new AtlasGraph(atlas));
+
+  assert.match(mine, /3 describe code that has since changed/, 'still told to whoever ran it');
+  assert.doesNotMatch(warm, /describe code that has since changed/);
+
+  // The rest of the line is a fact every regenerator produces, so it stays — and reads
+  // the same either way, which is the whole point.
+  assert.ok(docsLine(warm), 'the docstring line survives');
+  assert.equal(docsLine(warm), docsLine(cold), 'and does not depend on whose cache it was');
+
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
 test('git decides, and only for a file it is actually tracking', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'atlas-tracked-'));
   await run('git', ['init', '-q'], { cwd: dir });

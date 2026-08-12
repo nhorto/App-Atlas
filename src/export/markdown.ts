@@ -65,6 +65,7 @@ export function renderAtlasMarkdown(graph: AtlasGraph, options: MarkdownOptions 
   const stats = meta.stats;
   const insights = buildInsights(graph);
   const overview = graph.getOverview();
+  const shared = Boolean(options.shared);
   const out: string[] = [];
 
   // The header is where this document says how much its own facts are worth, so it has
@@ -95,7 +96,7 @@ export function renderAtlasMarkdown(graph: AtlasGraph, options: MarkdownOptions 
   // First, because an agent handed this map at the start of a session is most often
   // being asked to carry on from where the last one stopped, and because the reader who
   // is not an agent came here asking what the weekend did to their app.
-  appendChanges(out, meta.changes, Boolean(options.shared));
+  appendChanges(out, meta.changes, shared);
 
   // --- numbers ---
   out.push('## By the numbers');
@@ -111,11 +112,21 @@ export function renderAtlasMarkdown(graph: AtlasGraph, options: MarkdownOptions 
   // agents, and `0% of files carry a docstring` is a fact about the repository's
   // authors; "no files App Atlas could read" is a fact about this tool, which is the
   // true one on a Java or Ruby project.
+  //
+  // The drift clause is dropped from a committed map for the same reason the changes
+  // section is (#69). Staleness is detected by comparing consecutive runs against the
+  // baseline in `.app-atlas/`, which is not committed, and the flag is sticky
+  // (model/staleness.ts) — so the count is a tally of what one machine happened to
+  // watch happen, and it only ever goes up. On this repository's own map the same
+  // commit rendered 27, then 177 on a warm cache, then nothing at all from a fresh
+  // checkout, while every other number on this line stayed byte-identical. There is no
+  // numberless version to fall back on either: whether the clause appears at all is the
+  // machine-dependent part. `app-atlas analyze` still reports it to the person who ran it.
   out.push(
     stats.files === 0
       ? '- No files App Atlas could read, so nothing here is scored for documentation'
       : `- ${percent(stats.documentedFiles, stats.files)} of files carry a docstring App Atlas reads verbatim${
-          stats.staleDocs > 0 ? ` · ${stats.staleDocs} describe code that has since changed` : ''
+          !shared && stats.staleDocs > 0 ? ` · ${stats.staleDocs} describe code that has since changed` : ''
         }`,
   );
   // An agent reading this file needs the caveat before the numbers it qualifies, not in
