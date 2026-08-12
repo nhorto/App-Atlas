@@ -111,11 +111,21 @@ export function renderAtlasMarkdown(graph: AtlasGraph, options: MarkdownOptions 
   // agents, and `0% of files carry a docstring` is a fact about the repository's
   // authors; "no files App Atlas could read" is a fact about this tool, which is the
   // true one on a Java or Ruby project.
+  // The drift count is left off a committed file for the same reason "What changed since
+  // the last run" is: it is a comparison against the atlas in the gitignored
+  // `.app-atlas/`, and the flag behind it is deliberately sticky, so it ratchets upward
+  // and never clears until a docstring is rewritten. Measured on one commit on one
+  // machine: 27 in the committed file, 177 with a warm cache, 176 after re-analyzing,
+  // and absent on a fresh checkout. Every other number in this section was identical.
+  // A number only the person who ran it can reproduce does not belong in a file everyone
+  // else reads — and a reader watching it move reads a detector regression that is not
+  // there.
+  const drift = !options.shared && stats.staleDocs > 0;
   out.push(
     stats.files === 0
       ? '- No files App Atlas could read, so nothing here is scored for documentation'
       : `- ${percent(stats.documentedFiles, stats.files)} of files carry a docstring App Atlas reads verbatim${
-          stats.staleDocs > 0 ? ` · ${stats.staleDocs} describe code that has since changed` : ''
+          drift ? ` · ${stats.staleDocs} describe code that has since changed` : ''
         }`,
   );
   // An agent reading this file needs the caveat before the numbers it qualifies, not in
