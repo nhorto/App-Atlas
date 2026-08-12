@@ -579,6 +579,53 @@ export interface FlowView {
   maxHop: number;
 }
 
+// --- a pasted error, put on the map (src/model/errortrace.ts) ---
+
+export type TraceLanguage = 'javascript' | 'python' | 'go' | 'dotnet' | 'java';
+
+/** Why a frame could not be put on the map. */
+export type UnplacedReason = 'dependency' | 'runtime' | 'unknown-file' | 'ambiguous';
+
+export interface ErrorFrame {
+  raw: string;
+  rawPath: string;
+  line: number;
+  column: number | null;
+  functionName: string | null;
+  language: TraceLanguage;
+  order: number;
+}
+
+export interface PlacedFrame {
+  frame: ErrorFrame;
+  nodeId: string | null;
+  nodeName: string | null;
+  nodeKind: 'function' | 'file' | null;
+  path: string | null;
+  reason: UnplacedReason | null;
+  candidates: string[];
+  /** The runtime named one function and that line holds another — the two have drifted. */
+  nameDrifted: boolean;
+}
+
+export interface DoorReach {
+  door: DoorSummary;
+  via: string[];
+  viaNames: string[];
+  hops: number;
+  confidence: Confidence;
+}
+
+export interface ErrorTraceResult {
+  frames: PlacedFrame[];
+  yours: PlacedFrame[];
+  languages: TraceLanguage[];
+  origin: PlacedFrame | null;
+  doors: DoorReach[];
+  searchTruncated: boolean;
+  parsedNothing: boolean;
+}
+
 export interface SourceSlice {
   path: string;
   startLine: number;

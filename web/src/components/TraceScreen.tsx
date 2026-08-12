@@ -12,9 +12,10 @@
  * cut short it says so on the page rather than letting a partial answer read as a
  * complete one.
  */
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { fetchDoors, fetchFlow } from '../api';
 import type { DoorList, DoorSummary, FlowExit, FlowStop, FlowView } from '../types';
+import { ErrorPaste } from './ErrorPaste';
 
 interface Props {
   /** Open something on the map, which is where "show me this properly" leads. */
@@ -32,6 +33,18 @@ export function TraceScreen({ onReveal, onSelect, selectedId }: Props) {
   const [error, setError] = useState<string | null>(null);
   /** The stop the reader is following, which dims everything off its branch. */
   const [branchFrom, setBranchFrom] = useState<string | null>(null);
+  /**
+   * Which way round the reader is working. Both directions are the same map — pick a
+   * door and follow it out, or arrive holding an error and walk back to the doors —
+   * so they share a screen rather than splitting the ways-in list across two tabs.
+   */
+  const [mode, setMode] = useState<'forward' | 'error'>('forward');
+
+  /** Following a door out of the error view is what the forward view already does. */
+  const followDoor = useCallback((id: string) => {
+    setDoorId(id);
+    setMode('forward');
+  }, []);
 
   useEffect(() => {
     let stale = false;
@@ -75,6 +88,24 @@ export function TraceScreen({ onReveal, onSelect, selectedId }: Props) {
     <div className="trace">
       <aside className="trace-doors">
         <div className="trace-search">
+          <div className="trace-modes" role="tablist" aria-label="Which way to trace">
+            <button
+              role="tab"
+              aria-selected={mode === 'forward'}
+              className={mode === 'forward' ? 'trace-mode is-current' : 'trace-mode'}
+              onClick={() => setMode('forward')}
+            >
+              Follow a way in
+            </button>
+            <button
+              role="tab"
+              aria-selected={mode === 'error'}
+              className={mode === 'error' ? 'trace-mode is-current' : 'trace-mode'}
+              onClick={() => setMode('error')}
+            >
+              Paste an error
+            </button>
+          </div>
           <input
             type="search"
             value={query}
@@ -127,7 +158,9 @@ export function TraceScreen({ onReveal, onSelect, selectedId }: Props) {
       </aside>
 
       <div className="trace-flow">
-        {flow ? (
+        {mode === 'error' ? (
+          <ErrorPaste onSelect={onSelect} onFollowDoor={followDoor} />
+        ) : flow ? (
           <Flow
             flow={flow}
             onBranch={onBranch}

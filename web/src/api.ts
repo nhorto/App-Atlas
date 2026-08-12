@@ -6,6 +6,7 @@ import type {
   AtlasNode,
   BoundaryView,
   DoorList,
+  ErrorTraceResult,
   ExplainResult,
   FlowView,
   InsightsView,
@@ -90,6 +91,27 @@ export function fetchDoors(): Promise<DoorList> {
 /** Where one door leads, followed when the reader picks it and not before. */
 export function fetchFlow(id: string): Promise<FlowView> {
   return get<FlowView>(`/api/flow?id=${encodeURIComponent(id)}`);
+}
+
+/**
+ * A pasted error, matched to files and walked back to the doors.
+ *
+ * The only request here that sends something rather than asking for something, so it
+ * is the only one that posts. The paste never leaves this machine: the server is on
+ * loopback and nothing in this path calls out.
+ */
+export async function traceError(trace: string): Promise<ErrorTraceResult> {
+  const url = currentScope ? `/api/trace?scope=${encodeURIComponent(currentScope)}` : '/api/trace';
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', accept: 'application/json' },
+    body: JSON.stringify({ trace }),
+  });
+  if (!res.ok) {
+    const body = (await res.json().catch(() => ({}))) as { error?: string };
+    throw new Error(body.error ?? `Request failed: ${res.status}`);
+  }
+  return (await res.json()) as ErrorTraceResult;
 }
 
 /** The code behind one walkthrough step, read from disk when the step is reached. */

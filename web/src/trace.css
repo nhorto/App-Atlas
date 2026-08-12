@@ -498,3 +498,351 @@
     border-bottom: 1px solid var(--line);
   }
 }
+
+/* --- which way round you are working --- */
+
+.trace-modes {
+  display: flex;
+  gap: 2px;
+  margin-bottom: 10px;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 2px;
+}
+
+.trace-mode {
+  flex: 1;
+  border: 0;
+  background: transparent;
+  border-radius: 3px;
+  padding: 5px 6px;
+  font: inherit;
+  font-size: 11.5px;
+  color: var(--muted);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.trace-mode:hover {
+  color: var(--ink);
+}
+
+.trace-mode.is-current {
+  background: var(--surface);
+  color: var(--ink);
+  box-shadow: 0 1px 2px rgba(64, 54, 32, 0.12);
+}
+
+.trace-mode:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+/* --- paste an error --- */
+
+.paste {
+  max-width: 760px;
+}
+
+.paste-head h2 {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: 21px;
+  font-weight: 600;
+}
+
+.paste-head p {
+  margin: 6px 0 0;
+  font-size: 13.5px;
+  line-height: 1.6;
+  color: var(--ink-soft, var(--ink));
+}
+
+.paste-box {
+  display: block;
+  width: 100%;
+  margin-top: 14px;
+  border: 1px solid var(--line-strong);
+  border-radius: 4px;
+  padding: 10px 12px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.55;
+  background: var(--surface);
+  color: var(--ink);
+  resize: vertical;
+  min-height: 120px;
+}
+
+.paste-box:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.paste-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 10px;
+  flex-wrap: wrap;
+}
+
+.paste-go {
+  border: 1px solid var(--accent);
+  background: var(--accent);
+  color: #fff;
+  border-radius: 4px;
+  padding: 6px 14px;
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.paste-go:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.paste-clear {
+  border: 1px solid var(--line-strong);
+  background: var(--surface);
+  border-radius: 4px;
+  padding: 6px 12px;
+  font: inherit;
+  font-size: 13px;
+  color: var(--ink);
+  cursor: pointer;
+}
+
+.paste-go:focus-visible,
+.paste-clear:focus-visible,
+.paste-more:focus-visible,
+.paste-frame:focus-visible,
+.paste-door-main:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.paste-privacy {
+  font-size: 11.5px;
+  color: var(--muted);
+}
+
+.paste-error {
+  margin-top: 14px;
+  color: #8a5f0e;
+  font-size: 13px;
+}
+
+.paste-result {
+  margin-top: 26px;
+}
+
+.paste-label {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin: 0 0 8px;
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.paste-label strong {
+  font-family: var(--font-mono);
+  text-transform: none;
+  letter-spacing: 0;
+  font-size: 13px;
+  color: var(--ink);
+}
+
+.paste-label-count {
+  text-transform: none;
+  letter-spacing: 0;
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  opacity: 0.85;
+}
+
+/* --- the frames --- */
+
+.paste-frame-list {
+  list-style: none;
+  margin: 0 0 26px;
+  padding: 0;
+  border-left: 2px solid var(--line-strong);
+}
+
+.paste-frame {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  flex-wrap: wrap;
+  width: 100%;
+  text-align: left;
+  border: 0;
+  background: transparent;
+  padding: 5px 10px;
+  font: inherit;
+  color: var(--ink);
+}
+
+.paste-frame.is-placed {
+  cursor: pointer;
+}
+
+.paste-frame.is-placed:hover {
+  background: var(--accent-soft);
+}
+
+.paste-frame.is-unplaced {
+  opacity: 0.62;
+}
+
+.paste-frame-name {
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+}
+
+.paste-frame-where {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+
+.paste-why,
+.paste-drift {
+  font-size: 10.5px;
+  padding: 1px 6px;
+  border-radius: 3px;
+  background: var(--line);
+  color: var(--muted);
+}
+
+.paste-drift {
+  background: rgba(196, 136, 28, 0.18);
+  color: #8a5f0e;
+  cursor: help;
+}
+
+/* --- the doors that can reach it --- */
+
+.paste-lede {
+  margin: 0 0 10px;
+  font-size: 13.5px;
+  line-height: 1.6;
+}
+
+.paste-door-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.paste-door {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  border: 1px solid var(--line-strong);
+  border-radius: 4px;
+  background: var(--surface);
+  padding-right: 10px;
+}
+
+.paste-door-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  align-items: flex-start;
+  border: 0;
+  background: transparent;
+  padding: 8px 12px;
+  font: inherit;
+  color: var(--ink);
+  text-align: left;
+  cursor: pointer;
+}
+
+.paste-door-main:hover {
+  background: var(--accent-soft);
+}
+
+.paste-door-name {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  overflow-wrap: anywhere;
+}
+
+.paste-door-chain {
+  font-size: 11px;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+
+.paste-door-marks {
+  display: flex;
+  gap: 4px;
+  flex: none;
+}
+
+.paste-more {
+  margin-top: 10px;
+  border: 1px solid var(--line-strong);
+  background: var(--surface);
+  border-radius: 4px;
+  padding: 5px 10px;
+  font: inherit;
+  font-size: 12px;
+  color: var(--ink);
+  cursor: pointer;
+}
+
+.paste-note {
+  margin: 16px 0 0;
+  padding: 12px 14px;
+  border-left: 3px solid #c4881c;
+  background: rgba(196, 136, 28, 0.07);
+  border-radius: 0 4px 4px 0;
+}
+
+.paste-note p {
+  margin: 0;
+  font-size: 13.5px;
+  line-height: 1.55;
+}
+
+.paste-note-quiet {
+  margin-top: 8px !important;
+  color: var(--muted);
+  font-size: 12.5px !important;
+}
+
+.paste-foot {
+  margin-top: 22px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+}
+
+.paste-foot p {
+  margin: 0;
+  font-size: 12px;
+  color: var(--muted);
+  line-height: 1.6;
+}
+
+.paste-cut {
+  margin-bottom: 6px !important;
+  color: #8a5f0e !important;
+}
