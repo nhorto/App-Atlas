@@ -12,6 +12,8 @@
  *     whole point of it is to be cheap enough to paste into a context window.
  */
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import test from 'node:test';
@@ -27,10 +29,12 @@ import {
 const here = path.dirname(fileURLToPath(import.meta.url));
 const BOUNDARY = path.join(here, 'fixtures', 'boundary');
 const SAMPLE = path.join(here, 'fixtures', 'sample');
+const WIDEFLOW = path.join(here, 'fixtures', 'wideflow');
 
 const boundaryAtlas = (await analyzeProject(BOUNDARY, { followReferences: true, cache: 'off' })).atlas;
 const boundary = new AtlasGraph(boundaryAtlas);
 const sample = new AtlasGraph((await analyzeProject(SAMPLE, { followReferences: true, cache: 'off' })).atlas);
+const wideflow = new AtlasGraph((await analyzeProject(WIDEFLOW, { followReferences: true, cache: 'off' })).atlas);
 
 /** A private copy, for the tests that need to change a description and re-render. */
 const copyOfBoundary = () => new AtlasGraph(structuredClone(boundaryAtlas));
@@ -190,6 +194,158 @@ test('a flow is traced from the door to the database', () => {
     'the trace reaches the store the handler writes to',
   );
   assert.ok(tour.steps.every((s) => s.body.length > 0));
+});
+
+/**
+ * The middle of a tour used to be one step: "it reaches 41 other pieces of your code,
+ * including" and six names in breadth-first order. True, and an answer to nothing — the
+ * six were at six different depths, so the map could only ever show one of them, and the
+ * reader was handed the whole middle of their app in a sentence they could not follow.
+ * These pin the walk that replaced it.
+ */
+function hopsOf(tour) {
+  const start = tour.steps.findIndex((step) => step.title === 'Your code answers');
+  const end = tour.steps.findIndex((step) => step.title === 'And ends up here');
+  if (start < 0) return [];
+  return tour.steps.slice(start + 1, end < 0 ? undefined : end).filter((step) => /:hop\d+$/.test(step.id));
+}
+
+test('the middle of a flow is a walk, one hop at a time', () => {
+  const tour = tours.find((t) => t.title.includes('POST to /api/users'));
+  const hops = hopsOf(tour);
+  assert.ok(hops.length > 0, 'a door with code behind it has somewhere to walk to');
+
+  // Each hop names the step before it, which is what makes the sequence a path rather
+  // than a list that happens to be in an order.
+  const answers = tour.steps.find((step) => step.title === 'Your code answers');
+  let previous = answers.body.split(/\s+/)[0];
+  for (const hop of hops) {
+    assert.ok(hop.body.startsWith(`${previous} uses `), `${hop.id} carries on from ${previous}, not from nowhere`);
+    previous = hop.title;
+  }
+});
+
+test('a hop lights both ends of the move, and opens the code it arrives at', () => {
+  for (const tour of tours) {
+    for (const hop of hopsOf(tour)) {
+      assert.equal(hop.focusIds.length, 2, `${hop.id} shows where it came from as well as where it got to`);
+      assert.equal(hop.codeId, hop.focusIds[1], 'the drawer holds the code this hop arrived at');
+      assert.notEqual(hop.focusIds[0], hop.focusIds[1]);
+    }
+  }
+});
+
+test('the walk goes to where the data lands', () => {
+  for (const tour of tours.filter((one) => one.kind === 'flow')) {
+    const hops = hopsOf(tour);
+    if (hops.length === 0) continue;
+    const last = hops[hops.length - 1];
+    const touches = boundary
+      .edgesFrom(last.codeId)
+      .map((edge) => boundary.getNodeById(edge.toId))
+      .filter((node) => node?.kind === 'store' || node?.kind === 'service');
+    assert.ok(touches.length > 0, `${tour.title} walks to a store or a service, not to whatever came first`);
+  }
+});
+
+test('a handler that writes for itself still walks the code it calls', () => {
+  // The ordinary shape: the route writes to the database *and* calls other code. Ranking
+  // on shortest-write made the handler its own landing, so the busiest door in the
+  // fixture was the one that showed nothing at all between knocking and landing.
+  const tour = tours.find((t) => t.title.includes('POST to /api/users'));
+  const hops = hopsOf(tour);
+  assert.ok(hops.length > 0, 'a door whose handler writes directly is not left with an empty middle');
+  assert.ok(
+    boundary.edgesFrom(tour.steps[1].codeId).some((edge) => {
+      const target = boundary.getNodeById(edge.toId);
+      return target?.kind === 'store' || target?.kind === 'service';
+    }),
+    'and this is that shape: the handler reaches a store on its own',
+  );
+});
+
+test('a reference is called a reference, once, where it starts mattering', () => {
+  for (const tour of tours) {
+    const said = hopsOf(tour).filter((step) => /follows a reference in the source/.test(step.body));
+    assert.ok(said.length <= 1, 'the caveat governs every hop after it, so it is not repeated on each');
+    const hops = hopsOf(tour);
+    if (hops.length > 0) assert.equal(said.length, 1, 'and it is never left unsaid');
+    if (said.length === 1) assert.equal(said[0].id, hops[0].id, 'said on the first hop');
+  }
+});
+
+test('one line is chosen out of a wide handler, and it is the one that lands', () => {
+  // Eight helpers, one of which is the only route to the database. Picking that one out
+  // is the whole job; picking whichever came first alphabetically is what it replaced.
+  const tour = buildTours(wideflow).find((one) => one.title.includes('/api/checkout'));
+  const hops = hopsOf(tour);
+  assert.deepEqual(
+    hops.map((step) => step.title),
+    ['recordOrder'],
+  );
+});
+
+test('what the walk went past is counted rather than dropped', () => {
+  // A four-step line through a screen that touches forty pieces of code would otherwise
+  // read as the whole of what happens behind that door.
+  const tour = buildTours(wideflow).find((one) => one.title.includes('/api/checkout'));
+  const lands = tour.steps.find((step) => step.title === 'And ends up here');
+  assert.match(lands.body, /also reaches 7 other pieces this walk did not follow/);
+});
+
+test('a count that is really a ceiling says so', async () => {
+  // The search stops walking at 60. Without a word for that, a screen reaching two
+  // hundred pieces reports the same number as one reaching sixty — and a count that is
+  // silently a cap is the kind of small wrongness that costs a reader their trust in
+  // every other number on the screen. Built here rather than committed: sixty-five
+  // one-line files would be a strange thing to leave in the fixtures.
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'atlas-wide-'));
+  const helpers = Array.from({ length: 65 }, (_, i) => `helper${i}`);
+  fs.mkdirSync(path.join(root, 'src', 'app', 'api', 'wide'), { recursive: true });
+  fs.mkdirSync(path.join(root, 'src', 'lib'), { recursive: true });
+  fs.writeFileSync(
+    path.join(root, 'package.json'),
+    JSON.stringify({ name: 'toowide-fixture', private: true, dependencies: { next: '^15.0.0' } }),
+  );
+  for (const name of helpers) {
+    fs.writeFileSync(path.join(root, 'src', 'lib', `${name}.ts`), `export function ${name}(n: number) {\n  return n + 1;\n}\n`);
+  }
+  fs.writeFileSync(
+    path.join(root, 'src', 'app', 'api', 'wide', 'route.ts'),
+    [
+      ...helpers.map((name) => `import { ${name} } from '../../../lib/${name}';`),
+      '',
+      'export async function POST() {',
+      ...helpers.map((name) => `  ${name}(1);`),
+      '  return Response.json({ ok: true });',
+      '}',
+      '',
+    ].join('\n'),
+  );
+
+  const graph = new AtlasGraph((await analyzeProject(root, { followReferences: true, cache: 'off' })).atlas);
+  const tour = buildTours(graph).find((one) => one.title.includes('/api/wide'));
+  assert.ok(tour, 'a route with sixty-five helpers behind it earns a tour');
+
+  // This flow reaches no store and no outside service, so it has no landing step to hang
+  // the count on. It still has to be said — a door this wide is the one that most needs
+  // it — so it goes on the last step of the walk itself.
+  const said = tour.steps.filter((step) => /also reaches/.test(step.body));
+  assert.equal(said.length, 1, 'said once, on the last thing the walk had to say');
+  assert.match(said[0].body, /at least \d+ other pieces/, 'presented as a floor, not as a total');
+  assert.notEqual(said[0].title, 'Nobody is checking who called', 'and not tacked onto the warning');
+});
+
+test('a guard reached through other code is named by the check, not the route to it', () => {
+  // `requireOwner → auth` as the subject of a sentence produces a line nobody can read,
+  // and the real ones run to four segments beginning with a component name.
+  const guards = tours.flatMap((tour) => tour.steps).filter((step) => step.title === 'What is guarding it');
+  const chained = guards.filter((step) => /reaches it through/.test(step.body));
+  assert.ok(chained.length > 0, 'this fixture guards a door through a wrapper');
+  for (const step of chained) {
+    assert.doesNotMatch(step.body, /^\S+ → /, 'the sentence does not open with a call chain');
+    assert.match(step.body, /^\S+ checks the caller/);
+  }
 });
 
 test('an open door that writes data ends its tour with the warning', () => {

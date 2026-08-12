@@ -304,6 +304,8 @@ class PlainMap implements Lookup {
   private readonly decoded: Int32Array[] = [];
   private cursor = 0;
   private carried = [0, 0, 0, 0];
+  /** The first generated line that would not decode, after which nothing can be read. */
+  private brokenFrom: number | null = null;
 
   constructor(
     mappings: string,
@@ -348,14 +350,25 @@ class PlainMap implements Lookup {
 
   private rowAt(line: number): Int32Array | null {
     if (line < 0 || line >= this.rows.length) return null;
+    if (this.brokenFrom !== null && line >= this.brokenFrom) return null;
+
     while (this.cursor <= line) {
-      this.decoded[this.cursor] = this.decodeRow(this.rows[this.cursor]);
+      const row = this.decodeRow(this.rows[this.cursor]);
+      if (row === null) {
+        // Everything past here is unreadable too, not just this line: the deltas this
+        // row would have carried are gone, so every row after it would decode to
+        // somewhere confident and wrong. The lines already decoded are still good.
+        this.brokenFrom = this.cursor;
+        return null;
+      }
+      this.decoded[this.cursor] = row;
       this.cursor++;
     }
     return this.decoded[line];
   }
 
-  private decodeRow(row: string): Int32Array {
+  /** The decoded row, or null when it cannot be read and neither can anything after it. */
+  private decodeRow(row: string): Int32Array | null {
     if (!row) return EMPTY;
     const out: number[] = [];
     let generated = 0;
@@ -363,7 +376,12 @@ class PlainMap implements Lookup {
     for (const piece of row.split(',')) {
       if (!piece) continue;
       const fields = decodeVlq(piece);
-      if (fields === null || fields.length === 0) continue;
+      // A segment that will not decode takes the whole line with it. Skipping just the
+      // bad one looks tidier and is worse: every column on the line is a delta from the
+      // one before, so dropping a delta silently shifts everything after it and the map
+      // goes on answering — with a real file and a plausible line that is not the one.
+      // A line nobody can read has to read as nothing.
+      if (fields === null || fields.length === 0) return null;
 
       generated += fields[0];
       if (fields.length < 4) {

@@ -12,7 +12,7 @@
  * is compiler fact, and anything a model or a docstring said is quoted separately,
  * labelled, and clearly somebody else's words.
  */
-import { useEffect, useRef, useState } from 'react';
+import { Fragment, useEffect, useRef, useState } from 'react';
 import { fetchSource } from '../api';
 import type { SourceSlice, Tour } from '../types';
 import { TrustLabel } from './Trust';
@@ -83,25 +83,42 @@ export function Walkthrough({
             Step {index + 1} of {tour.steps.length}
           </span>
         </div>
-        {/* Named, not hidden: these were inside an aria-hidden wrapper while staying
-            tabbable, so keyboard focus landed on buttons a screen reader would not
-            announce and a sighted reader could not see it reach. */}
-        <div className="wt-dots">
-          {tour.steps.map((one, i) => (
-            <button
-              key={one.id}
-              className={i === index ? 'wt-dot is-current' : 'wt-dot'}
-              title={one.title}
-              aria-label={`Step ${i + 1} of ${tour.steps.length}: ${one.title}`}
-              aria-current={i === index ? 'step' : undefined}
-              onClick={() => onStep(i)}
-            />
-          ))}
-        </div>
         <button className="wt-close" onClick={onClose} aria-label="End the walkthrough">
           ✕
         </button>
       </div>
+
+      {/*
+        The steps by name, in order, as the path they now are.
+        Seven anonymous dots told you how far along you were and nothing about where. Once
+        the middle of a tour became a real route through the code, the shape of that route
+        is the thing worth seeing at a glance — which hop you are on, what came before it,
+        and that there is a database at the end of it.
+
+        Named rather than hidden: these were once inside an aria-hidden wrapper while
+        staying tabbable, so keyboard focus landed on controls a screen reader would not
+        announce and a sighted reader could not see it reach.
+      */}
+      <nav className="wt-trail" aria-label={`Steps in ${tour.title}`}>
+        {tour.steps.map((one, i) => (
+          <Fragment key={one.id}>
+            {i > 0 ? (
+              <span className="wt-trail-sep" aria-hidden="true">
+                →
+              </span>
+            ) : null}
+            <button
+              className={i === index ? 'wt-trail-step is-current' : 'wt-trail-step'}
+              title={one.title}
+              aria-label={`Step ${i + 1} of ${tour.steps.length}: ${one.title}`}
+              aria-current={i === index ? 'step' : undefined}
+              onClick={() => onStep(i)}
+            >
+              {one.title}
+            </button>
+          </Fragment>
+        ))}
+      </nav>
 
       {/* The step is what changes when you press Next, so it is the live region. Without
           it the panel advanced in complete silence for anyone not watching the map. */}
