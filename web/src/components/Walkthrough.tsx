@@ -171,3 +171,45 @@ export function Walkthrough({
     </aside>
   );
 }
+
+/**
+ * What is left of a walkthrough after a reload (#212): an offer, not a tour.
+ *
+ * It sits exactly where the drawer would, because that is the space a tour is entitled
+ * to and this is the smallest possible version of one. Naming the step rather than only
+ * the tour is the difference between an offer somebody can judge and a button they have
+ * to press to find out what it does — and after a reload, "where was I" is the actual
+ * question.
+ */
+export function ResumeOffer({
+  tour,
+  index,
+  onResume,
+  onDismiss,
+}: {
+  tour: Tour;
+  index: number;
+  onResume: () => void;
+  onDismiss: () => void;
+}) {
+  const step = tour.steps[index];
+
+  return (
+    <aside className="wt-resume" aria-label="Pick up where you left off">
+      <p className="wt-resume-what">
+        You were on <strong>{tour.title}</strong>
+        <span className="wt-resume-step">
+          step {index + 1} of {tour.steps.length} · {step.title}
+        </span>
+      </p>
+      <div className="wt-resume-nav">
+        <button className="btn-ghost" onClick={onDismiss}>
+          Dismiss
+        </button>
+        <button className="btn-primary" onClick={onResume}>
+          Pick it up
+        </button>
+      </div>
+    </aside>
+  );
+}

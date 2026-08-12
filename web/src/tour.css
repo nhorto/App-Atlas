@@ -29,6 +29,55 @@
   position: relative;
 }
 
+/*
+ * The offer to pick a walkthrough back up (#212).
+ *
+ * Same anchor as the drawer, deliberately: it is standing in for one, and it inherits
+ * the rule that matters — never lying across the detail panel. A single row, because
+ * everything it has to say fits on one and because a tall box would be the thing the
+ * reader did not ask to have reopened.
+ */
+.wt-resume {
+  position: absolute;
+  left: 16px;
+  right: 16px;
+  bottom: 16px;
+  z-index: 30;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+  padding: 10px 12px 10px 15px;
+  border: 1px solid var(--line-strong);
+  border-radius: 4px;
+  background: var(--surface);
+  box-shadow: 0 10px 34px rgba(64, 54, 32, 0.18);
+}
+
+.wt-resume-what {
+  margin: 0;
+  min-width: 0;
+  font-size: 13.5px;
+  color: var(--ink);
+}
+
+/* The step, on its own line and quieter: which tour it is answers "what", and the step
+   answers the question somebody actually has after a reload, which is "where was I". */
+.wt-resume-step {
+  display: block;
+  margin-top: 1px;
+  font-size: 11.5px;
+  color: var(--muted);
+}
+
+.wt-resume-nav {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: none;
+}
+
 .walkthrough.is-warn {
   border-color: #c4881c;
 }
