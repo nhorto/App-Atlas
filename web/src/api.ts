@@ -7,6 +7,7 @@ import type {
   BoundaryView,
   DoorList,
   ErrorTraceResult,
+  ErrorWords,
   ExplainResult,
   FlowView,
   InsightsView,
@@ -14,6 +15,7 @@ import type {
   NodeView,
   OverviewView,
   ScopeInfo,
+  StartingPoints,
   SourceSlice,
   Tour,
   TypeView,
@@ -100,8 +102,13 @@ export function fetchFlow(id: string): Promise<FlowView> {
  * is the only one that posts. The paste never leaves this machine: the server is on
  * loopback and nothing in this path calls out.
  */
-export async function traceError(trace: string): Promise<ErrorTraceResult> {
-  const url = currentScope ? `/api/trace?scope=${encodeURIComponent(currentScope)}` : '/api/trace';
+export function traceError(trace: string): Promise<ErrorTraceResult> {
+  return post<ErrorTraceResult>('/api/trace', trace);
+}
+
+/** The only shape of request here that sends something rather than asking for it. */
+async function post<T>(path: string, trace: string): Promise<T> {
+  const url = currentScope ? `${path}?scope=${encodeURIComponent(currentScope)}` : path;
   const res = await fetch(url, {
     method: 'POST',
     headers: { 'content-type': 'application/json', accept: 'application/json' },
@@ -111,7 +118,22 @@ export async function traceError(trace: string): Promise<ErrorTraceResult> {
     const body = (await res.json().catch(() => ({}))) as { error?: string };
     throw new Error(body.error ?? `Request failed: ${res.status}`);
   }
-  return (await res.json()) as ErrorTraceResult;
+  return (await res.json()) as T;
+}
+
+/**
+ * The closing paragraph about a traced error — the one generated thing in this feature.
+ *
+ * Posts the paste again rather than the computed path: the server works the path out
+ * itself, so what the model is shown is what the compiler found.
+ */
+export function explainTrace(trace: string): Promise<ErrorWords> {
+  return post<ErrorWords>('/api/trace/explain', trace);
+}
+
+/** Where to start when the paste had no frames in it — real nodes, chosen from a search. */
+export function suggestStart(description: string): Promise<StartingPoints> {
+  return post<StartingPoints>('/api/trace/start', description);
 }
 
 /** The code behind one walkthrough step, read from disk when the step is reached. */

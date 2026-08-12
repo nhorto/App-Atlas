@@ -23,9 +23,11 @@ interface Props {
   /** Select something, which fills the detail panel beside this screen. */
   onSelect: (id: string) => void;
   selectedId: string | null;
+  /** False under --no-ai, which hides the one button on this tab that costs anything. */
+  aiEnabled: boolean;
 }
 
-export function TraceScreen({ onReveal, onSelect, selectedId }: Props) {
+export function TraceScreen({ onReveal, onSelect, selectedId, aiEnabled }: Props) {
   const [doors, setDoors] = useState<DoorList | null>(null);
   const [doorId, setDoorId] = useState<string | null>(null);
   const [flow, setFlow] = useState<FlowView | null>(null);
@@ -159,7 +161,7 @@ export function TraceScreen({ onReveal, onSelect, selectedId }: Props) {
 
       <div className="trace-flow">
         {mode === 'error' ? (
-          <ErrorPaste onSelect={onSelect} onFollowDoor={followDoor} />
+          <ErrorPaste onSelect={onSelect} onFollowDoor={followDoor} aiEnabled={aiEnabled} />
         ) : flow ? (
           <Flow
             flow={flow}

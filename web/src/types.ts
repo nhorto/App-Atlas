@@ -616,6 +616,29 @@ export interface DoorReach {
   confidence: Confidence;
 }
 
+/** Words a model wrote about a path the compiler found. Always labelled as generated. */
+export interface ErrorWords {
+  text: string;
+  backend?: string;
+  cached: boolean;
+  /** File names the model produced that were not on the path, and were dropped. */
+  dropped: string[];
+}
+
+/** One real place in the codebase, suggested when there was no stack trace to follow. */
+export interface StartingPoint {
+  nodeId: string;
+  name: string;
+  kind: string;
+  path: string | null;
+}
+
+export interface StartingPoints {
+  picks: StartingPoint[];
+  because: string | null;
+  backend?: string;
+}
+
 export interface ErrorTraceResult {
   frames: PlacedFrame[];
   yours: PlacedFrame[];

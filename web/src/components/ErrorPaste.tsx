@@ -14,20 +14,29 @@
  * do to them.
  */
 import { useState } from 'react';
-import { traceError } from '../api';
-import type { DoorReach, ErrorTraceResult, PlacedFrame, UnplacedReason } from '../types';
+import { explainTrace, suggestStart, traceError } from '../api';
+import type {
+  DoorReach,
+  ErrorTraceResult,
+  ErrorWords,
+  PlacedFrame,
+  StartingPoints,
+  UnplacedReason,
+} from '../types';
 
 interface Props {
   /** Select something, which fills the detail panel beside this screen. */
   onSelect: (id: string) => void;
   /** Follow one of the doors that can reach the failure, forward, on the same tab. */
   onFollowDoor: (id: string) => void;
+  /** False under --no-ai, which hides the one button here that costs anything. */
+  aiEnabled: boolean;
 }
 
 /** Past this many doors the list stops being an answer and becomes a directory. */
 const DOORS_SHOWN = 6;
 
-export function ErrorPaste({ onSelect, onFollowDoor }: Props) {
+export function ErrorPaste({ onSelect, onFollowDoor, aiEnabled }: Props) {
   const [pasted, setPasted] = useState('');
   const [result, setResult] = useState<ErrorTraceResult | null>(null);
   const [busy, setBusy] = useState(false);
@@ -37,6 +46,7 @@ export function ErrorPaste({ onSelect, onFollowDoor }: Props) {
     if (!pasted.trim()) return;
     setBusy(true);
     setError(null);
+    setResult(null);
     try {
       setResult(await traceError(pasted));
     } catch (problem) {
@@ -86,7 +96,15 @@ export function ErrorPaste({ onSelect, onFollowDoor }: Props) {
       </div>
 
       {error ? <p className="paste-error">{error}</p> : null}
-      {result ? <Result result={result} onSelect={onSelect} onFollowDoor={onFollowDoor} /> : null}
+      {result ? (
+        <Result
+          result={result}
+          pasted={pasted}
+          aiEnabled={aiEnabled}
+          onSelect={onSelect}
+          onFollowDoor={onFollowDoor}
+        />
+      ) : null}
     </div>
   );
 }
@@ -95,31 +113,29 @@ export function ErrorPaste({ onSelect, onFollowDoor }: Props) {
 
 function Result({
   result,
+  pasted,
+  aiEnabled,
   onSelect,
   onFollowDoor,
 }: {
   result: ErrorTraceResult;
+  pasted: string;
+  aiEnabled: boolean;
   onSelect: (id: string) => void;
   onFollowDoor: (id: string) => void;
 }) {
   if (result.parsedNothing) {
-    return (
-      <div className="paste-note">
-        <p>Nothing in that paste looked like a stack frame, so there is no file or line to start from.</p>
-        <p className="paste-note-quiet">
-          This needs a trace with a file and a line number in it. If all you have is a description of what went
-          wrong, App Atlas cannot turn that into a location — and guessing at one is exactly how it would send you
-          to the wrong file.
-        </p>
-      </div>
-    );
+    return <NoFrames described={pasted} aiEnabled={aiEnabled} onSelect={onSelect} />;
   }
 
   return (
     <div className="paste-result">
       <Frames frames={result.frames} onSelect={onSelect} />
       {result.origin ? (
-        <Doors result={result} onFollowDoor={onFollowDoor} />
+        <>
+          <Doors result={result} onFollowDoor={onFollowDoor} />
+          {aiEnabled ? <Explanation pasted={pasted} /> : null}
+        </>
       ) : (
         <div className="paste-note">
           <p>None of those frames is code in this project.</p>
@@ -129,6 +145,160 @@ function Result({
           </p>
         </div>
       )}
+    </div>
+  );
+}
+
+/**
+ * The one generated thing on this screen, and the last thing on it.
+ *
+ * It comes after the path rather than instead of it, and it is asked for rather than
+ * offered: the compiler's answer is complete without this, and a paragraph that
+ * appeared automatically above the evidence would read as the finding rather than a
+ * comment on it. The label says a model wrote it, in the same register the rest of the
+ * tool uses for generated text.
+ */
+function Explanation({ pasted }: { pasted: string }) {
+  const [words, setWords] = useState<ErrorWords | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [failed, setFailed] = useState<string | null>(null);
+
+  if (words) {
+    return (
+      <section className="paste-said">
+        <p className="paste-label">
+          What this could be
+          <span className="paste-said-mark">
+            written by {words.cached ? 'a model, from an earlier run' : (words.backend ?? 'a model')}
+          </span>
+        </p>
+        <p className="paste-said-text">{words.text}</p>
+        {words.dropped.length > 0 ? (
+          <p className="paste-said-dropped">
+            Part of the answer named {words.dropped.join(', ')}, which is not on this path, so that sentence was
+            dropped.
+          </p>
+        ) : null}
+        <p className="paste-said-caveat">
+          A guess about the path above, not a finding. Everything before this line came from your code; this line
+          did not.
+        </p>
+      </section>
+    );
+  }
+
+  return (
+    <section className="paste-said is-offer">
+      <button
+        className="paste-explain"
+        disabled={busy}
+        onClick={() => {
+          setBusy(true);
+          setFailed(null);
+          explainTrace(pasted)
+            .then(setWords)
+            .catch((problem: Error) => setFailed(problem.message))
+            .finally(() => setBusy(false));
+        }}
+      >
+        {busy ? 'Thinking…' : 'Ask what this could be'}
+      </button>
+      <span className="paste-said-mark">
+        Sends this trace and the code it points at to your AI backend. Everything above was worked out without one.
+      </span>
+      {failed ? <p className="paste-error">{failed}</p> : null}
+    </section>
+  );
+}
+
+/**
+ * The lane for a paste with no frames in it — somebody describing a symptom.
+ *
+ * There is no path to compute here, so the honest move is to say that first and then
+ * offer something visibly weaker. What the model gets is a shortlist searched out of
+ * the atlas, and every id it picks is checked against the graph before it reaches this
+ * screen, so the worst case is an unhelpful suggestion rather than a file that does
+ * not exist.
+ */
+function NoFrames({
+  described,
+  aiEnabled,
+  onSelect,
+}: {
+  described: string;
+  aiEnabled: boolean;
+  onSelect: (id: string) => void;
+}) {
+  const [found, setFound] = useState<StartingPoints | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [failed, setFailed] = useState<string | null>(null);
+
+  return (
+    <div className="paste-result">
+      <div className="paste-note">
+        <p>Nothing in that paste looked like a stack frame, so there is no file or line to start from.</p>
+        <p className="paste-note-quiet">
+          With a trace, everything on this screen is worked out from your code. Without one there is nothing to
+          work from — so App Atlas will not turn a description into a location and call it the same thing.
+        </p>
+      </div>
+
+      {aiEnabled && !found ? (
+        <section className="paste-said is-offer">
+          <button
+            className="paste-explain"
+            disabled={busy}
+            onClick={() => {
+              setBusy(true);
+              setFailed(null);
+              suggestStart(described)
+                .then(setFound)
+                .catch((problem: Error) => setFailed(problem.message))
+                .finally(() => setBusy(false));
+            }}
+          >
+            {busy ? 'Looking…' : 'Suggest where to start anyway'}
+          </button>
+          <span className="paste-said-mark">
+            Searches your codebase for what you described and asks a model which of the matches to open. A guess
+            from names, not from a trace.
+          </span>
+          {failed ? <p className="paste-error">{failed}</p> : null}
+        </section>
+      ) : null}
+
+      {found ? (
+        <section className="paste-said">
+          <p className="paste-label">
+            Places worth opening
+            <span className="paste-said-mark">chosen by {found.backend ?? 'a model'}, from a search of your code</span>
+          </p>
+          {found.picks.length === 0 ? (
+            <p className="paste-said-text">
+              Nothing in your codebase looked like a match for that, so there is no honest suggestion to make.
+              {found.because ? ` ${found.because}` : ''}
+            </p>
+          ) : (
+            <>
+              {found.because ? <p className="paste-said-text">{found.because}</p> : null}
+              <ul className="paste-picks">
+                {found.picks.map((pick) => (
+                  <li key={pick.nodeId}>
+                    <button className="paste-pick" onClick={() => onSelect(pick.nodeId)}>
+                      <span className="paste-frame-name">{pick.name}</span>
+                      <span className="paste-frame-where">{pick.path}</span>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </>
+          )}
+          <p className="paste-said-caveat">
+            These were picked from names and descriptions, not from a stack trace. If you can get one, paste it —
+            it will beat this by a mile.
+          </p>
+        </section>
+      ) : null}
     </div>
   );
 }

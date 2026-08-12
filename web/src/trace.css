@@ -846,3 +846,111 @@
   margin-bottom: 6px !important;
   color: #8a5f0e !important;
 }
+
+/* --- the one generated thing on the screen --- */
+
+/* Set apart deliberately. Everything above it came from the compiler; this did not,
+   and a paragraph that looked like the rest would be read as the same kind of fact. */
+.paste-said {
+  margin-top: 24px;
+  padding: 14px 16px;
+  border: 1px dashed var(--line-strong);
+  border-radius: 4px;
+  background: var(--bg);
+}
+
+.paste-said.is-offer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  border-style: dashed;
+}
+
+.paste-explain {
+  border: 1px solid var(--line-strong);
+  background: var(--surface);
+  border-radius: 4px;
+  padding: 6px 12px;
+  font: inherit;
+  font-size: 13px;
+  color: var(--ink);
+  cursor: pointer;
+  flex: none;
+}
+
+.paste-explain:hover:not(:disabled) {
+  background: var(--accent-soft);
+}
+
+.paste-explain:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.paste-explain:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.paste-said-mark {
+  font-size: 11px;
+  color: var(--muted);
+  text-transform: none;
+  letter-spacing: 0;
+  flex: 1 1 12rem;
+  min-width: 0;
+}
+
+.paste-said-text {
+  margin: 6px 0 0;
+  font-size: 13.5px;
+  line-height: 1.65;
+}
+
+.paste-said-dropped {
+  margin: 10px 0 0;
+  font-size: 11.5px;
+  color: #8a5f0e;
+}
+
+.paste-said-caveat {
+  margin: 10px 0 0;
+  font-size: 11.5px;
+  color: var(--muted);
+  line-height: 1.55;
+}
+
+.paste-picks {
+  list-style: none;
+  margin: 10px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.paste-pick {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  flex-wrap: wrap;
+  width: 100%;
+  text-align: left;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: var(--surface);
+  padding: 6px 10px;
+  font: inherit;
+  color: var(--ink);
+  cursor: pointer;
+}
+
+.paste-pick:hover {
+  background: var(--accent-soft);
+}
+
+.paste-pick:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}

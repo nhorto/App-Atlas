@@ -929,7 +929,7 @@ function AtlasApp() {
           )
         ) : null}
 
-        {view === 'trace' ? <TraceScreen onReveal={reveal} onSelect={select} selectedId={selectedId} /> : null}
+        {view === 'trace' ? <TraceScreen onReveal={reveal} onSelect={select} selectedId={selectedId} aiEnabled={aiEnabled} /> : null}
 
         {view === 'map' ? (
           <>
