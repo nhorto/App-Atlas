@@ -16,6 +16,7 @@
 import { useState } from 'react';
 import { explainTrace, suggestStart, traceError } from '../api';
 import type {
+  DependencyReach,
   DoorReach,
   ErrorTraceResult,
   ErrorWords,
@@ -138,16 +139,21 @@ function Result({
           {aiEnabled ? <Explanation pasted={pasted} /> : null}
         </>
       ) : (
-        <div className="paste-note">
-          <p>None of those frames is code in this project.</p>
-          <p className="paste-note-quiet">
-            {result.needsSourceMap
-              ? // Saying "it was all dependencies" over a bundle would be a plain falsehood:
-                // the code is yours, it is just wearing the build's line numbers.
-                'What is left after the build output is dependencies or the runtime, so there is no path to walk back yet. A build that emits source maps is what would give this something to follow.'
-              : 'The failure surfaced entirely inside dependencies or the runtime, so there is nothing here to trace back to a way in. The question worth asking next is which of your own code calls into that library.'}
-          </p>
-        </div>
+        <>
+          <div className="paste-note">
+            <p>None of those frames is code in this project.</p>
+            <p className="paste-note-quiet">
+              {result.needsSourceMap
+                ? // Saying "it was all dependencies" over a bundle would be a plain falsehood:
+                  // the code is yours, it is just wearing the build's line numbers.
+                  'What is left after the build output is dependencies or the runtime, so there is no path to walk back yet. A build that emits source maps is what would give this something to follow.'
+                : 'The failure surfaced entirely inside dependencies or the runtime, so there is nothing here to trace back to a way in.'}
+            </p>
+          </div>
+          {result.intoDependency ? (
+            <IntoDependency reach={result.intoDependency} onSelect={onSelect} onFollowDoor={onFollowDoor} />
+          ) : null}
+        </>
       )}
     </div>
   );
@@ -380,6 +386,104 @@ function NeedsSourceMap() {
         itself. Nothing in the trace carries the original lines on its own.
       </p>
     </div>
+  );
+}
+
+/**
+ * What is left to say when the whole stack was somebody else's code.
+ *
+ * The trace stops at the library, so the walk has to start from the other end: these are
+ * the files that import it, and the ways in that reach each of them. The wording carries
+ * the weaker claim on purpose — a file that imports a package is not a file that made the
+ * failing call, and the two are one careless sentence apart. "Imports" is the fact; which
+ * of these was on the failing run is not something the code says.
+ */
+function IntoDependency({
+  reach,
+  onSelect,
+  onFollowDoor,
+}: {
+  reach: DependencyReach;
+  onSelect: (id: string) => void;
+  onFollowDoor: (id: string) => void;
+}) {
+  if (reach.importers.length === 0) {
+    return (
+      <div className="paste-note">
+        <p>
+          The innermost frame is inside <code>{reach.packageName}</code>.
+        </p>
+        <p className="paste-note-quiet">
+          {reach.total === 0
+            ? 'Nothing in this project imports it, and no dependency of yours declares it either, so this trace has left your code behind entirely. The package that pulled it in is further up the install tree than this looks.'
+            : `${reach.total} files here import ${reach.via ?? 'it'} — too many for the trace to narrow down, so naming a few would just be picking. Something everything depends on is not evidence about any one file.`}
+        </p>
+      </div>
+    );
+  }
+
+  return (
+    <section className="paste-into">
+      <p className="paste-label">
+        Your code reaches for <strong>{reach.via ?? reach.packageName}</strong>
+        <span className="paste-label-count">
+          {reach.total} {reach.total === 1 ? 'file' : 'files'}
+        </span>
+      </p>
+      <p className="paste-lede">
+        {reach.via ? (
+          <>
+            The trace died inside <code>{reach.packageName}</code>, which nothing here imports —{' '}
+            <code>{reach.via}</code> declares it as a dependency, and that is the one your code uses. These are the
+            files that import it, not where the failing call was made, which the trace does not say.
+          </>
+        ) : (
+          <>
+            The trace died inside that package, so the nearest thing to a starting point is the code that imports it.
+            This is where it is imported — not where the failing call was made, which the trace does not say.
+          </>
+        )}
+      </p>
+      <ul className="paste-into-list">
+        {reach.importers.map((importer) => (
+          <li key={importer.nodeId} className="paste-into-file">
+            <button className="paste-into-main" onClick={() => onSelect(importer.nodeId)} title="Open this file">
+              {importer.path}
+            </button>
+            {importer.doors.length > 0 ? (
+              <ul className="paste-into-doors">
+                {importer.doors.slice(0, DOORS_SHOWN).map((door) => (
+                  <li key={door.door.id}>
+                    <button
+                      className="paste-into-door"
+                      onClick={() => onFollowDoor(door.door.id)}
+                      title="Follow this way in, forwards"
+                    >
+                      {door.door.method && door.door.method !== 'SCREEN' ? (
+                        <span className="trace-method">{door.door.method}</span>
+                      ) : null}
+                      {door.door.route ?? door.door.name}
+                    </button>
+                  </li>
+                ))}
+                {importer.doors.length > DOORS_SHOWN ? (
+                  <li className="paste-into-rest">and {importer.doors.length - DOORS_SHOWN} more</li>
+                ) : null}
+              </ul>
+            ) : (
+              <span className="paste-into-nodoor">no way in reaches this file</span>
+            )}
+          </li>
+        ))}
+      </ul>
+      {reach.total > reach.importers.length ? (
+        <p className="paste-cut">
+          {reach.total - reach.importers.length} more{' '}
+          {reach.total - reach.importers.length === 1 ? 'file imports' : 'files import'} it. These are the ones the
+          most ways in can reach, which is an ordering, not a ranking of suspects.
+        </p>
+      ) : null}
+    </section>
   );
 }
 

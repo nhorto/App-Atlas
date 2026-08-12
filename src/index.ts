@@ -41,8 +41,10 @@ export { renderAtlasMarkdown } from './export/markdown.js';
 export { buildTours, tourFor } from './model/tours.js';
 export type { Tour, TourStep } from './model/tours.js';
 export { buildFlow, listDoors } from './model/flow.js';
-export { doorsReaching, parseFrames, traceError } from './model/errortrace.js';
+export { doorsReaching, packageAt, parseFrames, traceError } from './model/errortrace.js';
 export type {
+  DependencyImporter,
+  DependencyReach,
   DoorReach,
   ErrorFrame,
   ErrorTraceResult,
@@ -51,6 +53,8 @@ export type {
   TraceLanguage,
   UnplacedReason,
 } from './model/errortrace.js';
+export { installedPackages, NO_PACKAGES } from './model/packages.js';
+export type { PackageIndex } from './model/packages.js';
 export { bundleMaps, decodeVlq, looksBuilt, parseSourceMap } from './model/sourcemap.js';
 export type { Lookup, MappedPosition, OriginalPosition, SourceMapIndex } from './model/sourcemap.js';
 export type {

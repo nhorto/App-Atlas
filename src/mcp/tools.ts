@@ -25,6 +25,7 @@ import type { PlacedFrame, UnplacedReason } from '../model/errortrace.js';
 import { authHeadline } from '../model/exposure.js';
 import { buildInsights } from '../model/insights.js';
 import type { RouteInsight } from '../model/insights.js';
+import { installedPackages } from '../model/packages.js';
 import { bundleMaps } from '../model/sourcemap.js';
 import { grammarTier } from '../model/tiers.js';
 import { findPersonalData } from '../model/personal.js';
@@ -126,7 +127,10 @@ export const MCP_TOOLS: ToolDefinition[] = [
       'is in the paste. Two limits worth stating to whoever asked: the doors are ones that *can* reach the failing ' +
       'code, found by following references backwards — not a record of the call that actually happened, so when ' +
       'several are listed the trace does not say which one ran. And a frame in a dependency, in a file this ' +
-      'analysis never read, or in a minified bundle is reported as unplaced rather than guessed at.',
+      'analysis never read, or in a minified bundle is reported as unplaced rather than guessed at. When the whole ' +
+      'stack is somebody else\'s code it says which of this project\'s files import that library — or, if the ' +
+      'library is a transitive one, which dependency of theirs declares it. That is where the package is reached ' +
+      'for, not where the failing call was made, and it is worded that way for a reason: do not report it as the cause.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -452,7 +456,7 @@ function traceErrorTool(
 ): ToolResult {
   if (!pasted.trim()) return problem('trace_error needs a "trace" — paste the error as you received it.');
 
-  const result = traceError(graph, pasted, bundleMaps(graph.meta.root));
+  const result = traceError(graph, pasted, bundleMaps(graph.meta.root), installedPackages(graph.meta.root));
   const lines: string[] = [];
 
   if (result.parsedNothing) {
@@ -498,16 +502,66 @@ function traceErrorTool(
 
   if (!result.origin) {
     lines.push(
-      'None of those frames is code in this project, so there is nothing here to trace back. The failure surfaced ' +
-        'entirely inside dependencies or the runtime — the useful next question is which of your own calls reached ' +
-        'that library, which `what_calls` on the library’s entry point can answer.',
+      'None of those frames is code in this project, so there is no frame here to trace back from. The failure ' +
+        'surfaced entirely inside dependencies or the runtime.',
     );
+    const into = result.intoDependency;
+    if (into && into.importers.length > 0) {
+      lines.push('');
+      lines.push(
+        into.via
+          ? `The innermost frame is inside ${into.packageName}, which nothing here imports. ${into.via} declares it ` +
+              `as a dependency, and your code does import ${into.via}. These files do — which is where it is reached ` +
+              'for, not where the failing call was made. The trace does not say which of them was on the run that broke:'
+          : `The innermost frame is inside ${into.packageName}. These files import it — which is where it is reached ` +
+              'for, not where the failing call was made. The trace does not say which of them was on the run that broke:',
+      );
+      for (const importer of into.importers) {
+        const doors = importer.doors
+          .slice(0, limit)
+          .map((reach) => reach.door.route ?? reach.door.name)
+          .join(', ');
+        const reached = doors ? `  ·  reached by ${doors}` : '  ·  no way in reaches it';
+        lines.push(`  ${importer.path}${reached}`);
+      }
+      const rest = into.total - into.importers.length;
+      if (rest > 0) {
+        lines.push(
+          `  …and ${rest} more ${plural(rest, 'file', 'files')}. The ones above are those the most ways in can ` +
+            'reach, which is an ordering and not a ranking of suspects.',
+        );
+      }
+    } else if (into && into.total > 0) {
+      lines.push('');
+      lines.push(
+        `The innermost frame is inside ${into.packageName}, and ${into.total} files here import ` +
+          `${into.via ?? 'it'} — too many for this trace to narrow down. Naming a few would be picking, so none ` +
+          'are named. Something the whole app depends on is not evidence about any one file.',
+      );
+    } else if (into) {
+      lines.push('');
+      lines.push(
+        `The innermost frame is inside ${into.packageName}. Nothing here imports it and no dependency of this ` +
+          'project declares it, so the trace has left this codebase behind — do not name a file as the cause.',
+      );
+    }
     return answer(lines, provenance(app, apps, graph), {
       ...envelope(app, graph),
       parsedNothing: false,
       frames: result.frames.map(frameFact),
       origin: null,
       doors: [],
+      intoDependency: into
+        ? {
+            package: into.packageName,
+            via: into.via,
+            importers: into.importers.map((importer) => ({
+              path: importer.path,
+              doors: importer.doors.map((reach) => reach.door.route ?? reach.door.name),
+            })),
+            total: into.total,
+          }
+        : null,
     });
   }
 

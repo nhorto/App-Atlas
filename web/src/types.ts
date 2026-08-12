@@ -631,6 +631,29 @@ export interface DoorReach {
   confidence: Confidence;
 }
 
+/** One of this project's files that imports the package a trace died inside. */
+export interface DependencyImporter {
+  nodeId: string;
+  path: string;
+  doors: DoorReach[];
+}
+
+/**
+ * Where a trace with none of your code in it touches your code anyway — the files that
+ * import the library it died in. A weaker claim than a placed frame: these are the files
+ * that reach for that package, not the ones the failing call came from.
+ */
+export interface DependencyReach {
+  packageName: string;
+  frame: ErrorFrame;
+  /** The dependency of yours that declares `packageName`, when you do not import it yourself. */
+  via: string | null;
+  /** Empty when nothing imports it, and when so many do that naming any would be picking. */
+  importers: DependencyImporter[];
+  /** How many files import it, listed or not. */
+  total: number;
+}
+
 /** Words a model wrote about a path the compiler found. Always labelled as generated. */
 export interface ErrorWords {
   text: string;
@@ -664,6 +687,8 @@ export interface ErrorTraceResult {
   parsedNothing: boolean;
   /** A frame pointed into build output and no source map placed it. */
   needsSourceMap: boolean;
+  /** Set only when nothing in the paste was your code and the package could be named. */
+  intoDependency: DependencyReach | null;
 }
 
 export interface SourceSlice {
