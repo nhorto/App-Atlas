@@ -210,10 +210,15 @@ test('the tools on offer are the ones the graph can answer without hedging', () 
     'data_stores',
     'env_vars',
     'list_doors',
+    // The eighth, and the only one handed evidence from a run rather than reading the
+    // source: a pasted stack trace, matched to files by path and line. It belongs on
+    // this test for the reason the others do — every frame it cannot place says why,
+    // and it lists every door that could reach the failure rather than choosing one.
+    'trace_error',
     'unguarded_doors',
-    // Issue #46's, and the seventh: which files nothing else imports. It earns its
-    // place on the same test as the other six — it refuses to answer far more often
-    // than it answers, and every refusal says why.
+    // Issue #46's: which files nothing else imports. It earns its place on the same
+    // test as the rest — it refuses to answer far more often than it answers, and
+    // every refusal says why.
     'unimported_files',
     'what_calls',
     'where_is',
@@ -325,7 +330,13 @@ test('a route whose check is in a file that would not parse is not reported as o
 
 test('every result says which app answered, when it was analysed, and how to refresh it', () => {
   for (const tool of MCP_TOOLS) {
-    const result = call(boundary.dir, tool.name, { target: 'sendEmail', query: 'db' });
+    // Every tool gets what it needs to actually answer: the assertion is about what an
+    // answer carries, and a tool refusing a missing argument is not answering.
+    const result = call(boundary.dir, tool.name, {
+      target: 'sendEmail',
+      query: 'db',
+      trace: 'Error: x\n    at sendEmail (src/lib/email.ts:3:1)',
+    });
     const text = textOf(result);
     assert.match(text, /Source: the atlas of "boundary"/, `${tool.name} did not say where it got this`);
     assert.match(text, /analysed \d{4}-\d{2}-\d{2}T/, `${tool.name} did not date its facts`);

@@ -51,14 +51,21 @@ const MAX_FLOW_TOURS = 5;
 const MAX_TRACE_DEPTH = 3;
 const MAX_TRACED_NODES = 40;
 
+/**
+ * How many doors to weigh before giving up on filling the offered list. Most are
+ * rejected for walking nowhere, so the list has to look past the first five.
+ */
+const MAX_DOORS_WEIGHED = 40;
+
 export function buildTours(graph: AtlasGraph): Tour[] {
-  const tours: Tour[] = [welcomeTour(graph)];
+  const flows: Tour[] = [];
   for (const endpoint of majorEntryPoints(graph)) {
+    if (flows.length >= MAX_FLOW_TOURS) break;
     const tour = flowTour(graph, endpoint);
     // A door with nothing behind it makes a one-step tour, which is not a tour.
-    if (tour && tour.steps.length >= 2) tours.push(tour);
+    if (tour && tour.steps.length >= 2) flows.push(tour);
   }
-  return tours;
+  return [welcomeTour(graph), ...flows];
 }
 
 /**
@@ -240,12 +247,29 @@ function welcomeTour(graph: AtlasGraph): Tour {
 // ---------------------------------------------------------------------------
 
 /**
- * The doors worth a tour. A route that writes data matters more than one that reads
- * it, and a door with code behind it matters more than one declared in a config file
- * and never wired up.
+ * The doors worth a tour, in the order they should be offered.
+ *
+ * Scoring answers which door matters most: a route that writes data matters more than
+ * one that reads it, and a door with code behind it matters more than one declared in
+ * a config file and never wired up.
+ *
+ * Which doors get *seen* is a second question, and sorting alone answers it badly. A
+ * file-routed app has two dozen screens and perhaps one edge function, so ranking on
+ * score alone buries the edge function. Ranking every network door above every screen
+ * fails the other way: an app whose routes are all inferred from a database schema
+ * fills every slot with them and never mentions the screens somebody actually built.
+ * So the two kinds are dealt out in turn, and the best network door still goes first.
+ *
+ * A door with no code behind it is left out of the offered list entirely. Frameworks
+ * that publish routes from a schema — PostgREST reads one door per verb per table
+ * straight out of a migration — can declare dozens that no file in the repo answers,
+ * and a tour of one is a knock with nobody home: the steps that would say what runs,
+ * what it reaches and where it lands all have nothing to report. Those doors are real
+ * and belong on the map; they are just not a walk. Asking for one by name still
+ * builds it — it is only the unprompted suggestion that has to earn its place.
  */
 function majorEntryPoints(graph: AtlasGraph): AtlasNode[] {
-  const scored = graph
+  const ranked = graph
     .nodesOfKind('endpoint')
     .filter((node) => {
       const meta = node.meta as unknown as EndpointMeta;
@@ -254,32 +278,64 @@ function majorEntryPoints(graph: AtlasGraph): AtlasNode[] {
     })
     .map((node) => {
       const meta = node.meta as unknown as EndpointMeta;
-      const handlers = graph.edgesFrom(node.id).filter((edge) => edge.kind === 'exposed-by').length;
-      let score = handlers * 3;
+      const answering = graph
+        .edgesFrom(node.id)
+        .filter((edge) => edge.kind === 'exposed-by')
+        .map((edge) => edge.toId);
+      let score = answering.length * 3;
       if (meta.writes) score += 6;
       if (meta.endpointKind === 'webhook') score += 4;
       if (meta.endpointKind === 'server-action') score += 2;
       if (meta.method === 'PAGE') score -= 3;
       score += Math.min(meta.sites.length, 4);
-      return { node, score };
+      score += Math.min(reachOf(graph, answering), 6);
+      return { node, score, handlers: answering.length };
     })
-    .filter((entry) => entry.score > 0);
-
-  // A screen is a door a person walks through; a route is a door a stranger can reach
-  // over the network. Both deserve a tour, but a file-routed app has two dozen screens
-  // and perhaps one edge function, and ranking them together buries the single thing a
-  // reader most needs to see. Network doors go first; screens fill whatever is left.
-  return scored
-    .sort(
-      (a, b) =>
-        doorRank(a.node) - doorRank(b.node) || b.score - a.score || a.node.name.localeCompare(b.node.name),
-    )
-    .slice(0, MAX_FLOW_TOURS)
+    .filter((entry) => entry.score > 0 && entry.handlers > 0)
+    .sort((a, b) => b.score - a.score || a.node.name.localeCompare(b.node.name))
     .map((entry) => entry.node);
+
+  const network = ranked.filter((node) => !isScreen(node));
+  const screens = ranked.filter(isScreen);
+  return dealInTurn([network, screens]).slice(0, MAX_DOORS_WEIGHED);
 }
 
-function doorRank(node: AtlasNode): number {
-  return (node.meta as unknown as EndpointMeta).endpointKind === 'screen' ? 1 : 0;
+function isScreen(node: AtlasNode): boolean {
+  return (node.meta as unknown as EndpointMeta).endpointKind === 'screen';
+}
+
+/**
+ * How many distinct pieces of code the answering code touches directly.
+ *
+ * Every screen in a file-routed app scores the same on everything else — one handler,
+ * no writes of its own, one site — so without this they tie and fall back to
+ * alphabetical order, which offered a home screen that renders a logo ahead of the
+ * form that is the whole point of the app. One hop is enough to tell those apart and
+ * cheap enough to run over every door; the full walk is the tour's own job.
+ */
+function reachOf(graph: AtlasGraph, fromIds: string[]): number {
+  const reached = new Set<string>();
+  for (const id of fromIds) {
+    for (const edge of graph.edgesFrom(id)) {
+      if (edge.kind === 'references') reached.add(edge.toId);
+    }
+  }
+  return reached.size;
+}
+
+/**
+ * Deal one from each group in turn until every group is empty, so no single group can
+ * take every slot. Groups keep their own order, and the first group's best still comes
+ * out first overall.
+ */
+function dealInTurn<T>(groups: T[][]): T[] {
+  const out: T[] = [];
+  for (let depth = 0; groups.some((group) => depth < group.length); depth++) {
+    for (const group of groups) {
+      if (depth < group.length) out.push(group[depth]);
+    }
+  }
+  return out;
 }
 
 function flowTour(graph: AtlasGraph, endpoint: AtlasNode): Tour | null {

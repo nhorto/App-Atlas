@@ -500,6 +500,172 @@ export interface Tour {
   steps: TourStep[];
 }
 
+// --- where one way in leads (src/model/flow.ts) ---
+
+export interface DoorSummary {
+  id: string;
+  name: string;
+  endpointKind: EndpointKind;
+  method: string | null;
+  route: string | null;
+  framework: string;
+  writes: boolean;
+  guards: GuardInfo[];
+  /** False when no file in this repo was found on the other side of the door. */
+  answered: boolean;
+  path: string | null;
+  line: number | null;
+  summary: string | null;
+  summarySource: SummarySource;
+}
+
+export interface DoorGroup {
+  kind: EndpointKind;
+  label: string;
+  doors: DoorSummary[];
+}
+
+export interface DoorList {
+  groups: DoorGroup[];
+  total: number;
+  unanswered: number;
+}
+
+export interface FlowStop {
+  id: string;
+  name: string;
+  kind: 'function' | 'file';
+  path: string | null;
+  line: number | null;
+  zone: Zone;
+  summary: string | null;
+  summarySource: SummarySource;
+  /** 1 answers the door; 2 is what that names; and so on. */
+  hop: number;
+  /** How sure the link is, not how sure the code runs. Nothing static can say that. */
+  confidence: Confidence;
+}
+
+export interface FlowLink {
+  fromId: string;
+  toId: string;
+  confidence: Confidence;
+}
+
+export interface FlowExit {
+  id: string;
+  name: string;
+  kind: 'store' | 'service';
+  detail: string;
+  writes: boolean;
+  external: boolean;
+  reachedBy: string[];
+}
+
+/** What the reader was not shown, said out loud. */
+export interface FlowLimits {
+  hitDepth: boolean;
+  hitStops: boolean;
+  exitsHidden: number;
+}
+
+export interface FlowView {
+  door: DoorSummary;
+  trigger: string;
+  stops: FlowStop[];
+  links: FlowLink[];
+  exits: FlowExit[];
+  limits: FlowLimits;
+  maxHop: number;
+}
+
+// --- a pasted error, put on the map (src/model/errortrace.ts) ---
+
+export type TraceLanguage = 'javascript' | 'python' | 'go' | 'dotnet' | 'java';
+
+/** Why a frame could not be put on the map. */
+export type UnplacedReason = 'dependency' | 'runtime' | 'unknown-file' | 'ambiguous' | 'minified';
+
+/** What a source map said, when one was needed to place a frame. */
+export interface MappedOrigin {
+  bundlePath: string;
+  bundleLine: number;
+  bundleColumn: number | null;
+  mapPath: string;
+  source: string;
+  line: number;
+  name: string | null;
+}
+
+export interface ErrorFrame {
+  raw: string;
+  rawPath: string;
+  line: number;
+  column: number | null;
+  functionName: string | null;
+  language: TraceLanguage;
+  order: number;
+}
+
+export interface PlacedFrame {
+  frame: ErrorFrame;
+  nodeId: string | null;
+  nodeName: string | null;
+  nodeKind: 'function' | 'file' | null;
+  path: string | null;
+  /** The line within `path`. Not `frame.line` when a source map moved this frame. */
+  sourceLine: number | null;
+  reason: UnplacedReason | null;
+  candidates: string[];
+  /** Set when a source map moved this frame out of build output. */
+  mappedFrom: MappedOrigin | null;
+  /** The runtime named one function and that line holds another — the two have drifted. */
+  nameDrifted: boolean;
+}
+
+export interface DoorReach {
+  door: DoorSummary;
+  via: string[];
+  viaNames: string[];
+  hops: number;
+  confidence: Confidence;
+}
+
+/** Words a model wrote about a path the compiler found. Always labelled as generated. */
+export interface ErrorWords {
+  text: string;
+  backend?: string;
+  cached: boolean;
+  /** File names the model produced that were not on the path, and were dropped. */
+  dropped: string[];
+}
+
+/** One real place in the codebase, suggested when there was no stack trace to follow. */
+export interface StartingPoint {
+  nodeId: string;
+  name: string;
+  kind: string;
+  path: string | null;
+}
+
+export interface StartingPoints {
+  picks: StartingPoint[];
+  because: string | null;
+  backend?: string;
+}
+
+export interface ErrorTraceResult {
+  frames: PlacedFrame[];
+  yours: PlacedFrame[];
+  languages: TraceLanguage[];
+  origin: PlacedFrame | null;
+  doors: DoorReach[];
+  searchTruncated: boolean;
+  parsedNothing: boolean;
+  /** A frame pointed into build output and no source map placed it. */
+  needsSourceMap: boolean;
+}
+
 export interface SourceSlice {
   path: string;
   startLine: number;

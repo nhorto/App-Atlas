@@ -76,6 +76,7 @@ import { InsightsScreen } from './components/InsightsScreen';
 import { MapKey } from './components/MapKey';
 import { OverviewScreen } from './components/OverviewScreen';
 import { SearchPalette } from './components/SearchPalette';
+import { TraceScreen } from './components/TraceScreen';
 import { TypeScreen } from './components/TypeScreen';
 import { Walkthrough } from './components/Walkthrough';
 
@@ -96,7 +97,7 @@ const ZONES: Zone[] = ['ui', 'api', 'logic', 'data', 'config', 'test'];
  */
 const HIDDEN_BY_DEFAULT: Zone[] = ['test'];
 
-type ViewName = 'boundaries' | 'overview' | 'map' | 'types' | 'insights';
+type ViewName = 'boundaries' | 'overview' | 'map' | 'trace' | 'types' | 'insights';
 
 // Boundaries stays first: it is the home screen (SPEC.md 6.1) and the thing no other
 // tool does. Overview sits beside it for the reader who wants prose before a diagram.
@@ -105,10 +106,13 @@ type ViewName = 'boundaries' | 'overview' | 'map' | 'types' | 'insights';
 // boundary view answers where data *goes*, the map's legend has a Data *zone*, and
 // this tab is about the shapes data is *in*. Whoever wanted "the data one" had to
 // guess.
+// Trace sits after the Map because it is the question you ask once you have seen the
+// shape of the code: not "what is here" but "where does this one way in get to".
 const TABS: { view: ViewName; label: string }[] = [
   { view: 'boundaries', label: 'Boundaries' },
   { view: 'overview', label: 'Overview' },
   { view: 'map', label: 'Map' },
+  { view: 'trace', label: 'Trace' },
   { view: 'types', label: 'Data model' },
   { view: 'insights', label: 'Security' },
 ];
@@ -132,6 +136,7 @@ const LEDES: Record<ViewName, string> = {
   boundaries: 'What gets into your app, and where it ends up.',
   overview: 'What this app is, and where to start reading.',
   map: 'The code you would open and edit — your real folders and files, and what uses what.',
+  trace: 'Pick a way in, and follow where it can get to and where it leaves your app.',
   types: 'The data your app keeps — the shapes and tables that outlive a single run.',
   insights: 'Who can get in, where your data goes, and what you rely on.',
 };
@@ -146,6 +151,10 @@ const LEDES: Record<ViewName, string> = {
 const NEIGHBOURS: Partial<Record<ViewName, { lead: string; view: ViewName; name: string }>> = {
   map: { lead: 'For the shapes this code puts data into, see the', view: 'types', name: 'Data model' },
   types: { lead: 'For the files that read and write them, see the', view: 'map', name: 'Map' },
+  // Boundaries counts the ways in; Trace follows one of them. Somebody looking at 45
+  // doors and wanting to know what one of them does has landed one screen short.
+  boundaries: { lead: 'To follow one of these ways in through the code, see', view: 'trace', name: 'Trace' },
+  trace: { lead: 'For everything that gets in and where it all ends up, see', view: 'boundaries', name: 'Boundaries' },
 };
 
 export function App() {
@@ -407,21 +416,8 @@ function AtlasApp() {
   }, [selectedId, revision]);
 
   // --- frame each level as soon as it is laid out ---
-  // Not gated on React Flow's own "nodes measured" signal: these nodes carry explicit
-  // width/height from elk, and React Flow never reports pre-sized nodes as measured,
-  // so that signal simply never fires. Our own state is the reliable one — positions
-  // arrive together with the level. The first call runs a frame after the nodes
-  // render; the delayed one covers React Flow syncing its store just after that.
-  useEffect(() => {
-    if (view !== 'map' || !shown || positions.size === 0) return;
-    const options = { padding: 0.2, maxZoom: 1 };
-    const frame = requestAnimationFrame(() => void fitView(options));
-    const timer = window.setTimeout(() => void fitView({ ...options, duration: 250 }), 150);
-    return () => {
-      cancelAnimationFrame(frame);
-      window.clearTimeout(timer);
-    };
-  }, [view, shown, positions, fitView]);
+  // Lives below the walkthrough state because it frames the current step when there is
+  // one. See the effect itself, further down.
 
   const go = useCallback((next: ViewName, id?: string | null) => {
     setView(next);
@@ -522,6 +518,53 @@ function AtlasApp() {
 
   /** Everything the current step wants lit. Overrides the click-neighbours highlight. */
   const tourFocus = useMemo(() => (step ? new Set(step.focusIds) : null), [step]);
+
+  // How much room the drawer is taking, watched rather than assumed: it grows with the
+  // length of the step and with any wrap at a narrow width, and a stale number here
+  // means the map hands back the wrong strip.
+  const [drawerHeight, setDrawerHeight] = useState(0);
+  useEffect(() => {
+    if (!tour) {
+      setDrawerHeight(0);
+      return;
+    }
+    const drawer = document.querySelector('.walkthrough');
+    if (!drawer) return;
+    const watch = new ResizeObserver(() => {
+      setDrawerHeight(Math.round(drawer.getBoundingClientRect().height) + DRAWER_GAP);
+    });
+    watch.observe(drawer);
+    return () => watch.disconnect();
+  }, [tour]);
+
+  // --- frame the level, or the step's subject, as soon as it is laid out ---
+  // Not gated on React Flow's own "nodes measured" signal: these nodes carry explicit
+  // width/height from elk, and React Flow never reports pre-sized nodes as measured,
+  // so that signal simply never fires. Our own state is the reliable one — positions
+  // arrive together with the level. The first call runs a frame after the nodes
+  // render; the delayed one covers React Flow syncing its store just after that.
+  //
+  // Mid-walkthrough the frame is the step's own subject rather than the whole level,
+  // and it is fitted into the room the drawer leaves. Framing the level instead left
+  // the step's lit card underneath the drawer often enough to measure — the words were
+  // covering the very thing they pointed at.
+  useEffect(() => {
+    if (view !== 'map' || !shown || positions.size === 0) return;
+    const lit = step ? step.focusIds.filter((id) => positions.has(id)) : [];
+    const frameIt = (duration?: number) =>
+      void fitView({
+        ...(lit.length ? { nodes: lit.map((id) => ({ id })) } : {}),
+        padding: 0.2,
+        maxZoom: 1,
+        duration,
+      });
+    const frame = requestAnimationFrame(() => frameIt());
+    const timer = window.setTimeout(() => frameIt(250), 150);
+    return () => {
+      cancelAnimationFrame(frame);
+      window.clearTimeout(timer);
+    };
+  }, [view, shown, positions, fitView, step, drawerHeight]);
 
   /** Bring a node into view on the map, changing level first if it lives elsewhere. */
   const reveal = useCallback(
@@ -828,7 +871,16 @@ function AtlasApp() {
         ) : null}
       </p>
 
-      <main className={view === 'map' ? 'canvas' : 'canvas canvas-page'}>
+      {/* While a walkthrough runs the map gives up the strip the drawer sits on, rather
+          than lying underneath it. React Flow centres what it frames inside its own
+          container, so as long as the container reached under the drawer, a step's lit
+          card could be framed perfectly and still be invisible. Shortening the
+          container is the version of that fix that cannot drift: what the map can use
+          and what the reader can see become the same rectangle. */}
+      <main
+        className={view === 'map' ? 'canvas' : 'canvas canvas-page'}
+        style={tour && view === 'map' ? { paddingBottom: drawerHeight } : undefined}
+      >
         {view === 'boundaries' ? (
           boundaries ? (
             <BoundaryScreen
@@ -876,6 +928,8 @@ function AtlasApp() {
             <div className="loading">Checking every door…</div>
           )
         ) : null}
+
+        {view === 'trace' ? <TraceScreen onReveal={reveal} onSelect={select} selectedId={selectedId} aiEnabled={aiEnabled} /> : null}
 
         {view === 'map' ? (
           <>
@@ -1034,6 +1088,7 @@ function readHash(): { view: ViewName; levelId: string | null; asked: boolean } 
   // ATLAS.md files and anything anyone has shared still point here.
   if (raw === 'types') return { view: 'types', levelId: null, asked: true };
   if (raw === 'insights') return { view: 'insights', levelId: null, asked: true };
+  if (raw === 'trace') return { view: 'trace', levelId: null, asked: true };
   if (raw === 'map') return { view: 'map', levelId: null, asked: true };
   if (raw.startsWith('map/')) return { view: 'map', levelId: raw.slice(4), asked: true };
   // Links made by M1 were a bare node id and still mean "show me this on the map".
@@ -1073,6 +1128,8 @@ function quietViews(stats: AtlasStats | undefined): Set<ViewName> {
   if (stats.endpoints === 0 && stats.services === 0 && stats.stores === 0) quiet.add('boundaries');
   if (stats.routes === 0 && stats.externalServices === 0 && stats.envVars === 0) quiet.add('insights');
   if (stats.types === 0) quiet.add('types');
+  // Nothing to pick from, so nothing to follow. A library with no doors lands here.
+  if (stats.endpoints === 0) quiet.add('trace');
   return quiet;
 }
 
@@ -1106,6 +1163,9 @@ function writeHash(view: ViewName, levelId: string | null): void {
   const hash = view === 'map' && levelId ? `map/${encodeURIComponent(levelId)}` : view;
   window.history.replaceState(null, '', `#${hash}`);
 }
+
+/** Breathing room between the bottom of the map and the top of the drawer. */
+const DRAWER_GAP = 12;
 
 function zoneColor(zone: Zone): string {
   switch (zone) {

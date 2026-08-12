@@ -14,11 +14,15 @@ import { fileURLToPath } from 'node:url';
 import type { Atlas } from '../model/types.js';
 import type { ScopeRecord } from '../model/store.js';
 import { buildBoundaryView } from '../model/boundary.js';
+import { traceError } from '../model/errortrace.js';
+import { buildFlow, listDoors } from '../model/flow.js';
 import { AtlasGraph } from '../model/graph.js';
 import { buildInsights } from '../model/insights.js';
+import { bundleMaps } from '../model/sourcemap.js';
 import { buildTours, tourFor } from '../model/tours.js';
 import { buildTypeView } from '../model/typeview.js';
 import { readSource } from './source.js';
+import { ErrorHelper } from './errorhelp.js';
 import { Explainer } from './explain.js';
 import type { AiServerOptions } from './explain.js';
 
@@ -90,10 +94,11 @@ export async function startServer(options: ServeOptions): Promise<ServerHandle> 
   // for an app that has since been deleted should still show something.
   const graphFor = (id: string | null) => graphs.get(id ?? DEFAULT_SCOPE) ?? graphs.get(DEFAULT_SCOPE)!;
   const explainer = new Explainer(options.ai ?? { enabled: true });
+  const errorHelper = new ErrorHelper(options.ai ?? { enabled: true });
 
   const server = http.createServer((req, res) => {
     try {
-      handleRequest(req, res, graphFor, scopeList, webRoot, explainer, listeners);
+      handleRequest(req, res, graphFor, scopeList, webRoot, explainer, errorHelper, listeners);
     } catch (err) {
       sendJson(res, 500, { error: (err as Error).message });
     }
@@ -204,6 +209,7 @@ function handleRequest(
   scopes: ScopeRecord[],
   webRoot: string,
   explainer: Explainer,
+  errorHelper: ErrorHelper,
   listeners: Listeners,
 ): void {
   const url = new URL(req.url ?? '/', 'http://localhost');
@@ -267,6 +273,78 @@ function handleRequest(
         const tour = tourFor(graph, id);
         if (!tour) return sendJson(res, 404, { error: 'No walkthrough for this one.' });
         return sendJson(res, 200, tour);
+      }
+
+      /** Every way in, for the list the trace view is chosen from. */
+      case '/api/doors':
+        return sendJson(res, 200, listDoors(graph));
+
+      /**
+       * Where one door leads. Separate from `/api/doors` for the reason `/api/tour` is
+       * separate from `/api/tours`: following every door up front would walk the whole
+       * reference graph once per way in to answer a question about one of them.
+       */
+      case '/api/flow': {
+        const id = url.searchParams.get('id') ?? '';
+        const flow = buildFlow(graph, id);
+        if (!flow) return sendJson(res, 404, { error: `Not a way in: ${id}` });
+        return sendJson(res, 200, flow);
+      }
+
+      /**
+       * A pasted error, placed on the map. POST because a stack trace is far past what
+       * belongs in a query string, and because it is the one request here carrying
+       * something the reader typed rather than something the atlas already knows.
+       */
+      case '/api/trace': {
+        if (req.method !== 'POST') return sendJson(res, 405, { error: 'Paste an error with POST.' });
+        void readBody(req).then(
+          (pasted) => {
+            if (!pasted.trim()) return sendJson(res, 400, { error: 'Nothing was pasted.' });
+            sendJson(res, 200, traceError(graph, pasted, bundleMaps(graph.meta.root)));
+          },
+          (err: Error) => sendJson(res, 500, { error: err.message }),
+        );
+        return;
+      }
+
+      /**
+       * The closing paragraph for a traced error — the only generated thing in this
+       * feature. The path is recomputed here rather than taken from the request, so
+       * what the model is shown is what the compiler found and not what a browser
+       * claimed it found.
+       */
+      case '/api/trace/explain': {
+        if (req.method !== 'POST') return sendJson(res, 405, { error: 'Post the trace to explain.' });
+        void readBody(req).then(
+          (pasted) => {
+            if (!pasted.trim()) return sendJson(res, 400, { error: 'Nothing was pasted.' });
+            void errorHelper
+              .explainTrace(graph, pasted)
+              .then((result) => sendJson(res, 'error' in result ? 400 : 200, result));
+          },
+          (err: Error) => sendJson(res, 500, { error: err.message }),
+        );
+        return;
+      }
+
+      /**
+       * Where to start when the paste has no frames in it. The candidates are searched
+       * out of the atlas before the model sees them, so it chooses among real things
+       * rather than producing a path.
+       */
+      case '/api/trace/start': {
+        if (req.method !== 'POST') return sendJson(res, 405, { error: 'Post the description.' });
+        void readBody(req).then(
+          (described) => {
+            if (!described.trim()) return sendJson(res, 400, { error: 'Nothing was pasted.' });
+            void errorHelper
+              .guessStart(graph, described)
+              .then((result) => sendJson(res, 'error' in result ? 400 : 200, result));
+          },
+          (err: Error) => sendJson(res, 500, { error: err.message }),
+        );
+        return;
       }
 
       /** The code behind one step of a walkthrough, read from disk on demand. */
@@ -342,6 +420,41 @@ function serveStatic(pathname: string, res: http.ServerResponse, webRoot: string
     'cache-control': ext === '.html' ? 'no-cache' : 'public, max-age=300',
   });
   fs.createReadStream(file).pipe(res);
+}
+
+/** How much pasted text to accept. A stack trace is kilobytes; anything past this is not one. */
+const MAX_PASTE_BYTES = 512 * 1024;
+
+/**
+ * The `trace` field out of a posted body, as text.
+ *
+ * Capped and hung up on rather than buffered without limit: this is the only endpoint
+ * that reads a request body at all, and a loopback server with no ceiling on one is a
+ * way to run a machine out of memory by accident.
+ */
+function readBody(req: http.IncomingMessage): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const chunks: Buffer[] = [];
+    let size = 0;
+    req.on('data', (chunk: Buffer) => {
+      size += chunk.length;
+      if (size > MAX_PASTE_BYTES) {
+        req.destroy();
+        reject(new Error('That paste is too big to be a stack trace.'));
+        return;
+      }
+      chunks.push(chunk);
+    });
+    req.on('end', () => {
+      try {
+        const parsed = JSON.parse(Buffer.concat(chunks).toString('utf8')) as { trace?: unknown };
+        resolve(typeof parsed.trace === 'string' ? parsed.trace : '');
+      } catch {
+        reject(new Error('That request body was not JSON.'));
+      }
+    });
+    req.on('error', reject);
+  });
 }
 
 function sendJson(res: http.ServerResponse, status: number, body: unknown): void {
