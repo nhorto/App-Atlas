@@ -36,6 +36,7 @@ import {
 } from '../enrich/validate.js';
 import { traceError } from '../model/errortrace.js';
 import type { AtlasGraph } from '../model/graph.js';
+import { installedPackages } from '../model/packages.js';
 import { bundleMaps } from '../model/sourcemap.js';
 import { AtlasStore, atlasDbPath } from '../model/store.js';
 import type { AtlasNode, EndpointMeta } from '../model/types.js';
@@ -93,7 +94,7 @@ export class ErrorHelper {
    * body claimed it found.
    */
   async explainTrace(graph: AtlasGraph, pasted: string): Promise<ErrorWords | HelpError> {
-    const traced = traceError(graph, pasted, bundleMaps(graph.meta.root));
+    const traced = traceError(graph, pasted, bundleMaps(graph.meta.root), installedPackages(graph.meta.root));
     if (traced.parsedNothing) return { error: 'There are no stack frames in that paste to explain.' };
     if (!traced.origin?.nodeId) {
       return { error: 'None of those frames is code in this project, so there is no path here to explain.' };
