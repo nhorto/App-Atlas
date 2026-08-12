@@ -78,7 +78,8 @@ import { OverviewScreen } from './components/OverviewScreen';
 import { SearchPalette } from './components/SearchPalette';
 import { TraceScreen } from './components/TraceScreen';
 import { TypeScreen } from './components/TypeScreen';
-import { Walkthrough } from './components/Walkthrough';
+import { ResumeOffer, Walkthrough } from './components/Walkthrough';
+import { atlasKey, forgetTour, recallTour, rememberTour, type ResumePoint } from './resume';
 
 const nodeTypes = { atlas: AtlasNodeCard, membrane: MembraneNode };
 
@@ -516,6 +517,65 @@ function AtlasApp() {
     [tour, showStep],
   );
 
+  // --- picking a walkthrough back up after a reload (#212) ---
+
+  /**
+   * Which atlas the stored place belongs to. Null until the overview lands, which is
+   * what keeps the read below from happening against a key that names the wrong app.
+   */
+  const resumeKey = useMemo(
+    () => (overview ? atlasKey(overview.meta.root, scopeId) : null),
+    [overview, scopeId],
+  );
+
+  /** What was stored last time, before anything this session overwrites it. */
+  const [stored, setStored] = useState<ResumePoint | null>(null);
+  useEffect(() => {
+    setStored(resumeKey ? recallTour(resumeKey) : null);
+  }, [resumeKey]);
+
+  useEffect(() => {
+    if (!resumeKey || !tour || !step) return;
+    rememberTour(resumeKey, { tourId: tour.id, stepId: step.id });
+  }, [resumeKey, tour, step]);
+
+  /**
+   * Ending a tour is ending it. Closing the drawer at step four and coming back to an
+   * offer to return to step four would make the X mean "hide this for now", which is
+   * not what it looks like and not what it did before any of this existed.
+   */
+  const endTour = useCallback(() => {
+    setTourId(null);
+    setStored(null);
+    if (resumeKey) forgetTour(resumeKey);
+  }, [resumeKey]);
+
+  /**
+   * The stored place resolved against the tours this atlas actually has — which is
+   * where it fails closed. The atlas is re-analyzed between visits, so a tour can
+   * vanish and a step inside one can too, and a stored id that no longer matches
+   * anything produces no offer rather than a guess at what it used to mean.
+   */
+  const resumable = useMemo(() => {
+    if (!stored || tourId) return null;
+    const target = everyTour.get(stored.tourId);
+    if (!target) return null;
+    const index = target.steps.findIndex((one) => one.id === stored.stepId);
+    return index === -1 ? null : { tour: target, index };
+  }, [stored, tourId, everyTour]);
+
+  const resumeTour = useCallback(() => {
+    if (!resumable) return;
+    setTourId(resumable.tour.id);
+    setStepIndex(resumable.index);
+    showStep(resumable.tour, resumable.index);
+  }, [resumable, showStep]);
+
+  const dismissResume = useCallback(() => {
+    setStored(null);
+    if (resumeKey) forgetTour(resumeKey);
+  }, [resumeKey]);
+
   /** Everything the current step wants lit. Overrides the click-neighbours highlight. */
   const tourFocus = useMemo(() => (step ? new Set(step.focusIds) : null), [step]);
 
@@ -597,8 +657,10 @@ function AtlasApp() {
         if (searchOpen) setSearchOpen(false);
         else if (selectedId) setSelectedId(null);
         // Ending the tour is the last thing Escape does, so a detour mid-tour costs
-        // one press and not the whole walkthrough.
-        else if (tourId) setTourId(null);
+        // one press and not the whole walkthrough. It ends it for good, the same as
+        // the X — an offer to resume what somebody just escaped from would be the
+        // walkthrough refusing to take no for an answer.
+        else if (tourId) endTour();
         return;
       }
       const typing = (event.target as HTMLElement | null)?.tagName === 'INPUT';
@@ -609,7 +671,7 @@ function AtlasApp() {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [goUp, searchOpen, selectedId, tourId, view]);
+  }, [endTour, goUp, searchOpen, selectedId, tourId, view]);
 
   /** The selection plus everything one hop away from it. */
   const neighborIds = useMemo(() => {
@@ -1055,7 +1117,14 @@ function AtlasApp() {
             index={stepIndex}
             onStep={goToStep}
             onShowAgain={() => showStep(tour, stepIndex)}
-            onClose={() => setTourId(null)}
+            onClose={endTour}
+          />
+        ) : resumable ? (
+          <ResumeOffer
+            tour={resumable.tour}
+            index={resumable.index}
+            onResume={resumeTour}
+            onDismiss={dismissResume}
           />
         ) : null}
       </main>
