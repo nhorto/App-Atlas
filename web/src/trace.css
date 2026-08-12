@@ -853,6 +853,87 @@
   color: #8a5f0e !important;
 }
 
+/* --- where your code reaches into the library the trace died in --- */
+
+/* Deliberately quieter than `.paste-doors`: this list is one inference further from the
+   trace than a placed frame is, and styling the two alike would say they are equally
+   solid. Same shapes, less contrast. */
+.paste-into {
+  margin-top: 16px;
+}
+
+.paste-into-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.paste-into-file {
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: var(--surface);
+  padding: 8px 12px;
+}
+
+.paste-into-main {
+  border: 0;
+  background: transparent;
+  padding: 0;
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  color: var(--ink);
+  text-align: left;
+  cursor: pointer;
+  overflow-wrap: anywhere;
+}
+
+.paste-into-main:hover {
+  text-decoration: underline;
+}
+
+.paste-into-doors {
+  list-style: none;
+  margin: 6px 0 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 6px;
+  align-items: baseline;
+}
+
+.paste-into-door {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 5px;
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  background: transparent;
+  padding: 2px 7px;
+  font: inherit;
+  font-size: 11.5px;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.paste-into-door:hover {
+  background: var(--accent-soft);
+  color: var(--ink);
+}
+
+.paste-into-rest,
+.paste-into-nodoor {
+  font-size: 11.5px;
+  color: var(--muted);
+}
+
+.paste-into-nodoor {
+  display: block;
+  margin-top: 6px;
+}
+
 /* --- the one generated thing on the screen --- */
 
 /* Set apart deliberately. Everything above it came from the compiler; this did not,
