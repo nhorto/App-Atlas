@@ -22,6 +22,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { toPosix } from '../util/paths.js';
+import { buildIgnoreMatcher, type IgnoreMatcher } from './ignores.js';
 
 export interface WorkerBinding {
   /** The name the code sees on `env` — `LIVE`, `MY_KV`. */
@@ -99,8 +100,17 @@ const SKIP_DIRS = new Set([
  * Finds every wrangler config in the tree, not just the one at the root: a repo that
  * keeps its Worker in `worker/` — beside a Pages config at the top — is the normal
  * shape, and reading only the root would find the static site and miss the code.
+ *
+ * `SKIP_DIRS` is about where a config is worth looking for; `ignores` is about what the
+ * caller said is not this app, and both have to hold. A wrangler config under an ignored
+ * path is the sharpest version of the leak `ignores.ts` describes — it puts a route that
+ * answers every URL on the map, and every store the config binds beside it.
  */
-export function readWorkers(root: string, maxDepth = 3): WorkerSignal[] {
+export function readWorkers(
+  root: string,
+  ignores: IgnoreMatcher = buildIgnoreMatcher(root),
+  maxDepth = 3,
+): WorkerSignal[] {
   const out: WorkerSignal[] = [];
 
   const walk = (dir: string, depth: number): void => {
@@ -112,6 +122,7 @@ export function readWorkers(root: string, maxDepth = 3): WorkerSignal[] {
     }
     for (const entry of entries) {
       const full = path.join(dir, entry.name);
+      if (ignores.ignores(full)) continue;
       if (entry.isDirectory()) {
         if (depth >= maxDepth || SKIP_DIRS.has(entry.name) || entry.name.startsWith('.')) continue;
         walk(full, depth + 1);

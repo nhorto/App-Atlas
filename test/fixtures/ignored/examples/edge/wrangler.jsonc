@@ -1,0 +1,11 @@
+{
+	// A sample deploy that ships with the app. Nobody's production runs it.
+	"name": "sample-edge",
+	"main": "index.ts",
+	"compatibility_date": "2025-04-01",
+	"d1_databases": [
+		{ "binding": "DB", "database_name": "sample-db", "database_id": "0f0a1b2c-3d4e-5f60-7182-93a4b5c6d7e8" }
+	],
+	"kv_namespaces": [{ "binding": "SAMPLE_CACHE", "id": "9a8b7c6d5e4f30211f0e9d8c7b6a5f43" }],
+	"r2_buckets": [{ "binding": "UPLOADS", "bucket_name": "sample-uploads" }]
+}

@@ -1,0 +1,5 @@
+services:
+  sample-db:
+    image: postgres:16
+    ports:
+      - "6543:5432"

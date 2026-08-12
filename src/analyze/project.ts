@@ -14,6 +14,7 @@ import { goFrameworkFor } from './generic/go/frameworks.js';
 import { dotnetFrameworkFor, DOTNET_SDKS } from './generic/csharp/frameworks.js';
 import { rustFrameworkFor } from './generic/rust/frameworks.js';
 import { extOf, relPosix, toPosix } from '../util/paths.js';
+import { buildIgnoreMatcher } from './ignores.js';
 import { readSignals } from './signals.js';
 import type { ProjectSignals } from './signals.js';
 import { isWorker } from './wrangler.js';
@@ -133,28 +134,6 @@ const UNREAD_LANGUAGE_GLOB =
  */
 const MARKUP_GLOB = '**/*.xaml';
 
-export const DEFAULT_IGNORES = [
-  '**/node_modules/**',
-  '**/.git/**',
-  '**/.app-atlas/**',
-  '**/dist/**',
-  '**/build/**',
-  '**/out/**',
-  '**/.next/**',
-  '**/.nuxt/**',
-  '**/.svelte-kit/**',
-  '**/.turbo/**',
-  '**/.vercel/**',
-  '**/.venv/**',
-  '**/venv/**',
-  '**/coverage/**',
-  '**/vendor/**',
-  '**/__pycache__/**',
-  '**/.ipynb_checkpoints/**',
-  '**/*.min.js',
-  '**/*.bundle.js',
-];
-
 /** Package-name → friendly framework label. First-pass detection only; M2 adds real plugins. */
 const FRAMEWORK_SIGNALS: Record<string, string> = {
   next: 'Next.js',
@@ -216,11 +195,15 @@ export async function discoverProject(rootInput: string, options: DiscoverOption
     (typeof packageJson?.name === 'string' && packageJson.name.trim()) || path.basename(root) || 'app';
 
   const tsConfigPath = findTsConfig(root);
+  // One matcher for the whole run. The source scans below hand their patterns to
+  // fast-glob and the signal readers consult the compiled form, so a path left out of
+  // one is left out of both — the flag means the same thing wherever it is honoured.
+  const ignores = buildIgnoreMatcher(root, options.extraIgnores ?? []);
   // Where to look for deployment files. Above this app only when something above it
   // actually describes it — see `inheritDeploymentFiles`.
   const deploymentRoot =
     options.inheritDeploymentFiles !== false && options.repoRoot ? path.resolve(options.repoRoot) : root;
-  const signals = readSignals(root, packageJson, deploymentRoot);
+  const signals = readSignals(root, packageJson, deploymentRoot, ignores);
   const workspaces = readWorkspaces(root, packageJson);
 
   const found = await fg(SOURCE_GLOB, {
@@ -230,7 +213,7 @@ export async function discoverProject(rootInput: string, options: DiscoverOption
     onlyFiles: true,
     followSymbolicLinks: false,
     suppressErrors: true,
-    ignore: [...DEFAULT_IGNORES, ...(options.extraIgnores ?? [])],
+    ignore: ignores.patterns,
   });
 
   const filtered = applyGitignore(root, found.map(toPosix)).sort((a, b) => a.localeCompare(b));
@@ -242,7 +225,7 @@ export async function discoverProject(rootInput: string, options: DiscoverOption
     onlyFiles: true,
     followSymbolicLinks: false,
     suppressErrors: true,
-    ignore: [...DEFAULT_IGNORES, ...(options.extraIgnores ?? [])],
+    ignore: ignores.patterns,
   });
   const unreadFormats = countByExtension(applyGitignore(root, components.map(toPosix)));
 
@@ -253,7 +236,7 @@ export async function discoverProject(rootInput: string, options: DiscoverOption
     onlyFiles: true,
     followSymbolicLinks: false,
     suppressErrors: true,
-    ignore: [...DEFAULT_IGNORES, ...(options.extraIgnores ?? [])],
+    ignore: ignores.patterns,
   });
   const unreadLanguages = countByExtension(applyGitignore(root, backbone.map(toPosix)));
 
@@ -264,7 +247,7 @@ export async function discoverProject(rootInput: string, options: DiscoverOption
     onlyFiles: true,
     followSymbolicLinks: false,
     suppressErrors: true,
-    ignore: [...DEFAULT_IGNORES, ...(options.extraIgnores ?? [])],
+    ignore: ignores.patterns,
   });
   const markupFiles = applyGitignore(root, markup.map(toPosix)).sort();
 

@@ -49,6 +49,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { toPosix } from '../../util/paths.js';
+import { buildIgnoreMatcher, type IgnoreMatcher } from '../ignores.js';
 import { classifyZone } from '../zones.js';
 import type { PublishedPort } from '../signals.js';
 
@@ -107,8 +108,18 @@ const SKIP_DIRS = new Set([
  * `apps/api/docker-compose.yml` far more often than at the root. Hidden directories are
  * skipped, `.devcontainer/` among them — a dev container publishes ports on one
  * developer's laptop, which is the least deployment-like thing in any repo.
+ *
+ * `ignores` is written against `appRoot` and so says nothing about the repo above it,
+ * which is the right answer twice over: the caller's globs never mentioned those paths,
+ * and the stack file up there is the whole reason this search starts higher than the
+ * others.
  */
-export function readComposePorts(repoRoot: string, appRoot: string = repoRoot, maxDepth = 3): PublishedPort[] {
+export function readComposePorts(
+  repoRoot: string,
+  appRoot: string = repoRoot,
+  ignores: IgnoreMatcher = buildIgnoreMatcher(appRoot),
+  maxDepth = 3,
+): PublishedPort[] {
   const out: PublishedPort[] = [];
 
   const walk = (dir: string, depth: number): void => {
@@ -120,6 +131,7 @@ export function readComposePorts(repoRoot: string, appRoot: string = repoRoot, m
     }
     for (const entry of entries) {
       const full = path.join(dir, entry.name);
+      if (ignores.ignores(full)) continue;
       if (entry.isDirectory()) {
         if (depth >= maxDepth || SKIP_DIRS.has(entry.name) || entry.name.startsWith('.')) continue;
         walk(full, depth + 1);
