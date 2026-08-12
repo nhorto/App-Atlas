@@ -176,11 +176,24 @@ test('the welcome tour answers the questions people ask first', () => {
   assert.equal(welcome.kind, 'welcome');
   assert.ok(welcome.steps.length >= 4);
   assert.ok(
-    // 23, not 11: PostgREST publishes four doors onto each of the three declared
+    // 22, not 11: PostgREST publishes four doors onto each of the three declared
     // tables, and those are ways in whether or not any code in the repo calls them.
-    welcome.steps.some((step) => /23 ways in/.test(step.body)),
+    // Not 23 either — the env inventory is a list of variables, not a way in.
+    welcome.steps.some((step) => /22 ways in/.test(step.body)),
     'the doors are counted from the graph, not guessed',
   );
+});
+
+test('the count and the breakdown beside it are counting the same doors', () => {
+  // These are one sentence — "22 ways in: 19 routes, 1 scheduled job…" — and they came
+  // from two different lists. Excluding the env inventory from the count alone left the
+  // breakdown summing to one more than the number in front of it.
+  const step = tours[0].steps.find((s) => /ways in:/.test(s.body));
+  assert.ok(step, 'the welcome tour opens with the doors');
+
+  const [, total, breakdown] = /(\d+) ways in: ([^.]+)\./.exec(step.body);
+  const counted = [...breakdown.matchAll(/(\d+)\s/g)].reduce((sum, [, n]) => sum + Number(n), 0);
+  assert.equal(counted, Number(total), `"${breakdown}" does not add up to ${total}`);
 });
 
 test('a flow is traced from the door to the database', () => {

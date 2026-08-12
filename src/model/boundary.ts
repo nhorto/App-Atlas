@@ -216,7 +216,9 @@ export function buildBoundaryView(graph: AtlasGraph): BoundaryView {
     outputs,
     flows,
     summary: {
-      endpoints: endpoints.length,
+      // Same count `listDoors` reports, for the same reason: the env inventory is a list
+      // of variables, not a path anybody travels. It keeps its own card in `inputs`.
+      endpoints: endpoints.filter((node) => (node.meta as unknown as EndpointMeta).endpointKind !== 'env').length,
       openRoutes: graph.meta.stats.unprotectedRoutes,
       externalServices: services.length,
       stores: stores.length,

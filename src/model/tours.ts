@@ -129,7 +129,13 @@ function welcomeTour(graph: AtlasGraph): Tour {
         Number(b.meta.descendantFileCount ?? b.childCount ?? 0) - Number(a.meta.descendantFileCount ?? a.childCount ?? 0),
     )
     .slice(0, 6);
-  const endpoints = graph.nodesOfKind('endpoint');
+  // Without the env inventory, which is a list of variables rather than a way in. The
+  // count beside this list comes from `stats.endpoints`, and the two have to be counting
+  // the same things or the sentence contradicts itself inside one line: "22 ways in: 19
+  // routes, 1 config source, 1 scheduled job, 1 webhook and 1 server action" adds to 23.
+  const endpoints = graph
+    .nodesOfKind('endpoint')
+    .filter((node) => (node.meta as unknown as EndpointMeta).endpointKind !== 'env');
   const stores = graph.nodesOfKind('store');
   const services = graph.nodesOfKind('service');
 
