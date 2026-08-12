@@ -92,6 +92,42 @@ test('a router built inside a factory function is still a router', () => {
   );
 });
 
+test('middleware named after what it guards is read as a check', () => {
+  // `router.get('/users', mw.authAdminApi, …)`. Ghost declares 218 of its 261 admin
+  // routes exactly this way, and an exact-match list of guard names saw none of them —
+  // which is most of what "263 of 263 unprotected" was measuring.
+  const users = graph
+    .nodesOfKind('endpoint')
+    .find((node) => node.meta.route === '/ghost/users' && node.meta.method === 'GET');
+  assert.deepEqual(
+    users.meta.guards.map((guard) => [guard.name, guard.confidence]),
+    [['mw.authAdminApi', 'likely']],
+  );
+});
+
+test('a name that merely starts with the letters of a check is not one', () => {
+  // `mw.authorList` on a blogging platform is a list of authors. The rule anchors on a
+  // word boundary — `auth` followed by a capital — so `authAdminApi` matches and
+  // `author…` cannot, and Ghost is full of `authorExists`, `authorImage`,
+  // `authorFacebook`. Reading one of those as a lock is the failure worth designing
+  // against: a route reported as protected when nothing protects it.
+  const post = graph
+    .nodesOfKind('endpoint')
+    .find((node) => node.meta.route === '/ghost/users' && node.meta.method === 'POST');
+  assert.deepEqual(post.meta.guards, []);
+});
+
+test('a check found by its name alone never claims certainty', () => {
+  // An exact name out of the known list is `certain`; a name that only *begins* like one
+  // is good evidence and not the same thing. Everything this rule finds says so.
+  const named = graph
+    .nodesOfKind('endpoint')
+    .flatMap((node) => node.meta.guards ?? [])
+    .filter((guard) => guard.name.includes('authAdminApi'));
+  assert.ok(named.length > 0);
+  assert.ok(named.every((guard) => guard.confidence !== 'certain'));
+});
+
 // ---------------------------------------------------------------------------
 // Still open — the rest of #204
 // ---------------------------------------------------------------------------
@@ -117,15 +153,23 @@ test('the prefix is read from the constant the mount names', () => {
   assert.ok(session.meta.route.startsWith('/ghost/api'), `read the constant, got ${session.meta.route}`);
 });
 
-test('NOT YET: a check written as a require-expression is not seen as a check', () => {
-  // `require('…/auth/session').createSessionFromToken()` is a middleware factory: the
-  // guard is what the call returns, one step deeper than the argument, and the name it
-  // is reached by roots at `require` rather than at anything resolvable. Every route
-  // here is genuinely behind that check and every one of them reports nothing — which
-  // is the under-claiming direction, and still useless.
-  const guards = graph
+test('a check reached only through a require-expression is left unclaimed, on purpose', () => {
+  // `app.use('/ghost', require('…/auth/session').createSessionFromToken(), router)`.
+  //
+  // Not an oversight — a decision. `createSessionFromToken` begins like no check this
+  // tool knows, `dottedName` gives `require.createSessionFromToken` whose root resolves
+  // to nothing, and it is a middleware *factory* besides, so the guard is whatever the
+  // call returns, in a package. The only evidence left is that the module path contains
+  // `auth`, and a path is not a name: the same rule would read `services/auth/logger` or
+  // `services/auth/errors` as a lock on whatever they sit in front of.
+  //
+  // So these routes report no check, which is true — App Atlas cannot see one — and
+  // under-claiming is the direction this feature is allowed to be wrong in. Anything
+  // that changes this has to bring evidence better than a folder name.
+  const admin = graph
     .nodesOfKind('endpoint')
     .filter((node) => node.meta.endpointKind === 'http-route')
-    .flatMap((node) => node.meta.guards ?? []);
-  assert.deepEqual(guards, [], 'still nothing; #204 is not closed by the edges alone');
+    .filter((node) => node.meta.method === 'DELETE');
+  assert.equal(admin.length, 1);
+  assert.deepEqual(admin[0].meta.guards, []);
 });
