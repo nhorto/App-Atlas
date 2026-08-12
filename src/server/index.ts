@@ -14,6 +14,7 @@ import { fileURLToPath } from 'node:url';
 import type { Atlas } from '../model/types.js';
 import type { ScopeRecord } from '../model/store.js';
 import { buildBoundaryView } from '../model/boundary.js';
+import { buildFlow, listDoors } from '../model/flow.js';
 import { AtlasGraph } from '../model/graph.js';
 import { buildInsights } from '../model/insights.js';
 import { buildTours, tourFor } from '../model/tours.js';
@@ -267,6 +268,22 @@ function handleRequest(
         const tour = tourFor(graph, id);
         if (!tour) return sendJson(res, 404, { error: 'No walkthrough for this one.' });
         return sendJson(res, 200, tour);
+      }
+
+      /** Every way in, for the list the trace view is chosen from. */
+      case '/api/doors':
+        return sendJson(res, 200, listDoors(graph));
+
+      /**
+       * Where one door leads. Separate from `/api/doors` for the reason `/api/tour` is
+       * separate from `/api/tours`: following every door up front would walk the whole
+       * reference graph once per way in to answer a question about one of them.
+       */
+      case '/api/flow': {
+        const id = url.searchParams.get('id') ?? '';
+        const flow = buildFlow(graph, id);
+        if (!flow) return sendJson(res, 404, { error: `Not a way in: ${id}` });
+        return sendJson(res, 200, flow);
       }
 
       /** The code behind one step of a walkthrough, read from disk on demand. */

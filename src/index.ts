@@ -40,6 +40,17 @@ export type { Scope } from './analyze/workspace.js';
 export { renderAtlasMarkdown } from './export/markdown.js';
 export { buildTours, tourFor } from './model/tours.js';
 export type { Tour, TourStep } from './model/tours.js';
+export { buildFlow, listDoors } from './model/flow.js';
+export type {
+  DoorGroup,
+  DoorList,
+  DoorSummary,
+  FlowExit,
+  FlowLimits,
+  FlowLink,
+  FlowStop,
+  FlowView,
+} from './model/flow.js';
 export { buildTypeView } from './model/typeview.js';
 export type { TypeCard, TypeField, TypeLink, TypeView } from './model/typeview.js';
 export { authHeadline, classifyOpenDoors, isAuthRelevant } from './model/exposure.js';
