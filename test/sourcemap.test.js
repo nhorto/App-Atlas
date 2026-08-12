@@ -146,6 +146,25 @@ test('an index map hands the question to the section that covers it', () => {
   assert.equal(map.originalFor(4, 0).source, 'src/second.ts', 'the offset is subtracted before the lookup');
 });
 
+test('a line with an unreadable segment in it answers nothing at all', () => {
+  // Skipping just the bad segment is the tidy-looking version and the dangerous one:
+  // every generated column is a delta from the one before it, so a dropped delta shifts
+  // everything after it and the map keeps answering — with a real file and a plausible
+  // line that is not the one the crash happened on.
+  const map = parseSourceMap(JSON.stringify(mapFile(`AAAA,$$$$,${AT_COLUMN_400}`, ['src/app.ts'])));
+  assert.equal(map.originalFor(0, 400), null);
+  assert.equal(map.originalFor(0, 0), null, 'and not the earlier segment on the same broken line either');
+});
+
+test('a broken line takes every line after it, and leaves the ones before it alone', () => {
+  // The deltas the bad line would have carried are gone, so nothing downstream of it can
+  // be placed. What was decoded before it is still good and stays readable.
+  const map = parseSourceMap(JSON.stringify(mapFile(`${AT_COLUMN_400};$$$$;AAAA`, ['src/app.ts'])));
+  assert.equal(map.originalFor(0, 400).line, 9, 'the clean line before the break');
+  assert.equal(map.originalFor(1, 0), null, 'the break itself');
+  assert.equal(map.originalFor(2, 0), null, 'and everything past it');
+});
+
 test('text that is not a source map is null, not a throw', () => {
   assert.equal(parseSourceMap('not json at all'), null);
   assert.equal(parseSourceMap('{"version":3}'), null, 'no mappings and no sections');

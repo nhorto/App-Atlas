@@ -12,6 +12,8 @@
  *     whole point of it is to be cheap enough to paste into a context window.
  */
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import test from 'node:test';
@@ -289,6 +291,49 @@ test('what the walk went past is counted rather than dropped', () => {
   const tour = buildTours(wideflow).find((one) => one.title.includes('/api/checkout'));
   const lands = tour.steps.find((step) => step.title === 'And ends up here');
   assert.match(lands.body, /also reaches 7 other pieces this walk did not follow/);
+});
+
+test('a count that is really a ceiling says so', async () => {
+  // The search stops walking at 60. Without a word for that, a screen reaching two
+  // hundred pieces reports the same number as one reaching sixty — and a count that is
+  // silently a cap is the kind of small wrongness that costs a reader their trust in
+  // every other number on the screen. Built here rather than committed: sixty-five
+  // one-line files would be a strange thing to leave in the fixtures.
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'atlas-wide-'));
+  const helpers = Array.from({ length: 65 }, (_, i) => `helper${i}`);
+  fs.mkdirSync(path.join(root, 'src', 'app', 'api', 'wide'), { recursive: true });
+  fs.mkdirSync(path.join(root, 'src', 'lib'), { recursive: true });
+  fs.writeFileSync(
+    path.join(root, 'package.json'),
+    JSON.stringify({ name: 'toowide-fixture', private: true, dependencies: { next: '^15.0.0' } }),
+  );
+  for (const name of helpers) {
+    fs.writeFileSync(path.join(root, 'src', 'lib', `${name}.ts`), `export function ${name}(n: number) {\n  return n + 1;\n}\n`);
+  }
+  fs.writeFileSync(
+    path.join(root, 'src', 'app', 'api', 'wide', 'route.ts'),
+    [
+      ...helpers.map((name) => `import { ${name} } from '../../../lib/${name}';`),
+      '',
+      'export async function POST() {',
+      ...helpers.map((name) => `  ${name}(1);`),
+      '  return Response.json({ ok: true });',
+      '}',
+      '',
+    ].join('\n'),
+  );
+
+  const graph = new AtlasGraph((await analyzeProject(root, { followReferences: true, cache: 'off' })).atlas);
+  const tour = buildTours(graph).find((one) => one.title.includes('/api/wide'));
+  assert.ok(tour, 'a route with sixty-five helpers behind it earns a tour');
+
+  // This flow reaches no store and no outside service, so it has no landing step to hang
+  // the count on. It still has to be said — a door this wide is the one that most needs
+  // it — so it goes on the last step of the walk itself.
+  const said = tour.steps.filter((step) => /also reaches/.test(step.body));
+  assert.equal(said.length, 1, 'said once, on the last thing the walk had to say');
+  assert.match(said[0].body, /at least \d+ other pieces/, 'presented as a floor, not as a total');
+  assert.notEqual(said[0].title, 'Nobody is checking who called', 'and not tacked onto the warning');
 });
 
 test('a guard reached through other code is named by the check, not the route to it', () => {

@@ -422,17 +422,9 @@ function flowTour(graph: AtlasGraph, endpoint: AtlasNode): Tour | null {
     steps.push({
       id: `${endpoint.id}:out`,
       title: 'And ends up here',
-      body: [
-        `Along the way it touches ${list(
-          outputs.map((node) => (node.kind === 'store' ? describeStore(node) : describeService(node))),
-        )}.`,
-        // The walk followed one path. Leaving the rest unsaid would let a reader take a
-        // four-step line through a screen that touches forty pieces of code as the whole
-        // of what happens here.
-        besides(walk),
-      ]
-        .filter(Boolean)
-        .join(' '),
+      body: `Along the way it touches ${list(
+        outputs.map((node) => (node.kind === 'store' ? describeStore(node) : describeService(node))),
+      )}.`,
       quote: null,
       quoteSource: null,
       focusIds: outputs.map((node) => node.id),
@@ -440,6 +432,16 @@ function flowTour(graph: AtlasGraph, endpoint: AtlasNode): Tour | null {
       codeId: null,
     });
   }
+
+  // The walk followed one path, and the last thing said about it has to be how much of
+  // the neighbourhood that left out — otherwise a four-step line through a screen that
+  // touches forty pieces reads as the whole of what happens behind that door. It hangs
+  // off the last step there is rather than off the landing step, because a flow that
+  // touches no store or service has no landing step and is exactly the wide, branching
+  // kind this most needs saying about.
+  const breadth = besides(walk);
+  const closing = steps[steps.length - 1];
+  if (breadth && closing) closing.body = `${closing.body} ${breadth}`;
 
   // 5. the warning, if it is one
   if (meta.guards.length === 0 && meta.writes && isReachableByStrangers(meta)) {
@@ -487,6 +489,15 @@ interface Walk {
   hops: AtlasNode[];
   /** Everything reachable within the depth limit, for counting what was left out. */
   reached: AtlasNode[];
+  /**
+   * The search stopped counting before it ran out of code.
+   *
+   * Without this the count reads as a total when it is a ceiling — a screen reaching
+   * two hundred pieces would report the same sixty as one reaching sixty, and a number
+   * that is silently a cap is the kind of small wrongness that costs a reader their
+   * trust in every other number on the screen.
+   */
+  countCapped: boolean;
 }
 
 /**
@@ -516,6 +527,7 @@ function walkFrom(graph: AtlasGraph, handlers: AtlasNode[]): Walk {
   const seen = new Set(roots);
   const reached: AtlasNode[] = [];
   let frontier = handlers;
+  let capped = false;
 
   /** The node that touches a store or service, and how good a landing it is. */
   let landing: { via: string; writes: boolean; depth: number } | null = null;
@@ -536,7 +548,10 @@ function walkFrom(graph: AtlasGraph, handlers: AtlasNode[]): Walk {
 
         if (edge.kind !== 'references' || seen.has(target.id)) continue;
         if (target.kind !== 'function' && target.kind !== 'file') continue;
-        if (reached.length >= MAX_TRACED_NODES) continue;
+        if (reached.length >= MAX_TRACED_NODES) {
+          capped = true;
+          continue;
+        }
         seen.add(target.id);
         cameFrom.set(target.id, node.id);
         depthOf.set(target.id, depth);
@@ -555,6 +570,7 @@ function walkFrom(graph: AtlasGraph, handlers: AtlasNode[]): Walk {
     startedAt: nodes[0] ?? handlers[0],
     hops: nodes.slice(1, 1 + MAX_WALK_HOPS),
     reached,
+    countCapped: capped,
   };
 }
 
@@ -613,10 +629,9 @@ function pathBack(cameFrom: Map<string, string>, from: string, roots: Set<string
 function besides(walk: Walk): string | null {
   const others = walk.reached.length - walk.hops.length;
   if (others <= 0) return null;
-  return `That is one path of several: the code behind this door also reaches ${countOf(
-    others,
-    'other piece',
-  )} this walk did not follow.`;
+  return `That is one path of several: the code behind this door also reaches ${
+    walk.countCapped ? 'at least ' : ''
+  }${countOf(others, 'other piece')} this walk did not follow.`;
 }
 
 function outputsOf(graph: AtlasGraph, nodes: AtlasNode[]): AtlasNode[] {
