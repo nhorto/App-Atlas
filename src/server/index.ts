@@ -14,6 +14,7 @@ import { fileURLToPath } from 'node:url';
 import type { Atlas } from '../model/types.js';
 import type { ScopeRecord } from '../model/store.js';
 import { buildBoundaryView } from '../model/boundary.js';
+import { traceError } from '../model/errortrace.js';
 import { buildFlow, listDoors } from '../model/flow.js';
 import { AtlasGraph } from '../model/graph.js';
 import { buildInsights } from '../model/insights.js';
@@ -286,6 +287,23 @@ function handleRequest(
         return sendJson(res, 200, flow);
       }
 
+      /**
+       * A pasted error, placed on the map. POST because a stack trace is far past what
+       * belongs in a query string, and because it is the one request here carrying
+       * something the reader typed rather than something the atlas already knows.
+       */
+      case '/api/trace': {
+        if (req.method !== 'POST') return sendJson(res, 405, { error: 'Paste an error with POST.' });
+        void readBody(req).then(
+          (pasted) => {
+            if (!pasted.trim()) return sendJson(res, 400, { error: 'Nothing was pasted.' });
+            sendJson(res, 200, traceError(graph, pasted));
+          },
+          (err: Error) => sendJson(res, 500, { error: err.message }),
+        );
+        return;
+      }
+
       /** The code behind one step of a walkthrough, read from disk on demand. */
       case '/api/source': {
         const id = url.searchParams.get('id') ?? '';
@@ -359,6 +377,41 @@ function serveStatic(pathname: string, res: http.ServerResponse, webRoot: string
     'cache-control': ext === '.html' ? 'no-cache' : 'public, max-age=300',
   });
   fs.createReadStream(file).pipe(res);
+}
+
+/** How much pasted text to accept. A stack trace is kilobytes; anything past this is not one. */
+const MAX_PASTE_BYTES = 512 * 1024;
+
+/**
+ * The `trace` field out of a posted body, as text.
+ *
+ * Capped and hung up on rather than buffered without limit: this is the only endpoint
+ * that reads a request body at all, and a loopback server with no ceiling on one is a
+ * way to run a machine out of memory by accident.
+ */
+function readBody(req: http.IncomingMessage): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const chunks: Buffer[] = [];
+    let size = 0;
+    req.on('data', (chunk: Buffer) => {
+      size += chunk.length;
+      if (size > MAX_PASTE_BYTES) {
+        req.destroy();
+        reject(new Error('That paste is too big to be a stack trace.'));
+        return;
+      }
+      chunks.push(chunk);
+    });
+    req.on('end', () => {
+      try {
+        const parsed = JSON.parse(Buffer.concat(chunks).toString('utf8')) as { trace?: unknown };
+        resolve(typeof parsed.trace === 'string' ? parsed.trace : '');
+      } catch {
+        reject(new Error('That request body was not JSON.'));
+      }
+    });
+    req.on('error', reject);
+  });
 }
 
 function sendJson(res: http.ServerResponse, status: number, body: unknown): void {
