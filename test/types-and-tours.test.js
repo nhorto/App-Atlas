@@ -176,11 +176,24 @@ test('the welcome tour answers the questions people ask first', () => {
   assert.equal(welcome.kind, 'welcome');
   assert.ok(welcome.steps.length >= 4);
   assert.ok(
-    // 23, not 11: PostgREST publishes four doors onto each of the three declared
+    // 22, not 11: PostgREST publishes four doors onto each of the three declared
     // tables, and those are ways in whether or not any code in the repo calls them.
-    welcome.steps.some((step) => /23 ways in/.test(step.body)),
+    // Not 23 either — the env inventory is a list of variables, not a way in.
+    welcome.steps.some((step) => /22 ways in/.test(step.body)),
     'the doors are counted from the graph, not guessed',
   );
+});
+
+test('the count and the breakdown beside it are counting the same doors', () => {
+  // These are one sentence — "22 ways in: 19 routes, 1 scheduled job…" — and they came
+  // from two different lists. Excluding the env inventory from the count alone left the
+  // breakdown summing to one more than the number in front of it.
+  const step = tours[0].steps.find((s) => /ways in:/.test(s.body));
+  assert.ok(step, 'the welcome tour opens with the doors');
+
+  const [, total, breakdown] = /(\d+) ways in: ([^.]+)\./.exec(step.body);
+  const counted = [...breakdown.matchAll(/(\d+)\s/g)].reduce((sum, [, n]) => sum + Number(n), 0);
+  assert.equal(counted, Number(total), `"${breakdown}" does not add up to ${total}`);
 });
 
 test('a flow is traced from the door to the database', () => {
@@ -492,4 +505,20 @@ test('a generated sentence is marked, and a docstring is not', () => {
 test('the export stays small enough to paste into a context window', () => {
   assert.ok(markdown.length < 12000, `2.7 KB expected for this fixture, got ${markdown.length}`);
   assert.match(markdown, /Re-run `app-atlas export` after the code changes/);
+});
+
+test('a count on a card is grouped the way every other surface groups it', () => {
+  // The welcome card read "30465 lines" beside a panel reading "30,465". Two renderings
+  // of one number, and a reader has to stop and check they are the same.
+  const opening = tours[0].steps[0].body;
+  assert.ok(!/\b\d{5,}\b/.test(opening), `an ungrouped number is on the card: ${opening}`);
+});
+
+test('the auth card does not say the same thing twice', () => {
+  // The headline carries "…though 20 of those were matched rather than proven" and the
+  // last caveat is the long form of exactly that. Run together into one paragraph they
+  // read as a stutter, so the card takes the headline and skips that caveat.
+  const step = tours[0].steps.find((s) => /ways in:/.test(s.body));
+  const matched = step.body.match(/matched/g) ?? [];
+  assert.ok(matched.length <= 1, `"matched" appears ${matched.length} times: ${step.body}`);
 });

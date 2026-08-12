@@ -380,7 +380,14 @@ test('groups the boundary view by family and connects it through the zones', () 
 
 test('counts the boundary in the headline stats', () => {
   const s = atlas.meta.stats;
-  assert.equal(s.endpoints, endpoints.length);
+  // Every endpoint node except the env inventory, which is a list of variables and not a
+  // way in — the same set `listDoors` hands the Trace tab. Counting it here is what made
+  // a real app read "45 ways in" on one screen and "44 ways in" on the next.
+  assert.equal(s.endpoints, endpoints.filter((n) => n.meta.endpointKind !== 'env').length);
+  assert.ok(
+    endpoints.some((n) => n.meta.endpointKind === 'env'),
+    'this fixture has an env inventory, so the line above is actually excluding something',
+  );
   assert.equal(s.stores, 2);
   assert.equal(s.externalServices, 4);
   assert.equal(s.envVars, 10);

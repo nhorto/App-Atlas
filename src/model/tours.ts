@@ -17,6 +17,7 @@
  * on every run.
  */
 import { authHeadline } from './exposure.js';
+import type { AuthHeadline } from './exposure.js';
 import type { AtlasGraph } from './graph.js';
 import type { AtlasNode, EndpointMeta, GuardInfo, ServiceMeta, StoreMeta, SummarySource } from './types.js';
 
@@ -129,7 +130,13 @@ function welcomeTour(graph: AtlasGraph): Tour {
         Number(b.meta.descendantFileCount ?? b.childCount ?? 0) - Number(a.meta.descendantFileCount ?? a.childCount ?? 0),
     )
     .slice(0, 6);
-  const endpoints = graph.nodesOfKind('endpoint');
+  // Without the env inventory, which is a list of variables rather than a way in. The
+  // count beside this list comes from `stats.endpoints`, and the two have to be counting
+  // the same things or the sentence contradicts itself inside one line: "22 ways in: 19
+  // routes, 1 config source, 1 scheduled job, 1 webhook and 1 server action" adds to 23.
+  const endpoints = graph
+    .nodesOfKind('endpoint')
+    .filter((node) => (node.meta as unknown as EndpointMeta).endpointKind !== 'env');
   const stores = graph.nodesOfKind('store');
   const services = graph.nodesOfKind('service');
 
@@ -162,8 +169,10 @@ function welcomeTour(graph: AtlasGraph): Tour {
             `${sentenceCase(countOf(stats.endpoints, 'way'))} in: ${describeDoors(endpoints)}.`,
             auth ? `${sentenceCase(auth.headline)}.` : null,
             // Only the first caveat: a walkthrough card is three lines, and the
-            // security screen is where the full accounting belongs.
-            auth?.caveats[0] ? `${sentenceCase(auth.caveats[0])}.` : null,
+            // security screen is where the full accounting belongs. Skipping the last
+            // one when the headline is hedged is what keeps the card from stuttering —
+            // that caveat is the long form of a clause the headline already carries.
+            firstCaveat(auth),
           ]
             .filter(Boolean)
             .join(' '),
@@ -821,8 +830,24 @@ function parentOf(graph: AtlasGraph, id: string): string | null {
   return chain[chain.length - 2]?.id ?? graph.rootId;
 }
 
+/**
+ * A count and its noun. Grouped, because every other surface groups: the walkthrough
+ * said "30465 lines" on a card sitting next to a panel reading "30,465", and the reader
+ * has to stop and check whether those are the same number.
+ */
 function countOf(value: number, one: string, many?: string): string {
-  return `${value} ${value === 1 ? one : (many ?? `${one}s`)}`;
+  return `${value.toLocaleString('en-US')} ${value === 1 ? one : (many ?? `${one}s`)}`;
+}
+
+/**
+ * The caveat worth the one line a card has for it, or nothing.
+ *
+ * The hedge caveat is dropped when the headline already carries it — see `AuthHeadline.hedged`.
+ */
+function firstCaveat(auth: AuthHeadline | null): string | null {
+  if (!auth) return null;
+  const worth = auth.hedged ? auth.caveats.slice(0, -1) : auth.caveats;
+  return worth[0] ? `${sentenceCase(worth[0])}.` : null;
 }
 
 function list(items: string[]): string {

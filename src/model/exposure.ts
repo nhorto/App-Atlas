@@ -265,6 +265,18 @@ export interface AuthHeadline {
   headline: string;
   /** What the headline leaves out, in the order it should be read. */
   caveats: string[];
+  /**
+   * The headline already carries the matched-not-proven hedge, and the last caveat says
+   * the same thing at length.
+   *
+   * Two surfaces want different halves of that. A screen with room prints the headline
+   * and every caveat under it, where the long form earns its place by saying what to do
+   * about it. A walkthrough card runs them together into one paragraph, and there the
+   * pair reads as a stutter: "…though 20 of those were matched rather than proven. 20 of
+   * the checks were matched by a pattern rather than proven — worth reading those doors
+   * yourself." Found on a real app, where both sentences were true and one was enough.
+   */
+  hedged: boolean;
 }
 
 /**
@@ -309,6 +321,7 @@ export function authHeadline(stats: AtlasStats): AuthHeadline | null {
           `most of this repository is ${backbonePhrase(backbone)}, which App Atlas cannot read — ` +
           'whether anything answers a URL was never in view',
         caveats: [],
+        hedged: false,
       };
     }
     if (unread === 0) return null;
@@ -318,6 +331,7 @@ export function authHeadline(stats: AtlasStats): AuthHeadline | null {
         `no routes were found — but App Atlas could not read ${unread} ${unread === 1 ? 'file' : 'files'}, ` +
         'so this is not the same as saying there are none',
       caveats: [],
+      hedged: false,
     };
   }
 
@@ -340,6 +354,7 @@ export function authHeadline(stats: AtlasStats): AuthHeadline | null {
         `${routes === 1 ? 'the one route is' : `all ${routes} routes are`} declared in a routing table App Atlas ` +
         'has not followed to its handler — no auth verdict was reached for any of them',
       caveats: [],
+      hedged: false,
     };
   }
   if (open > 0) {
@@ -417,7 +432,12 @@ export function authHeadline(stats: AtlasStats): AuthHeadline | null {
     );
   }
 
-  return { tone: open > 0 || unknown > 0 || unlinked > 0 || backbone !== null ? 'warn' : 'ok', headline, caveats };
+  return {
+    tone: open > 0 || unknown > 0 || unlinked > 0 || backbone !== null ? 'warn' : 'ok',
+    headline,
+    caveats,
+    hedged,
+  };
 }
 
 /** Files that could not be parsed, so the reader can see what the map is missing. */

@@ -8,8 +8,8 @@ Not recorded here. This file is committed, and what changed since the last run i
 
 ## By the numbers
 
-- 189 files · 59,426 lines · 20 folders · 1,393 functions · 434 types
-- 3 ways in · 0 outside services · 1 data store · 9 env vars
+- 190 files · 60,469 lines · 20 folders · 1,409 functions · 439 types
+- 2 ways in · 0 outside services · 1 data store · 9 env vars
 - Built with React, Vite
 - 99% of files carry a docstring App Atlas reads verbatim
 
@@ -20,28 +20,28 @@ Not recorded here. This file is committed, and what changed since the last run i
 
 ## Where data goes
 
-- **Files on disk** (Node fs and Python) — 39 reads, 17 writes
+- **Files on disk** (Node fs and Python) — 40 reads, 17 writes
 
 ## The parts
 
 - `scripts` (3 files, logic)
-- `src` (101 files, logic)
+- `src` (102 files, logic)
 - `test` (63 files, test)
 - `web/src` (20 files, ui)
 
 ## Files nothing else imports
 
-Every one of the 108 source files here is imported by something else in the app, declared as a way in, or run by a framework convention.
+Every one of the 109 source files here is imported by something else in the app, declared as a way in, or run by a framework convention.
 
 ## Key types
 
-- **AtlasNode** (interface, `src/model/types.ts`) — used in 275 places — id, kind, name, label, parentId, language, path, startLine, endLine, zone, summary, summarySource
-- **AtlasEdge** (interface, `src/model/types.ts`) — used in 90 places — id, kind, fromId, toId, weight, confidence, provenance, meta
+- **AtlasNode** (interface, `src/model/types.ts`) — used in 278 places — id, kind, name, label, parentId, language, path, startLine, endLine, zone, summary, summarySource
+- **AtlasEdge** (interface, `src/model/types.ts`) — used in 94 places — id, kind, fromId, toId, weight, confidence, provenance, meta
+- **AtlasGraph** (class, `src/model/graph.ts`) — used in 87 places — meta, rootId, nodes, children, relations, incoming, outgoing, pathCache, pathIndex
 - **BoundaryFinding** (type-alias, `src/analyze/boundaries/types.ts`) — used in 87 places — | EndpointFinding | ServiceFinding | StoreFinding | EnvFinding | GuardFinding | SignInCallFinding | WebhookFinding | ClientExportFinding | WrapperCallFinding | UrlSinkFinding | Ur…
 - **DetectorContext** (interface, `src/analyze/boundaries/types.ts`) — used in 82 places — ref, sf, fileId, project, signals, imports, packages, locals
-- **AtlasGraph** (class, `src/model/graph.ts`) — used in 80 places — meta, rootId, nodes, children, relations, incoming, outgoing, pathCache, pathIndex
 - **CodeSite** (interface, `src/model/types.ts`) — used in 75 places — path, line, nodeId, snippet?
-- **EndpointMeta** (interface, `src/model/types.ts`) — used in 59 places — endpointKind, method, route, framework, guards, writes, sites, open?, signInCall?, verified?, generatedEntry?, handlerUnlinked?
+- **EndpointMeta** (interface, `src/model/types.ts`) — used in 61 places — endpointKind, method, route, framework, guards, writes, sites, open?, signInCall?, verified?, generatedEntry?, handlerUnlinked?
 - **GuardInfo** (interface, `src/model/types.ts`) — used in 58 places — name, how, provider, path, line, confidence
 - **Zone** (type-alias, `src/model/types.ts`) — used in 53 places — 'ui' | 'api' | 'logic' | 'data' | 'config' | 'test' | 'unknown'
 - **GenericFile** (interface, `src/analyze/generic/ir.ts`) — used in 45 places — path, language, ok, error, doc, loc, namespace, imports, defs, calls, bindings, constants
@@ -59,7 +59,7 @@ Every one of the 108 source files here is imported by something else in the app,
 - **Confidence** (type-alias, `src/model/types.ts`) — used in 23 places — 'certain' | 'likely' | 'possible'
 - **IgnoreMatcher** (interface, `src/analyze/ignores.ts`) — used in 19 places — patterns
 - **Scope** (interface, `src/analyze/workspace.ts`) — used in 19 places — id, name, dir, kind
-- …and 410 more types.
+- …and 415 more types.
 
 ## Environment variables
 
@@ -78,7 +78,7 @@ The files that pull the most of this app together — entry points, and the modu
 - `src/analyze/generic/languages.ts` (imports 10 files) — Every language the generic tier can read, and what finds its boundaries.
 - `web/src/App.tsx` (imports 15 files) — The app shell and its six lenses.
 - `src/mcp/index.ts` (imports 4 files) — `app-atlas mcp` — the atlas, answered over the Model Context Protocol.
-- `src/server/index.ts` (imports 13 files) — The local server.
+- `src/server/index.ts` (imports 14 files) — The local server.
 - `src/analyze/ts/index.ts` (imports 8 files) — The TypeScript/JavaScript analyzer — the facts layer.
 - `src/analyze/boundaries/index.ts` (imports 11 files) — The boundary pass — one walk of a file, every detector watching.
 

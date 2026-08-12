@@ -808,6 +808,10 @@ function AtlasApp() {
               ]
                 .filter(Boolean)
                 .join(' ')}
+              // Which view you are on is otherwise carried by weight and colour alone,
+              // which says nothing to a screen reader — and these tabs are the only way
+              // to know where you are, since the ledes below them all read as prose.
+              aria-current={tab.view === view ? 'page' : undefined}
               title={quiet.has(tab.view) ? `${LEDES[tab.view]} Nothing found in this project.` : LEDES[tab.view]}
               onClick={() => go(tab.view, levelId)}
             >
@@ -954,6 +958,15 @@ function AtlasApp() {
                   ))}
                 </nav>
               ) : null}
+
+              {/* A member of this line rather than something centred over it. Floating
+                  free, it read correctly only while the breadcrumb was short: drilling
+                  two folders down drew the crumb across it and "Click to inspect" became
+                  "ck to inspect". Sharing the row means flexbox keeps them apart. */}
+              <div className="hint">
+                Click to inspect · Press › or double-click to look inside · Backspace to go back
+              </div>
+
               {/* The other half of "I think we kind of need both" (#94): the grouped,
                   named boxes answer what the parts are; this answers where they are. */}
               <button
@@ -1031,9 +1044,6 @@ function AtlasApp() {
               onToggleArrows={() => setShowAllArrows((all) => !all)}
             />
 
-            <div className="hint">
-              Click to inspect · Press › or double-click to look inside · Backspace to go back
-            </div>
           </>
         ) : null}
 

@@ -30,7 +30,7 @@ import type { PackageIndex } from './packages.js';
 import { NO_PACKAGES } from './packages.js';
 import type { SourceMapIndex } from './sourcemap.js';
 import { looksBuilt } from './sourcemap.js';
-import type { AtlasNode, Confidence } from './types.js';
+import type { AtlasEdge, AtlasNode, Confidence } from './types.js';
 
 /**
  * Every door on the map, by id. Built once per question rather than once per walk: a
@@ -43,6 +43,18 @@ function doorIndex(graph: AtlasGraph): Map<string, DoorSummary> {
   }
   return doorsById;
 }
+
+/** What a stack frame's walk crosses: one function naming another, and nothing else. */
+const REFERENCES_ONLY: ReadonlySet<AtlasEdge['kind']> = new Set(['references']);
+
+/**
+ * What a file's walk crosses. `imports` as well, because a module that exports a constant
+ * rather than a function has no reference edges pointing at it at all — nothing *calls*
+ * `lib/supabase.js`, four screens simply import it — and a walk that only follows calls
+ * reports it as reached by nobody. Importing a module runs it, so a door whose file
+ * imports it does reach it, which is the claim being made and no more.
+ */
+const REFERENCES_AND_IMPORTS: ReadonlySet<AtlasEdge['kind']> = new Set(['references', 'imports']);
 
 /** How far back through the references to look for a way in. */
 const MAX_BACK_HOPS = 6;
@@ -713,12 +725,18 @@ function importedPackages(graph: AtlasGraph): string[] {
  * alone finds nothing and would report a thoroughly reachable module as reachable by
  * nobody. Nearest first, and a door found by two declarations is listed once, by its
  * shortest chain.
+ *
+ * Crossing `imports` as well is the other half of the same problem, and a real app found
+ * it: `lib/supabase.js` exports a client and declares no functions, so it has no
+ * declarations to ask about and nothing references it. Four screens import it, and the
+ * answer on screen was "no way in reaches this file" — a confident negative about a
+ * module the whole app runs through.
  */
 function doorsReachingFile(graph: AtlasGraph, file: AtlasNode, index: Map<string, DoorSummary>): DoorReach[] {
   const best = new Map<string, DoorReach>();
   for (const target of [file, ...graph.childrenOf(file.id)]) {
     if (target !== file && target.kind !== 'function') continue;
-    for (const reach of doorsReaching(graph, target.id, index).doors) {
+    for (const reach of doorsReaching(graph, target.id, index, REFERENCES_AND_IMPORTS).doors) {
       const held = best.get(reach.door.id);
       if (!held || reach.hops < held.hops) best.set(reach.door.id, reach);
     }
@@ -755,11 +773,16 @@ function importersOf(graph: AtlasGraph, packageName: string): AtlasNode[] {
  * door wherever one is attached to something on the way. All of them are returned,
  * nearest first: when four screens can reach the failing function, saying so is the
  * answer, and choosing one of them would be inventing a fact the code does not have.
+ *
+ * @param through Which edges the walk may cross. `references` alone for a stack frame,
+ *   which asks about one function. A file-level question wants `imports` too — see
+ *   `doorsReachingFile` for why leaving it out reported an unreachable module.
  */
 export function doorsReaching(
   graph: AtlasGraph,
   targetId: string,
   index?: Map<string, DoorSummary>,
+  through: ReadonlySet<AtlasEdge['kind']> = REFERENCES_ONLY,
 ): { doors: DoorReach[]; truncated: boolean } {
   const doorsById = index ?? doorIndex(graph);
 
@@ -776,7 +799,7 @@ export function doorsReaching(
     const next: string[] = [];
     for (const id of frontier) {
       for (const edge of graph.edgesTo(id)) {
-        if (edge.kind !== 'references' || seen.has(edge.fromId)) continue;
+        if (!through.has(edge.kind) || seen.has(edge.fromId)) continue;
         const source = graph.getNodeById(edge.fromId);
         if (!source || (source.kind !== 'function' && source.kind !== 'file')) continue;
         if (seen.size >= MAX_BACK_VISITED) {
@@ -787,6 +810,21 @@ export function doorsReaching(
         cameFrom.set(edge.fromId, id);
         weakest.set(edge.fromId, weaker(weakest.get(id) ?? 'certain', edge.confidence));
         next.push(edge.fromId);
+
+        // An `imports` edge joins two files, but a door hangs off the function inside
+        // one — a screen is `exposed-by` `FeedbackScreen`, not by `feedback.js`. So
+        // stepping into a file across an import also brings in what it declares, or the
+        // walk arrives one node short of every door and reports none. Sound because the
+        // import runs at module scope: loading anything in that file evaluates the
+        // module this walk started from, whichever declaration was the entry.
+        if (edge.kind !== 'imports' || source.kind !== 'file') continue;
+        for (const child of graph.childrenOf(edge.fromId)) {
+          if (child.kind !== 'function' || seen.has(child.id)) continue;
+          seen.add(child.id);
+          cameFrom.set(child.id, edge.fromId);
+          weakest.set(child.id, weakest.get(edge.fromId) ?? 'certain');
+          next.push(child.id);
+        }
       }
     }
     frontier = next;
@@ -812,15 +850,49 @@ function collectDoors(
     const door = doorsById.get(edge.fromId);
     if (!door || found.has(door.id)) continue;
 
-    const chain = [door.id, ...pathBack(cameFrom, id, targetId)];
+    // An exported name is a door *and* the function it stands for, so listing both puts
+    // the same code on the chain twice — `HomeScreen → HomeScreen → index.js`. A route
+    // door is not the same code as its handler (`/api/users` → `POST`) and both steps
+    // earn their place, which is why this is a match on the code rather than on the kind.
+    const walked = pathBack(cameFrom, id, targetId);
+    const exposed = graph.getNodeById(id);
+    const doubled = exposed?.name === door.name && exposed?.path === door.path;
+    const chain = [door.id, ...(doubled ? walked.slice(1) : walked)];
+
     found.set(door.id, {
       door,
       via: chain,
-      viaNames: chain.map((step) => graph.getNodeById(step)?.name ?? step),
+      viaNames: nameChain(graph, chain),
       hops: chain.length - 1,
       confidence: weaker(weakest.get(id) ?? 'certain', edge.confidence),
     });
   }
+}
+
+/**
+ * Name each step of a chain, keeping two steps apart when their names are not.
+ *
+ * A real app produced `/cellar → CellarScreen → cellar.js → cellar.js → supabase.js`.
+ * Those are two different files — `app/(tabs)/cellar.js` and `lib/cellar.js` — and a
+ * name repeated back to back reads as a bug in the tool rather than as two files that
+ * happen to share a basename. Only the ambiguous steps grow a parent directory, because
+ * lengthening every step to be safe would cost every chain its readability to fix the
+ * few that need it.
+ */
+function nameChain(graph: AtlasGraph, chain: string[]): string[] {
+  const nodes = chain.map((step) => graph.getNodeById(step));
+  const names = nodes.map((node, index) => node?.name ?? chain[index]);
+
+  const seen = new Map<string, number>();
+  for (const name of names) seen.set(name, (seen.get(name) ?? 0) + 1);
+
+  return names.map((name, index) => {
+    if ((seen.get(name) ?? 0) < 2) return name;
+    const path = nodes[index]?.path;
+    if (!path) return name;
+    const parts = path.split('/');
+    return parts.length > 1 ? parts.slice(-2).join('/') : name;
+  });
 }
 
 /** The route the walk took to get here, read back the way a reader would follow it. */

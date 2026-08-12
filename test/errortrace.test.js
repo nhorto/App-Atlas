@@ -431,8 +431,14 @@ test('the files it names carry the ways in that reach them', () => {
   const [importer] = result.intoDependency.importers;
   assert.ok(importer.doors.length > 0, 'db.ts is reachable from the routes that use it');
   // Same claim the placed-frame path makes: every door that can reach it, not a pick.
-  const named = importer.doors.map((reach) => reach.door.route ?? reach.door.name);
-  assert.ok(new Set(named).size === named.length, 'no door is listed twice');
+  // By id, not by label — `GET /api/users` and `POST /api/users` are two doors that
+  // print the same route, and the method badge beside them is what tells them apart.
+  const ids = importer.doors.map((reach) => reach.door.id);
+  assert.equal(new Set(ids).size, ids.length, 'no door is listed twice');
+  assert.ok(
+    importer.doors.every((reach) => reach.hops > 0 && reach.viaNames.length === reach.via.length),
+    'every door carries the chain that proves it',
+  );
 });
 
 test('a package nothing here imports is named as one, not passed off as yours', () => {
@@ -639,4 +645,73 @@ test('a name that is a path rather than a package never reaches the filesystem',
 test('a package does not count as its own parent', () => {
   const dir = installTree({ self: { dependencies: { self: '1' } } });
   assert.deepEqual(installedPackages(dir).dependents('self', ['self']), []);
+});
+
+test('a module that exports a constant is not reported as reached by nobody', async () => {
+  // Found by driving a real Expo app. `lib/supabase.js` creates a client and declares no
+  // functions, so it has no declarations to walk back from and nothing *references* it —
+  // four screens simply import it. The panel said "no way in reaches this file" about a
+  // module the whole app runs through, which is the confident-negative this tool exists
+  // to avoid. Importing a module evaluates it, so a door whose file imports it does
+  // reach it.
+  const { graph: app } = await scratch({
+    'lib/client.js': "import { createClient } from 'vendorsdk';\nexport const client = createClient();\n",
+    'app/index.js': "import { client } from '../lib/client';\nexport default function HomeScreen() {\n  return client;\n}\n",
+  });
+
+  const result = traceError(app, '    at send (/srv/app/node_modules/vendorsdk/dist/index.js:12:3)');
+  const importer = result.intoDependency.importers.find((f) => f.path === 'lib/client.js');
+  assert.ok(importer, 'the file that imports it is named');
+  assert.ok(importer.doors.length > 0, 'and the screen that imports that file reaches it');
+  assert.ok(
+    importer.doors.some((reach) => reach.viaNames.includes('HomeScreen')),
+    `the chain runs through the screen: ${JSON.stringify(importer.doors.map((r) => r.viaNames))}`,
+  );
+  // An exported name is the door and the function at once, so it appears once.
+  const [reach] = importer.doors;
+  assert.deepEqual(reach.viaNames, ['HomeScreen', 'index.js', 'client.js']);
+});
+
+test('a stack frame still only follows calls, never imports', () => {
+  // The wider walk is for a file-level question. A placed frame asks about one function,
+  // and "this door imports the file your error is in" is not the same claim as "this
+  // door can call it" — widening that path would quietly inflate every trace.
+  const result = traceError(graph, '    at sendWelcome (/srv/app/src/lib/email.ts:9:5)');
+  assert.ok(result.origin, 'the frame is placed');
+  for (const reach of result.doors) {
+    assert.ok(
+      reach.via.every((id) => id.startsWith('endpoint:') || id.startsWith('func:')),
+      `a call chain is doors and functions, not files: ${reach.viaNames.join(' → ')}`,
+    );
+  }
+});
+
+test('two files with one basename are told apart in the chain', async () => {
+  // A real app produced "/cellar → CellarScreen → cellar.js → cellar.js → supabase.js".
+  // Two different files, and a name repeated back to back reads as a bug in the tool.
+  const { graph: app } = await scratch({
+    'lib/thing.js': "import { createClient } from 'vendorsdk';\nexport const client = createClient();\n",
+    'ui/thing.js': "import { client } from '../lib/thing';\nexport function useThing() {\n  return client;\n}\n",
+    'app/index.js': "import { useThing } from '../ui/thing';\nexport default function HomeScreen() {\n  return useThing();\n}\n",
+  });
+
+  const result = traceError(app, '    at send (/srv/app/node_modules/vendorsdk/dist/index.js:12:3)');
+  const chains = result.intoDependency.importers.flatMap((f) => f.doors.map((d) => d.viaNames));
+  const withBoth = chains.find((names) => names.filter((n) => n.endsWith('thing.js')).length > 1);
+  assert.ok(withBoth, `expected a chain crossing both files: ${JSON.stringify(chains)}`);
+  assert.equal(new Set(withBoth).size, withBoth.length, `a step is repeated: ${withBoth.join(' → ')}`);
+  assert.ok(withBoth.includes('lib/thing.js') && withBoth.includes('ui/thing.js'), withBoth.join(' → '));
+});
+
+test('a chain with nothing ambiguous keeps its short names', () => {
+  // The disambiguation is per chain, so an unambiguous one must not pay for it. Only the
+  // first step is a door, whose name is its route; every step after it is code.
+  const result = traceError(graph, '    at sendWelcome (/srv/app/src/lib/email.ts:9:5)');
+  assert.ok(result.doors.length > 0, 'the fixture reaches sendWelcome from somewhere');
+  for (const reach of result.doors) {
+    assert.ok(
+      reach.viaNames.slice(1).every((name) => !name.includes('/')),
+      `no step needed lengthening here: ${reach.viaNames.join(' → ')}`,
+    );
+  }
 });

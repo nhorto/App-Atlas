@@ -787,9 +787,14 @@ export function computeStats(nodes: AtlasNode[], edges: AtlasEdge[]): AtlasStats
         modules++;
         break;
       case 'endpoint': {
-        endpoints++;
         const meta = node.meta as unknown as EndpointMeta;
+        // The env inventory rides on a pseudo-door so it has somewhere to live on the
+        // graph, and it is not a way in: `listDoors` has always left it out, so counting
+        // it here made every screen reading this stat disagree with the one screen that
+        // lists them. Found by driving a real app that read "45 ways in" on Boundaries
+        // and "44 ways in" on Trace — the same words, one apart, with nothing to say why.
         if (meta.endpointKind === 'env') envVars += meta.vars?.length ?? 0;
+        else endpoints++;
         if (isAuthRelevant(meta)) {
           routes++;
           // A door with guards, none of which the analyzer could prove. Counted here so

@@ -426,6 +426,33 @@ test('regenerating a committed map from a fresh checkout destroys nothing', asyn
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
+/**
+ * The other number that only the person who ran it can reproduce.
+ *
+ * `staleDocs` is a comparison against the atlas in the gitignored `.app-atlas/`, and the
+ * flag behind it is sticky, so it ratchets upward and never clears until a docstring is
+ * rewritten. On one commit on one machine it read 27 in the committed file, 177 with a
+ * warm cache, and nothing at all on a fresh checkout — while every other number in that
+ * section stayed identical. A reader watching it move reads a detector regression that
+ * is not there.
+ */
+test('the docstring-drift count stays out of a file everyone else reads', async () => {
+  const dir = scratch('sample', 'md-drift');
+  const atlas = await analyze(dir);
+  // Whatever the fixture really has, the clause is only rendered above zero.
+  atlas.meta.stats.staleDocs = 7;
+
+  const mine = renderAtlasMarkdown(new AtlasGraph(atlas));
+  const committed = renderAtlasMarkdown(new AtlasGraph(atlas), { shared: true });
+
+  assert.match(mine, /7 describe code that has since changed/, 'the person who ran it still sees it');
+  assert.doesNotMatch(committed, /describe code that has since changed/);
+  // And nothing else about the line moved.
+  assert.match(committed, /of files carry a docstring App Atlas reads verbatim/);
+
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
 test('git decides, and only for a file it is actually tracking', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'atlas-tracked-'));
   await run('git', ['init', '-q'], { cwd: dir });
