@@ -323,3 +323,114 @@ function describe(item: LabelItem): string {
   if (item.responsibilities.length > 0) lines.push(`  handles: ${item.responsibilities.join(', ')}`);
   return lines.join('\n');
 }
+
+// ---------------------------------------------------------------------------
+// A pasted error
+// ---------------------------------------------------------------------------
+
+/**
+ * The path a pasted stack trace took, as facts, for the one request that writes about
+ * an error.
+ *
+ * Everything here was computed before the model saw it — the frames were matched to
+ * files by path and line, the doors were found by walking references backwards. The
+ * model is given the finished path and asked what could be going wrong along it. It is
+ * never asked which files are involved, because being handed a fixed path is what
+ * stops it pointing at a file that had nothing to do with the crash.
+ */
+export interface ErrorPathFacts {
+  /** The error line itself, as pasted. */
+  message: string;
+  /** The innermost frame that is the reader's own code. */
+  origin: { name: string; kind: string; path: string; line: number; source?: string };
+  /** Every frame of theirs, innermost first. */
+  yours: { name: string; path: string; line: number }[];
+  /** What the other frames were — a dependency, the runtime — and how many. */
+  outside: string[];
+  /** Ways in that can reach the origin, each with the chain that gets there. */
+  doors: { name: string; via: string; hops: number }[];
+  /** Where code on this path sends data, when it sends any. */
+  exits: string[];
+}
+
+/**
+ * Ask what could be going wrong, given a path that is already established.
+ *
+ * The rules added on top of the usual voice are all guards against the one failure
+ * that matters here. A reader pasting an error is already stuck, and a confident
+ * wrong answer costs them an hour in a file that was never involved — so the model
+ * may not name anything it was not given, may not choose between the doors it was
+ * shown, and has to stay in the conditional it actually has evidence for.
+ */
+export function errorPathRequest(facts: ErrorPathFacts): EnrichRequest {
+  const lines = [
+    `Error: ${facts.message}`,
+    '',
+    `It surfaced in ${facts.origin.kind} ${facts.origin.name} — ${facts.origin.path} line ${facts.origin.line}.`,
+    facts.yours.length > 1
+      ? `Their own code on the stack, innermost first: ${facts.yours.map((f) => `${f.name} (${f.path}:${f.line})`).join(', ')}.`
+      : '',
+    facts.outside.length > 0 ? `Other frames: ${facts.outside.join(', ')}.` : '',
+    facts.doors.length > 0
+      ? `Ways into the app that can reach it:\n${facts.doors.map((d) => `  - ${d.name}, ${d.hops} hops: ${d.via}`).join('\n')}`
+      : 'No way into the app was found that reaches it.',
+    facts.exits.length > 0 ? `Code on this path also touches: ${facts.exits.join(', ')}.` : '',
+    facts.origin.source ? `\nThe code it happened in:\n${facts.origin.source}` : '',
+  ].filter(Boolean);
+
+  return {
+    system: `${VOICE}
+
+This one is about an error somebody is stuck on. Four more rules, and they matter more than the others:
+- Name only files, functions, doors and services that appear in the facts below. Not one more. If you want to mention something you were not given, say the shape of it instead ("whatever calls this") and move on.
+- The route to this code was worked out by a compiler. Do not re-derive it, contradict it, or suggest the error is somewhere else on the stack.
+- Where several ways in are listed, they are all real possibilities and the code does not say which one ran. Never pick one. Never say "this came in through X" when the facts list more than one X.
+- Stay in the conditional. You are reading a map and one stack trace, not a recording. "could", "would happen if", "worth checking" — never "the bug is".`,
+    user: `${lines.join('\n')}
+
+Write 2 to 4 sentences for the person who is stuck. Say what could plausibly produce this error at this line, and what you would look at first. If the code is shown and the cause is visible in it, say so plainly. If it is not, say what you cannot tell from here rather than filling the gap. Plain prose, no markdown, no code blocks, no lists.`,
+    maxOutputTokens: 420,
+  };
+}
+
+/**
+ * A description of a symptom, and the real things in this codebase it might be about.
+ *
+ * The candidates are found mechanically — searched out of the atlas by the words the
+ * reader used — so the model is choosing from a list of things that exist rather than
+ * recalling a path. That is the whole safety property: it cannot invent a file here
+ * because it is never asked to produce one.
+ */
+export interface StartingPointFacts {
+  description: string;
+  candidates: { id: string; name: string; kind: string; path: string; summary?: string | null }[];
+}
+
+/** Ask which of these real places is worth opening, when there is no stack trace. */
+export function startingPointRequest(facts: StartingPointFacts): EnrichRequest {
+  const list = facts.candidates
+    .map((c, index) => `[${index + 1}] ${c.kind} ${c.name} — ${c.path}${c.summary ? `\n     ${c.summary}` : ''}`)
+    .join('\n');
+
+  return {
+    system: `${VOICE}
+
+You are helping somebody who described a problem but has no stack trace, so there is no file and no line to start from. You are picking which of the places below are worth opening first.
+
+Rules:
+- Choose only from the numbered list. It is everything the search found; there is nothing else to pick.
+- Choose at most four, fewest first. Picking everything is the same as picking nothing.
+- If none of them plausibly relates to what they described, choose none and say so. That is a useful answer and a wrong guess is not.
+- This is a guess from names and descriptions, not from a trace. Say so in the sentence.`,
+    user: `They said: "${facts.description}"
+
+Places in their codebase whose names or descriptions matched:
+${list}
+
+Reply with JSON only — no markdown fence, no commentary:
+{"picks": [1, 4], "because": "One sentence on why these, in their words."}
+
+An empty picks array is a valid answer.`,
+    maxOutputTokens: 300,
+  };
+}

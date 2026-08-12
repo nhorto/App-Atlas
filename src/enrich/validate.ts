@@ -420,3 +420,46 @@ function mendFilenames(text: string): string {
 function countWords(text: string): number {
   return text.trim().split(/\s+/).filter(Boolean).length;
 }
+
+/**
+ * Anything that looks like a source file but was not among the facts.
+ *
+ * The error explanation is handed a path the compiler worked out, and the whole reason
+ * it is handed one is so it cannot send somebody to a file that had nothing to do with
+ * the crash. This is that promise made enforceable rather than merely requested: any
+ * sentence naming a file outside the ones supplied is dropped, because a reader who is
+ * already stuck will go and open it.
+ *
+ * Deliberately narrow. It matches things shaped like a file — a name with a source
+ * extension, optionally with directories in front — and nothing else. Function names,
+ * table names and company names are not checked here; they have no such tell, and a
+ * filter that guessed at them would drop true sentences to catch imaginary ones.
+ */
+export function dropUngroundedFiles(text: string, allowed: Iterable<string>): Grounded {
+  const known = new Set<string>();
+  for (const path of allowed) {
+    known.add(path.toLowerCase());
+    const base = path.split('/').pop();
+    if (base) known.add(base.toLowerCase());
+  }
+
+  const wrong: string[] = [];
+  const kept = text.split(SENTENCE_BREAK).filter((sentence) => {
+    const invented = [...sentence.matchAll(FILE_MENTION)]
+      .map((match) => trimPunctuation(match[0]))
+      .filter((mention) => !known.has(mention.toLowerCase()));
+    wrong.push(...invented);
+    return invented.length === 0;
+  });
+
+  const joined = kept.join(' ').trim();
+  return { text: joined.length > 0 ? joined : null, wrong };
+}
+
+/**
+ * Something shaped like a source file: `cellar.js`, `lib/cellar.js`, `app/(tabs)/x.tsx`.
+ * The extension list is the languages this tool reads, so a sentence mentioning a
+ * `.env` or a `.json` config is not mistaken for a claim about code.
+ */
+const FILE_MENTION =
+  /\b[\w.@()[\]-]+(?:\/[\w.@()[\]-]+)*\.(?:tsx?|jsx?|mjs|cjs|py|go|rs|cs|java|kt|rb|php|swift|vue|svelte)\b/g;

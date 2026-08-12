@@ -21,6 +21,7 @@ import { buildInsights } from '../model/insights.js';
 import { buildTours, tourFor } from '../model/tours.js';
 import { buildTypeView } from '../model/typeview.js';
 import { readSource } from './source.js';
+import { ErrorHelper } from './errorhelp.js';
 import { Explainer } from './explain.js';
 import type { AiServerOptions } from './explain.js';
 
@@ -92,10 +93,11 @@ export async function startServer(options: ServeOptions): Promise<ServerHandle> 
   // for an app that has since been deleted should still show something.
   const graphFor = (id: string | null) => graphs.get(id ?? DEFAULT_SCOPE) ?? graphs.get(DEFAULT_SCOPE)!;
   const explainer = new Explainer(options.ai ?? { enabled: true });
+  const errorHelper = new ErrorHelper(options.ai ?? { enabled: true });
 
   const server = http.createServer((req, res) => {
     try {
-      handleRequest(req, res, graphFor, scopeList, webRoot, explainer, listeners);
+      handleRequest(req, res, graphFor, scopeList, webRoot, explainer, errorHelper, listeners);
     } catch (err) {
       sendJson(res, 500, { error: (err as Error).message });
     }
@@ -206,6 +208,7 @@ function handleRequest(
   scopes: ScopeRecord[],
   webRoot: string,
   explainer: Explainer,
+  errorHelper: ErrorHelper,
   listeners: Listeners,
 ): void {
   const url = new URL(req.url ?? '/', 'http://localhost');
@@ -298,6 +301,45 @@ function handleRequest(
           (pasted) => {
             if (!pasted.trim()) return sendJson(res, 400, { error: 'Nothing was pasted.' });
             sendJson(res, 200, traceError(graph, pasted));
+          },
+          (err: Error) => sendJson(res, 500, { error: err.message }),
+        );
+        return;
+      }
+
+      /**
+       * The closing paragraph for a traced error — the only generated thing in this
+       * feature. The path is recomputed here rather than taken from the request, so
+       * what the model is shown is what the compiler found and not what a browser
+       * claimed it found.
+       */
+      case '/api/trace/explain': {
+        if (req.method !== 'POST') return sendJson(res, 405, { error: 'Post the trace to explain.' });
+        void readBody(req).then(
+          (pasted) => {
+            if (!pasted.trim()) return sendJson(res, 400, { error: 'Nothing was pasted.' });
+            void errorHelper
+              .explainTrace(graph, pasted)
+              .then((result) => sendJson(res, 'error' in result ? 400 : 200, result));
+          },
+          (err: Error) => sendJson(res, 500, { error: err.message }),
+        );
+        return;
+      }
+
+      /**
+       * Where to start when the paste has no frames in it. The candidates are searched
+       * out of the atlas before the model sees them, so it chooses among real things
+       * rather than producing a path.
+       */
+      case '/api/trace/start': {
+        if (req.method !== 'POST') return sendJson(res, 405, { error: 'Post the description.' });
+        void readBody(req).then(
+          (described) => {
+            if (!described.trim()) return sendJson(res, 400, { error: 'Nothing was pasted.' });
+            void errorHelper
+              .guessStart(graph, described)
+              .then((result) => sendJson(res, 'error' in result ? 400 : 200, result));
           },
           (err: Error) => sendJson(res, 500, { error: err.message }),
         );
