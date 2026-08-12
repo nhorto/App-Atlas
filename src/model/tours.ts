@@ -17,6 +17,7 @@
  * on every run.
  */
 import { authHeadline } from './exposure.js';
+import type { AuthHeadline } from './exposure.js';
 import type { AtlasGraph } from './graph.js';
 import type { AtlasNode, EndpointMeta, GuardInfo, ServiceMeta, StoreMeta, SummarySource } from './types.js';
 
@@ -168,8 +169,10 @@ function welcomeTour(graph: AtlasGraph): Tour {
             `${sentenceCase(countOf(stats.endpoints, 'way'))} in: ${describeDoors(endpoints)}.`,
             auth ? `${sentenceCase(auth.headline)}.` : null,
             // Only the first caveat: a walkthrough card is three lines, and the
-            // security screen is where the full accounting belongs.
-            auth?.caveats[0] ? `${sentenceCase(auth.caveats[0])}.` : null,
+            // security screen is where the full accounting belongs. Skipping the last
+            // one when the headline is hedged is what keeps the card from stuttering —
+            // that caveat is the long form of a clause the headline already carries.
+            firstCaveat(auth),
           ]
             .filter(Boolean)
             .join(' '),
@@ -827,8 +830,24 @@ function parentOf(graph: AtlasGraph, id: string): string | null {
   return chain[chain.length - 2]?.id ?? graph.rootId;
 }
 
+/**
+ * A count and its noun. Grouped, because every other surface groups: the walkthrough
+ * said "30465 lines" on a card sitting next to a panel reading "30,465", and the reader
+ * has to stop and check whether those are the same number.
+ */
 function countOf(value: number, one: string, many?: string): string {
-  return `${value} ${value === 1 ? one : (many ?? `${one}s`)}`;
+  return `${value.toLocaleString('en-US')} ${value === 1 ? one : (many ?? `${one}s`)}`;
+}
+
+/**
+ * The caveat worth the one line a card has for it, or nothing.
+ *
+ * The hedge caveat is dropped when the headline already carries it — see `AuthHeadline.hedged`.
+ */
+function firstCaveat(auth: AuthHeadline | null): string | null {
+  if (!auth) return null;
+  const worth = auth.hedged ? auth.caveats.slice(0, -1) : auth.caveats;
+  return worth[0] ? `${sentenceCase(worth[0])}.` : null;
 }
 
 function list(items: string[]): string {

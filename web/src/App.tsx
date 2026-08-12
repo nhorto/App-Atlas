@@ -808,6 +808,10 @@ function AtlasApp() {
               ]
                 .filter(Boolean)
                 .join(' ')}
+              // Which view you are on is otherwise carried by weight and colour alone,
+              // which says nothing to a screen reader — and these tabs are the only way
+              // to know where you are, since the ledes below them all read as prose.
+              aria-current={tab.view === view ? 'page' : undefined}
               title={quiet.has(tab.view) ? `${LEDES[tab.view]} Nothing found in this project.` : LEDES[tab.view]}
               onClick={() => go(tab.view, levelId)}
             >

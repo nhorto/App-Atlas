@@ -506,3 +506,19 @@ test('the export stays small enough to paste into a context window', () => {
   assert.ok(markdown.length < 12000, `2.7 KB expected for this fixture, got ${markdown.length}`);
   assert.match(markdown, /Re-run `app-atlas export` after the code changes/);
 });
+
+test('a count on a card is grouped the way every other surface groups it', () => {
+  // The welcome card read "30465 lines" beside a panel reading "30,465". Two renderings
+  // of one number, and a reader has to stop and check they are the same.
+  const opening = tours[0].steps[0].body;
+  assert.ok(!/\b\d{5,}\b/.test(opening), `an ungrouped number is on the card: ${opening}`);
+});
+
+test('the auth card does not say the same thing twice', () => {
+  // The headline carries "…though 20 of those were matched rather than proven" and the
+  // last caveat is the long form of exactly that. Run together into one paragraph they
+  // read as a stutter, so the card takes the headline and skips that caveat.
+  const step = tours[0].steps.find((s) => /ways in:/.test(s.body));
+  const matched = step.body.match(/matched/g) ?? [];
+  assert.ok(matched.length <= 1, `"matched" appears ${matched.length} times: ${step.body}`);
+});
