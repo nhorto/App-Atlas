@@ -580,6 +580,19 @@
   outline-offset: 1px;
 }
 
+/*
+ * Sits between the box and the buttons, and stays quiet: it is a caption on greyed text,
+ * not a warning. Loud enough to be read before the paths in the box are believed, and no
+ * louder, or every visit to this tab opens with a disclaimer.
+ */
+.paste-example-note {
+  margin: 6px 0 0;
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--muted);
+  max-width: 62ch;
+}
+
 .paste-actions {
   display: flex;
   align-items: center;

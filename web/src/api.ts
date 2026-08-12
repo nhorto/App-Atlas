@@ -8,6 +8,7 @@ import type {
   DoorList,
   ErrorTraceResult,
   ErrorWords,
+  ExampleTrace,
   ExplainResult,
   FlowView,
   InsightsView,
@@ -104,6 +105,16 @@ export function fetchFlow(id: string): Promise<FlowView> {
  */
 export function traceError(trace: string): Promise<ErrorTraceResult> {
   return post<ErrorTraceResult>('/api/trace', trace);
+}
+
+/**
+ * The example stack shown in the empty paste box, built from this project's own files.
+ *
+ * Null when the atlas has no function it could print a frame for, which the box handles
+ * by showing a shape that names nothing.
+ */
+export function fetchTraceExample(): Promise<ExampleTrace | null> {
+  return get<ExampleTrace | null>('/api/trace/example');
 }
 
 /** The only shape of request here that sends something rather than asking for it. */
