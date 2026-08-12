@@ -24,7 +24,7 @@ import { describedScope, zoneLabel } from './AtlasNodeCard';
 import { Summary, TrustLabel } from './Trust';
 
 /** Which screen the panel is sitting beside — the instructions differ per screen. */
-export type PanelView = 'boundaries' | 'overview' | 'map' | 'types' | 'insights';
+export type PanelView = 'boundaries' | 'overview' | 'map' | 'trace' | 'types' | 'insights';
 
 interface Props {
   detail: NodeView | null;
@@ -461,6 +461,8 @@ function howToRead(view: PanelView): string {
       return 'Click a shape to see its fields and everywhere it is used.';
     case 'insights':
       return 'Click a route or a variable to see the code behind it.';
+    case 'trace':
+      return 'Click anything on the path to see what it is. The ⌥ button beside it hides everything off that branch.';
     default:
       return 'Click any box to see what it is and what it connects to. Press its › button to look inside, and the breadcrumb above to come back out.';
   }

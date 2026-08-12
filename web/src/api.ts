@@ -5,7 +5,9 @@ import type {
   AiStatus,
   AtlasNode,
   BoundaryView,
+  DoorList,
   ExplainResult,
+  FlowView,
   InsightsView,
   LevelView,
   NodeView,
@@ -78,6 +80,16 @@ export async function fetchTourFor(id: string): Promise<Tour | null> {
   } catch {
     return null;
   }
+}
+
+/** Every way into the app, for the list the trace view is chosen from. */
+export function fetchDoors(): Promise<DoorList> {
+  return get<DoorList>('/api/doors');
+}
+
+/** Where one door leads, followed when the reader picks it and not before. */
+export function fetchFlow(id: string): Promise<FlowView> {
+  return get<FlowView>(`/api/flow?id=${encodeURIComponent(id)}`);
 }
 
 /** The code behind one walkthrough step, read from disk when the step is reached. */

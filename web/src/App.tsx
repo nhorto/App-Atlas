@@ -76,6 +76,7 @@ import { InsightsScreen } from './components/InsightsScreen';
 import { MapKey } from './components/MapKey';
 import { OverviewScreen } from './components/OverviewScreen';
 import { SearchPalette } from './components/SearchPalette';
+import { TraceScreen } from './components/TraceScreen';
 import { TypeScreen } from './components/TypeScreen';
 import { Walkthrough } from './components/Walkthrough';
 
@@ -96,7 +97,7 @@ const ZONES: Zone[] = ['ui', 'api', 'logic', 'data', 'config', 'test'];
  */
 const HIDDEN_BY_DEFAULT: Zone[] = ['test'];
 
-type ViewName = 'boundaries' | 'overview' | 'map' | 'types' | 'insights';
+type ViewName = 'boundaries' | 'overview' | 'map' | 'trace' | 'types' | 'insights';
 
 // Boundaries stays first: it is the home screen (SPEC.md 6.1) and the thing no other
 // tool does. Overview sits beside it for the reader who wants prose before a diagram.
@@ -105,10 +106,13 @@ type ViewName = 'boundaries' | 'overview' | 'map' | 'types' | 'insights';
 // boundary view answers where data *goes*, the map's legend has a Data *zone*, and
 // this tab is about the shapes data is *in*. Whoever wanted "the data one" had to
 // guess.
+// Trace sits after the Map because it is the question you ask once you have seen the
+// shape of the code: not "what is here" but "where does this one way in get to".
 const TABS: { view: ViewName; label: string }[] = [
   { view: 'boundaries', label: 'Boundaries' },
   { view: 'overview', label: 'Overview' },
   { view: 'map', label: 'Map' },
+  { view: 'trace', label: 'Trace' },
   { view: 'types', label: 'Data model' },
   { view: 'insights', label: 'Security' },
 ];
@@ -132,6 +136,7 @@ const LEDES: Record<ViewName, string> = {
   boundaries: 'What gets into your app, and where it ends up.',
   overview: 'What this app is, and where to start reading.',
   map: 'The code you would open and edit — your real folders and files, and what uses what.',
+  trace: 'Pick a way in, and follow where it can get to and where it leaves your app.',
   types: 'The data your app keeps — the shapes and tables that outlive a single run.',
   insights: 'Who can get in, where your data goes, and what you rely on.',
 };
@@ -146,6 +151,10 @@ const LEDES: Record<ViewName, string> = {
 const NEIGHBOURS: Partial<Record<ViewName, { lead: string; view: ViewName; name: string }>> = {
   map: { lead: 'For the shapes this code puts data into, see the', view: 'types', name: 'Data model' },
   types: { lead: 'For the files that read and write them, see the', view: 'map', name: 'Map' },
+  // Boundaries counts the ways in; Trace follows one of them. Somebody looking at 45
+  // doors and wanting to know what one of them does has landed one screen short.
+  boundaries: { lead: 'To follow one of these ways in through the code, see', view: 'trace', name: 'Trace' },
+  trace: { lead: 'For everything that gets in and where it all ends up, see', view: 'boundaries', name: 'Boundaries' },
 };
 
 export function App() {
@@ -920,6 +929,8 @@ function AtlasApp() {
           )
         ) : null}
 
+        {view === 'trace' ? <TraceScreen onReveal={reveal} onSelect={select} selectedId={selectedId} /> : null}
+
         {view === 'map' ? (
           <>
             {/* The path you drilled, drawn on the map it describes. It used to live in
@@ -1077,6 +1088,7 @@ function readHash(): { view: ViewName; levelId: string | null; asked: boolean } 
   // ATLAS.md files and anything anyone has shared still point here.
   if (raw === 'types') return { view: 'types', levelId: null, asked: true };
   if (raw === 'insights') return { view: 'insights', levelId: null, asked: true };
+  if (raw === 'trace') return { view: 'trace', levelId: null, asked: true };
   if (raw === 'map') return { view: 'map', levelId: null, asked: true };
   if (raw.startsWith('map/')) return { view: 'map', levelId: raw.slice(4), asked: true };
   // Links made by M1 were a bare node id and still mean "show me this on the map".
@@ -1116,6 +1128,8 @@ function quietViews(stats: AtlasStats | undefined): Set<ViewName> {
   if (stats.endpoints === 0 && stats.services === 0 && stats.stores === 0) quiet.add('boundaries');
   if (stats.routes === 0 && stats.externalServices === 0 && stats.envVars === 0) quiet.add('insights');
   if (stats.types === 0) quiet.add('types');
+  // Nothing to pick from, so nothing to follow. A library with no doors lands here.
+  if (stats.endpoints === 0) quiet.add('trace');
   return quiet;
 }
 

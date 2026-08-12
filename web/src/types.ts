@@ -500,6 +500,85 @@ export interface Tour {
   steps: TourStep[];
 }
 
+// --- where one way in leads (src/model/flow.ts) ---
+
+export interface DoorSummary {
+  id: string;
+  name: string;
+  endpointKind: EndpointKind;
+  method: string | null;
+  route: string | null;
+  framework: string;
+  writes: boolean;
+  guards: GuardInfo[];
+  /** False when no file in this repo was found on the other side of the door. */
+  answered: boolean;
+  path: string | null;
+  line: number | null;
+  summary: string | null;
+  summarySource: SummarySource;
+}
+
+export interface DoorGroup {
+  kind: EndpointKind;
+  label: string;
+  doors: DoorSummary[];
+}
+
+export interface DoorList {
+  groups: DoorGroup[];
+  total: number;
+  unanswered: number;
+}
+
+export interface FlowStop {
+  id: string;
+  name: string;
+  kind: 'function' | 'file';
+  path: string | null;
+  line: number | null;
+  zone: Zone;
+  summary: string | null;
+  summarySource: SummarySource;
+  /** 1 answers the door; 2 is what that names; and so on. */
+  hop: number;
+  /** How sure the link is, not how sure the code runs. Nothing static can say that. */
+  confidence: Confidence;
+}
+
+export interface FlowLink {
+  fromId: string;
+  toId: string;
+  confidence: Confidence;
+}
+
+export interface FlowExit {
+  id: string;
+  name: string;
+  kind: 'store' | 'service';
+  detail: string;
+  writes: boolean;
+  external: boolean;
+  reachedBy: string[];
+}
+
+/** What the reader was not shown, said out loud. */
+export interface FlowLimits {
+  hitDepth: boolean;
+  hitStops: boolean;
+  exitsHidden: number;
+}
+
+export interface FlowView {
+  door: DoorSummary;
+  trigger: string;
+  stops: FlowStop[];
+  links: FlowLink[];
+  exits: FlowExit[];
+  limits: FlowLimits;
+  maxHop: number;
+}
+
 export interface SourceSlice {
   path: string;
   startLine: number;
