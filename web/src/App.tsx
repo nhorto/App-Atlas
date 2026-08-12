@@ -1,11 +1,11 @@
 /**
- * @fileoverview The app shell and its five lenses.
+ * @fileoverview The app shell and its six lenses.
  *
  * Each tab is one question about the same atlas — what gets in (SPEC.md 6.1), what
- * this app is, how the code is organized (6.2), what the data looks like (6.3), who
- * can get in (6.6) — and each says its question in a fixed strip under the tabs. They
- * share one detail panel, because whatever you click the question is the same: what
- * is this?
+ * this app is, how the code is organized (6.2), where one way in leads and where a
+ * pasted error came from (6.4), what the data looks like (6.3), who can get in
+ * (6.6) — and each says its question in a fixed strip under the tabs. They share one
+ * detail panel, because whatever you click the question is the same: what is this?
  *
  * Which one opens first is not fixed. A bare URL lands on the boundary view only when
  * there is a boundary to show; a project with none goes to the map instead, because
