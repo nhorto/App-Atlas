@@ -410,6 +410,25 @@ export interface RouterMountFinding {
   prefix: string | null;
   prefixName: string | null;
   /**
+   * The method the mount was written with, for emitters that have one. `use` and `route`
+   * always count; anything else counts only if the project declares it as a mount method
+   * — see {@link MountMethodFinding}. Absent on emitters where the question does not
+   * arise, and absent means "already known to be a mount".
+   */
+  method?: string;
+  /**
+   * Whether a `prefixName` that resolves to nothing means *no prefix* rather than *a
+   * prefix we could not read*.
+   *
+   * `app.use(x, router)` is two different statements depending on what `x` is, and
+   * JavaScript does not say which: a string is a path, a function is middleware. So the
+   * name is carried on the chance that the repo declares it as a path constant, and when
+   * it does not, the mount goes back to being an unprefixed one. Without this, every
+   * `app.use(sentry.errorHandler, …)` would put an unreadable segment into an address
+   * that is currently correct.
+   */
+  prefixOnlyIfNamed?: boolean;
+  /**
    * Whether this mount's prefix *replaces* the child's own rather than sitting in front
    * of it. Flask works that way — `register_blueprint(bp, url_prefix="/api")` discards
    * the `url_prefix` the blueprint was built with — where FastAPI concatenates. Getting
@@ -530,7 +549,34 @@ export type BoundaryFinding =
   | RouterGuardFinding
   | PathGuardFinding
   | PathConstantFinding
+  | MountMethodFinding
   | GlobalPrefixFinding;
+
+/**
+ * A method an app assigns onto its own router that forwards to `use` — a mount wearing
+ * somebody's own name (#204).
+ *
+ * Ghost's `core/shared/express.js` writes:
+ *
+ *   app.lazyUse = function lazyUse(mountPath, requireFn) {
+ *       app.use(mountPath, lazyLoad(() => requireFn()));
+ *   };
+ *
+ * Seven calls to it carry every API mount in the repo, and without this the routes under
+ * them are reported at an address two segments short of the one they answer at.
+ *
+ * Recognised by what the body does — it passes its own first parameter to `use` as the
+ * path — and never by the name. A whitelist that grew to include `lazyUse` would mount
+ * whatever anybody happened to call `lazyUse`, which is how a route gets handed an
+ * address nobody serves it at.
+ */
+export interface MountMethodFinding {
+  type: 'mount-method';
+  /** The method name, as called elsewhere: `lazyUse`. */
+  name: string;
+  path: string;
+  line: number;
+}
 
 /** One import statement, flattened to the name it introduced. */
 export interface ImportBinding {

@@ -96,21 +96,25 @@ test('a router built inside a factory function is still a router', () => {
 // Still open — the rest of #204
 // ---------------------------------------------------------------------------
 
-test('NOT YET: a mount through the app’s own wrapper method is not followed', () => {
-  // `frontendApp.lazyUse('/members', require('../members')())`. Ghost assigns `lazyUse`
-  // onto the router in `shared/express.js` and it forwards straight to `app.use` with
-  // the same path — so it *is* a mount, and only the body says so. The method whitelist
-  // is `use` and `route`, and widening it by name would mount whatever anybody happened
-  // to call `lazyUse`, which is how a route gets an address it does not have.
+test('a mount through the app’s own wrapper method is followed', () => {
+  // `frontendApp.lazyUse(BASE_API_PATH, require('../members')())` — two things at once,
+  // and Ghost's seven `lazyUse` calls carry every API mount in that repo.
   //
-  // This is what still costs Ghost its `/ghost/api` prefix: seven `lazyUse` calls carry
-  // every API mount in the repo. When this starts failing, the assertion becomes
-  // `/members/api/session`.
-  const session = graph
-    .nodesOfKind('endpoint')
-    .find((node) => String(node.meta.route).endsWith('/api/session'));
+  // `lazyUse` is not on any whitelist and must never be: it is a mount here because
+  // `core/shared/express.js` assigns it onto the router and its body forwards its own
+  // first parameter to `app.use`. In a repo that never wrote that line the same call is
+  // nothing at all, and mounting it would hand a route an address nobody serves it at.
+  const session = graph.nodesOfKind('endpoint').find((node) => String(node.meta.route).endsWith('/session'));
   assert.ok(session, 'the route itself is found');
-  assert.equal(session.meta.route, '/api/session', 'still without the prefix it is mounted under');
+  assert.equal(session.meta.route, '/ghost/api/session');
+});
+
+test('the prefix is read from the constant the mount names', () => {
+  // `BASE_API_PATH` is declared in `core/shared/url-utils.js`, three directories from
+  // the mount that uses it. Resolved through the repo-wide constant index, which already
+  // refuses when two files disagree about a name's value.
+  const session = graph.nodesOfKind('endpoint').find((node) => String(node.meta.route).endsWith('/session'));
+  assert.ok(session.meta.route.startsWith('/ghost/api'), `read the constant, got ${session.meta.route}`);
 });
 
 test('NOT YET: a check written as a require-expression is not seen as a check', () => {
