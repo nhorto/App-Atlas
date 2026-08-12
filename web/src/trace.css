@@ -715,6 +715,7 @@
 }
 
 .paste-why,
+.paste-mapped,
 .paste-drift {
   font-size: 10.5px;
   padding: 1px 6px;
@@ -726,6 +727,11 @@
 .paste-drift {
   background: rgba(196, 136, 28, 0.18);
   color: #8a5f0e;
+  cursor: help;
+}
+
+/* Not a warning: the frame was placed, and this says what placed it. */
+.paste-mapped {
   cursor: help;
 }
 

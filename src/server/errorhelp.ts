@@ -36,6 +36,7 @@ import {
 } from '../enrich/validate.js';
 import { traceError } from '../model/errortrace.js';
 import type { AtlasGraph } from '../model/graph.js';
+import { bundleMaps } from '../model/sourcemap.js';
 import { AtlasStore, atlasDbPath } from '../model/store.js';
 import type { AtlasNode, EndpointMeta } from '../model/types.js';
 import { hashParts } from '../util/hash.js';
@@ -92,7 +93,7 @@ export class ErrorHelper {
    * body claimed it found.
    */
   async explainTrace(graph: AtlasGraph, pasted: string): Promise<ErrorWords | HelpError> {
-    const traced = traceError(graph, pasted);
+    const traced = traceError(graph, pasted, bundleMaps(graph.meta.root));
     if (traced.parsedNothing) return { error: 'There are no stack frames in that paste to explain.' };
     if (!traced.origin?.nodeId) {
       return { error: 'None of those frames is code in this project, so there is no path here to explain.' };
@@ -107,13 +108,16 @@ export class ErrorHelper {
         name: origin.name,
         kind: origin.kind === 'function' ? 'function' : 'file',
         path: traced.origin.path ?? origin.path ?? '',
-        line: traced.origin.frame.line,
+        // The line in the source, which is not the line the trace printed when the frame
+        // came out of a bundle. Handing the model the bundle's line 1 next to a source
+        // path is handing it a location that does not exist.
+        line: traced.origin.sourceLine ?? traced.origin.frame.line,
         source: readSource(graph.meta.root, origin)?.code,
       },
       yours: traced.yours.map((found) => ({
         name: found.nodeName ?? found.frame.functionName ?? '',
         path: found.path ?? '',
-        line: found.frame.line,
+        line: found.sourceLine ?? found.frame.line,
       })),
       outside: summariseOutside(traced),
       doors: traced.doors.slice(0, 8).map((reach) => ({
@@ -309,6 +313,7 @@ function summariseOutside(traced: ReturnType<typeof traceError>): string[] {
     runtime: 'in the runtime itself',
     'unknown-file': 'in a file this analysis has not read',
     ambiguous: 'in a file whose name matches several here',
+    minified: 'in build output no source map here places',
   };
   return [...counts.entries()].map(([reason, count]) => `${count} ${say[reason] ?? reason}`);
 }

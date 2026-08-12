@@ -18,6 +18,7 @@ import { traceError } from '../model/errortrace.js';
 import { buildFlow, listDoors } from '../model/flow.js';
 import { AtlasGraph } from '../model/graph.js';
 import { buildInsights } from '../model/insights.js';
+import { bundleMaps } from '../model/sourcemap.js';
 import { buildTours, tourFor } from '../model/tours.js';
 import { buildTypeView } from '../model/typeview.js';
 import { readSource } from './source.js';
@@ -300,7 +301,7 @@ function handleRequest(
         void readBody(req).then(
           (pasted) => {
             if (!pasted.trim()) return sendJson(res, 400, { error: 'Nothing was pasted.' });
-            sendJson(res, 200, traceError(graph, pasted));
+            sendJson(res, 200, traceError(graph, pasted, bundleMaps(graph.meta.root)));
           },
           (err: Error) => sendJson(res, 500, { error: err.message }),
         );

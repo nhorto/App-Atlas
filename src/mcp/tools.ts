@@ -25,6 +25,7 @@ import type { PlacedFrame, UnplacedReason } from '../model/errortrace.js';
 import { authHeadline } from '../model/exposure.js';
 import { buildInsights } from '../model/insights.js';
 import type { RouteInsight } from '../model/insights.js';
+import { bundleMaps } from '../model/sourcemap.js';
 import { grammarTier } from '../model/tiers.js';
 import { findPersonalData } from '../model/personal.js';
 import type { AtlasEdge, AtlasNode, CodeSite, EndpointMeta, GuardInfo } from '../model/types.js';
@@ -451,7 +452,7 @@ function traceErrorTool(
 ): ToolResult {
   if (!pasted.trim()) return problem('trace_error needs a "trace" — paste the error as you received it.');
 
-  const result = traceError(graph, pasted);
+  const result = traceError(graph, pasted, bundleMaps(graph.meta.root));
   const lines: string[] = [];
 
   if (result.parsedNothing) {
@@ -474,13 +475,24 @@ function traceErrorTool(
   for (const found of result.frames) {
     const where = `${found.frame.rawPath}:${found.frame.line}`;
     if (found.nodeId) {
-      const drift = found.nameDrifted
-        ? `  ·  the trace called this ${found.frame.functionName}, so the two have drifted`
-        : '';
-      lines.push(`  ${where}  →  ${found.nodeKind} ${found.nodeName}  ·  ${found.path}${drift}`);
+      // On a mapped frame the runtime's name is the minified one, so the name worth
+      // quoting back is the one the map kept.
+      const printed = found.mappedFrom?.name ?? found.frame.functionName;
+      const drift = found.nameDrifted ? `  ·  the trace called this ${printed}, so the two have drifted` : '';
+      const mapped = found.mappedFrom ? `  ·  via source map ${found.mappedFrom.mapPath}` : '';
+      lines.push(
+        `  ${where}  →  ${found.nodeKind} ${found.nodeName}  ·  ${found.path}:${found.sourceLine}${mapped}${drift}`,
+      );
     } else {
       lines.push(`  ${where}  →  not placed: ${whyUnplaced(found.reason, found.candidates)}`);
     }
+  }
+  if (result.needsSourceMap) {
+    lines.push(
+      'Some of those frames are inside build output that no source map in this project places, so their line ' +
+        'numbers are the bundle’s and not any file’s. Do not guess at what they were — the fix is a build that ' +
+        'emits source maps beside the bundle, or a `.map` that is as new as the bundle it sits next to.',
+    );
   }
   lines.push('');
 
@@ -500,7 +512,9 @@ function traceErrorTool(
   }
 
   lines.push(
-    `Deepest frame in your own code: ${result.origin.nodeName} — ${result.origin.path}:${result.origin.frame.line}`,
+    `Deepest frame in your own code: ${result.origin.nodeName} — ${result.origin.path}:${
+      result.origin.sourceLine ?? result.origin.frame.line
+    }`,
   );
   lines.push('');
 
@@ -573,6 +587,8 @@ function frameFact(found: PlacedFrame): Record<string, unknown> {
     nodeName: found.nodeName,
     nodeKind: found.nodeKind,
     path: found.path,
+    sourceLine: found.sourceLine,
+    mappedFrom: found.mappedFrom,
     unplacedReason: found.reason,
     candidates: found.candidates,
     nameDrifted: found.nameDrifted,
@@ -587,6 +603,8 @@ function whyUnplaced(reason: UnplacedReason | null, candidates: string[]): strin
       return 'the runtime itself, not a file in the repo';
     case 'ambiguous':
       return `${candidates.length} files here could be it (${candidates.join(', ')}) — the trace does not say which`;
+    case 'minified':
+      return 'build output, and no source map in the project places that line';
     default:
       return 'no file in this atlas matches that path — it may be generated, minified, or never analysed';
   }

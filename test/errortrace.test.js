@@ -12,10 +12,12 @@
  *     trace says where the program was, never which way in put it there.
  */
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import test from 'node:test';
-import { analyzeProject, AtlasGraph, parseFrames, traceError } from '../dist/node/index.js';
+import { analyzeProject, AtlasGraph, bundleMaps, parseFrames, traceError } from '../dist/node/index.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const BOUNDARY = path.join(here, 'fixtures', 'boundary');
@@ -265,4 +267,99 @@ test('an ordinary trace is not flagged as drifted', () => {
   const result = traceError(graph, `Error: boom\n    at sendWelcome (${ROOT}/src/lib/email.ts:9:3)`);
   assert.equal(result.frames[0].nameDrifted, false);
   assert.equal(result.frames[0].nodeName, 'sendWelcome');
+});
+
+// ---------------------------------------------------------------------------
+// A trace off a production build
+// ---------------------------------------------------------------------------
+
+/**
+ * The trace anybody actually has when it matters: one line, one enormous column, and a
+ * file name nobody wrote. Placing it needs the map the build emitted, and everything
+ * below is about what happens when there is one, when there is not, and what the frame
+ * is allowed to claim in each case.
+ *
+ * `gZAQEA` is column 400 → source 0, line 8 (counted from 0), column 2, name 0, worked
+ * out by hand from the VLQ rules; `gZAQE` is the same segment with no name on it.
+ */
+const AT_COLUMN_400 = 'gZAQEA';
+const MINIFIED_TRACE = "TypeError: Cannot read properties of undefined (reading 'to')\n    at n (/var/task/dist/app.bundle:1:401)";
+
+function withMap(sources, names, mappings = AT_COLUMN_400) {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'atlas-trace-'));
+  fs.mkdirSync(path.join(root, 'dist'), { recursive: true });
+  fs.writeFileSync(
+    path.join(root, 'dist', 'app.bundle.map'),
+    JSON.stringify({ version: 3, file: 'app.bundle', sources, names, mappings }),
+  );
+  return bundleMaps(root);
+}
+
+test('a frame in a bundle is placed on the source the map points at', () => {
+  const maps = withMap(['../src/lib/email.ts'], ['sendWelcome']);
+  const result = traceError(graph, MINIFIED_TRACE, maps);
+  const [frame] = result.frames;
+
+  assert.equal(frame.path, 'src/lib/email.ts');
+  assert.equal(frame.nodeName, 'sendWelcome');
+  assert.equal(frame.nodeKind, 'function');
+  assert.equal(frame.reason, null);
+  assert.equal(result.needsSourceMap, false);
+});
+
+test('the line shown is the source’s, and the bundle’s is kept beside it', () => {
+  // `frame.line` is 1 — true of the bundle and meaningless about a `.ts` file. Anything
+  // printing a path has to print `sourceLine` next to it, so the pair is pinned here.
+  const result = traceError(graph, MINIFIED_TRACE, withMap(['../src/lib/email.ts'], ['sendWelcome']));
+  const [frame] = result.frames;
+
+  assert.equal(frame.sourceLine, 9);
+  assert.equal(frame.frame.line, 1, 'what the trace said, unchanged');
+  assert.equal(frame.mappedFrom.bundlePath, '/var/task/dist/app.bundle');
+  assert.equal(frame.mappedFrom.bundleLine, 1);
+  assert.equal(frame.mappedFrom.bundleColumn, 401);
+  assert.equal(frame.mappedFrom.mapPath, 'dist/app.bundle.map');
+});
+
+test('a mapped frame walks back to the doors like any other', () => {
+  const result = traceError(graph, MINIFIED_TRACE, withMap(['../src/lib/email.ts'], ['sendWelcome']));
+  assert.ok(result.origin);
+  assert.equal(result.origin.path, 'src/lib/email.ts');
+  assert.ok(result.doors.length > 0, 'the backward walk starts from the mapped node, not the bundle');
+});
+
+test('a bundle with no map says so, rather than that no file matches', () => {
+  // The file does exist and is in this repo. What is missing is the map, and that is
+  // something the reader can go and fix — "no file matches that path" is not.
+  const result = traceError(graph, MINIFIED_TRACE);
+  const [frame] = result.frames;
+  assert.equal(frame.nodeId, null);
+  assert.equal(frame.reason, 'minified');
+  assert.equal(result.needsSourceMap, true);
+});
+
+test('a minified name is never held against the source', () => {
+  // The runtime called it `n`. Comparing that with `sendWelcome` would flag every frame
+  // in every production trace as drifted, which is the same as flagging none of them.
+  const result = traceError(graph, MINIFIED_TRACE, withMap(['../src/lib/email.ts'], [], 'gZAQE'));
+  const [frame] = result.frames;
+  assert.equal(frame.nodeName, 'sendWelcome');
+  assert.equal(frame.nameDrifted, false, 'the map kept no name, so there is nothing to disagree with');
+});
+
+test('a name the map did keep is still compared', () => {
+  // A stale bundle maps to a name that has since been renamed. That is real drift, and
+  // it is the one case where a minified trace can still say the source has moved on.
+  const result = traceError(graph, MINIFIED_TRACE, withMap(['../src/lib/email.ts'], ['sendWelcomeEmail']));
+  const [frame] = result.frames;
+  assert.ok(frame.nodeId, 'still placed — the file is right');
+  assert.equal(frame.nameDrifted, true);
+});
+
+test('a map pointing at a file this atlas never read is reported, not ignored', () => {
+  const result = traceError(graph, MINIFIED_TRACE, withMap(['../src/nowhere/ghost.ts'], ['gone']));
+  const [frame] = result.frames;
+  assert.equal(frame.nodeId, null);
+  assert.equal(frame.reason, 'unknown-file');
+  assert.equal(frame.mappedFrom.source, 'src/nowhere/ghost.ts', 'the mapping worked; the file is the problem');
 });

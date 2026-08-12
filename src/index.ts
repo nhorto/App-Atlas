@@ -46,10 +46,13 @@ export type {
   DoorReach,
   ErrorFrame,
   ErrorTraceResult,
+  MappedOrigin,
   PlacedFrame,
   TraceLanguage,
   UnplacedReason,
 } from './model/errortrace.js';
+export { bundleMaps, decodeVlq, looksBuilt, parseSourceMap } from './model/sourcemap.js';
+export type { Lookup, MappedPosition, OriginalPosition, SourceMapIndex } from './model/sourcemap.js';
 export type {
   DoorGroup,
   DoorList,

@@ -12,7 +12,9 @@
  *
  *   - Nothing here calls a model. The frames are parsed with per-language patterns,
  *     the files are matched by path, and the doors come from the graph. The whole
- *     path is compiler facts joined to text the user pasted.
+ *     path is compiler facts joined to text the user pasted. A frame that landed in
+ *     build output is moved back to source by the map the build wrote, which is another
+ *     compiler fact rather than a guess.
  *   - A trace says where the program *was*; the edges say where control *can* go. So a
  *     door reported here is a door that can reach the failing code, not one that
  *     provably did — the phrasing everywhere is "can reach", and when several doors
@@ -24,6 +26,8 @@
 import type { DoorSummary } from './flow.js';
 import { listDoors } from './flow.js';
 import type { AtlasGraph } from './graph.js';
+import type { SourceMapIndex } from './sourcemap.js';
+import { looksBuilt } from './sourcemap.js';
 import type { AtlasNode, Confidence } from './types.js';
 
 /** How far back through the references to look for a way in. */
@@ -51,7 +55,23 @@ export interface ErrorFrame {
 }
 
 /** Why a frame could not be put on the map. */
-export type UnplacedReason = 'dependency' | 'runtime' | 'unknown-file' | 'ambiguous';
+export type UnplacedReason = 'dependency' | 'runtime' | 'unknown-file' | 'ambiguous' | 'minified';
+
+/** What a source map said, when one was needed to place a frame. */
+export interface MappedOrigin {
+  /** The generated file the trace named, and where in it. */
+  bundlePath: string;
+  bundleLine: number;
+  bundleColumn: number | null;
+  /** The map that answered, repo-relative. */
+  mapPath: string;
+  /** The source as the map records it, before it was matched against the atlas. */
+  source: string;
+  /** The line in that source. */
+  line: number;
+  /** The original name the map kept for that position, where it kept one. */
+  name: string | null;
+}
 
 export interface PlacedFrame {
   frame: ErrorFrame;
@@ -61,9 +81,17 @@ export interface PlacedFrame {
   nodeKind: 'function' | 'file' | null;
   /** The repo-relative path the raw path was resolved to. */
   path: string | null;
+  /**
+   * The line within `path`, which is not always the line the trace printed: a frame that
+   * came through a source map was at line 1 of a bundle and is at some other line here.
+   * Anything showing `path` should show this rather than `frame.line`.
+   */
+  sourceLine: number | null;
   reason: UnplacedReason | null;
   /** When more than one file in the repo could be what the trace meant. */
   candidates: string[];
+  /** Set when a source map moved this frame out of build output. */
+  mappedFrom: MappedOrigin | null;
   /**
    * The runtime named one function and that line holds a different one.
    *
@@ -72,6 +100,10 @@ export interface PlacedFrame {
    * edit, or a build whose line numbers are not the source's. The frame is still
    * placed, because the file is right and the neighbourhood is usually right, but a
    * reader following it to the exact function deserves to know it may have moved.
+   *
+   * A frame that came through a source map is compared against the name the map kept,
+   * never against the runtime's — the runtime's is `n`, and calling every minified
+   * frame drifted would make the flag mean nothing on exactly the traces that need it.
    */
   nameDrifted: boolean;
 }
@@ -109,6 +141,12 @@ export interface ErrorTraceResult {
    * because the two need completely different things said to the reader.
    */
   parsedNothing: boolean;
+  /**
+   * A frame pointed into build output and no source map placed it. The reader's next
+   * move is a build that emits maps, not a closer look at the trace, so it is worth
+   * saying rather than leaving as one more unplaced frame.
+   */
+  needsSourceMap: boolean;
 }
 
 /**
@@ -117,10 +155,14 @@ export interface ErrorTraceResult {
  * Takes the paste exactly as it arrives — a stack trace, a log excerpt with timestamps
  * around it, a screenshot's text — and ignores whatever is not a frame rather than
  * demanding a format.
+ *
+ * @param maps Where to look up frames that landed in build output. Without it a trace
+ *   from a production bundle parses fine and places nothing, which is the honest answer
+ *   but not a useful one.
  */
-export function traceError(graph: AtlasGraph, pasted: string): ErrorTraceResult {
+export function traceError(graph: AtlasGraph, pasted: string, maps?: SourceMapIndex): ErrorTraceResult {
   const frames = parseFrames(pasted);
-  const placed = frames.map((frame) => place(graph, frame));
+  const placed = frames.map((frame) => place(graph, frame, maps));
   const yours = placed.filter((found) => found.nodeId !== null);
   const origin = yours[0] ?? null;
   const back = origin?.nodeId ? doorsReaching(graph, origin.nodeId) : { doors: [], truncated: false };
@@ -133,6 +175,7 @@ export function traceError(graph: AtlasGraph, pasted: string): ErrorTraceResult 
     doors: back.doors,
     searchTruncated: back.truncated,
     parsedNothing: frames.length === 0,
+    needsSourceMap: placed.some((found) => found.reason === 'minified'),
   };
 }
 
@@ -252,15 +295,17 @@ const VENDORED = [
 /** Frames the runtime made up: not files anybody can open. */
 const RUNTIME_ONLY = ['node:', '<anonymous>', 'native', 'internal/', 'unknown location', '[native code]'];
 
-function place(graph: AtlasGraph, frame: ErrorFrame): PlacedFrame {
+function place(graph: AtlasGraph, frame: ErrorFrame, maps?: SourceMapIndex): PlacedFrame {
   const blank: PlacedFrame = {
     frame,
     nodeId: null,
     nodeName: null,
     nodeKind: null,
     path: null,
+    sourceLine: null,
     reason: null,
     candidates: [],
+    mappedFrom: null,
     nameDrifted: false,
   };
 
@@ -270,22 +315,89 @@ function place(graph: AtlasGraph, frame: ErrorFrame): PlacedFrame {
   }
   if (VENDORED.some((mark) => cleaned.includes(mark))) return { ...blank, reason: 'dependency' };
 
-  const matched = resolvePath(graph, cleaned);
+  const built = looksBuilt(cleaned, frame.line, frame.column);
+
+  // A frame that looks like build output goes through the map first. A repo that commits
+  // its `dist/` would otherwise match the bundle by path and call that an answer, which
+  // is a file in this project and still no use to anybody.
+  if (maps && built) {
+    const mapped = throughMap(graph, frame, cleaned, blank, maps);
+    if (mapped) return mapped;
+  }
+
+  const direct = placeAt(graph, frame, blank, resolvePath(graph, cleaned), frame.line, frame.functionName);
+  if (direct.nodeId) return direct;
+
+  // Anything else the atlas cannot find is worth one look through the maps too: a build
+  // that keeps its original directory layout leaves frames that look handwritten.
+  if (maps && !built) {
+    const mapped = throughMap(graph, frame, cleaned, blank, maps);
+    if (mapped) return mapped;
+  }
+
+  // "No file matches that path" is misleading about a bundle — the file does exist, it
+  // is just not one anybody wrote, and the fix is a build that emits maps.
+  if (built && direct.reason === 'unknown-file') return { ...direct, reason: 'minified' };
+  return direct;
+}
+
+/**
+ * Place a frame through the source map the build wrote, or say it could not be.
+ *
+ * Returns null only when no map answered at all, so the caller can fall back. Once a map
+ * has spoken its answer is the one reported, including when the source it names is not
+ * a file this atlas holds — the map is better evidence than the frame's own path, and
+ * quietly falling back to the bundle would hide that the mapping worked.
+ */
+function throughMap(
+  graph: AtlasGraph,
+  frame: ErrorFrame,
+  cleaned: string,
+  blank: PlacedFrame,
+  maps: SourceMapIndex,
+): PlacedFrame | null {
+  const at = maps.lookup(cleaned, frame.line, frame.column);
+  if (!at) return null;
+
+  const origin: MappedOrigin = {
+    bundlePath: cleaned,
+    bundleLine: frame.line,
+    bundleColumn: frame.column,
+    mapPath: at.mapPath,
+    source: at.source,
+    line: at.line,
+    name: at.name,
+  };
+  const from = { ...blank, mappedFrom: origin };
+  return placeAt(graph, frame, from, resolvePath(graph, cleanPath(at.source)), at.line, at.name);
+}
+
+/** The shared half: a resolved path and a line, turned into whatever sits there. */
+function placeAt(
+  graph: AtlasGraph,
+  frame: ErrorFrame,
+  blank: PlacedFrame,
+  matched: string[],
+  line: number,
+  named: string | null,
+): PlacedFrame {
   if (matched.length === 0) return { ...blank, reason: 'unknown-file' };
   if (matched.length > 1) return { ...blank, reason: 'ambiguous', candidates: matched };
 
-  const node = graph.nodeAt(matched[0], frame.line);
-  if (!node) return { ...blank, path: matched[0], reason: 'unknown-file' };
+  const node = graph.nodeAt(matched[0], line);
+  if (!node) return { ...blank, path: matched[0], sourceLine: line, reason: 'unknown-file' };
 
   return {
+    ...blank,
     frame,
     nodeId: node.id,
     nodeName: node.name,
     nodeKind: node.kind === 'function' ? 'function' : 'file',
     path: matched[0],
+    sourceLine: line,
     reason: null,
     candidates: [],
-    nameDrifted: node.kind === 'function' && namesDisagree(frame.functionName, node.name),
+    nameDrifted: node.kind === 'function' && namesDisagree(named, node.name),
   };
 }
 

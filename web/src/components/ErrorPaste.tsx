@@ -131,6 +131,7 @@ function Result({
   return (
     <div className="paste-result">
       <Frames frames={result.frames} onSelect={onSelect} />
+      {result.needsSourceMap ? <NeedsSourceMap /> : null}
       {result.origin ? (
         <>
           <Doors result={result} onFollowDoor={onFollowDoor} />
@@ -140,8 +141,11 @@ function Result({
         <div className="paste-note">
           <p>None of those frames is code in this project.</p>
           <p className="paste-note-quiet">
-            The failure surfaced entirely inside dependencies or the runtime, so there is nothing here to trace back
-            to a way in. The question worth asking next is which of your own code calls into that library.
+            {result.needsSourceMap
+              ? // Saying "it was all dependencies" over a bundle would be a plain falsehood:
+                // the code is yours, it is just wearing the build's line numbers.
+                'What is left after the build output is dependencies or the runtime, so there is no path to walk back yet. A build that emits source maps is what would give this something to follow.'
+              : 'The failure surfaced entirely inside dependencies or the runtime, so there is nothing here to trace back to a way in. The question worth asking next is which of your own code calls into that library.'}
           </p>
         </div>
       )}
@@ -319,14 +323,26 @@ function Frames({ frames, onSelect }: { frames: PlacedFrame[]; onSelect: (id: st
               <button className="paste-frame is-placed" onClick={() => onSelect(found.nodeId as string)}>
                 <span className="paste-frame-name">{found.nodeName}</span>
                 <span className="paste-frame-where">
-                  {found.path}:{found.frame.line}
+                  {found.path}:{found.sourceLine ?? found.frame.line}
                 </span>
+                {found.mappedFrom ? (
+                  <span
+                    className="paste-mapped"
+                    title={`The trace pointed at ${found.mappedFrom.bundlePath}:${found.mappedFrom.bundleLine}${
+                      found.mappedFrom.bundleColumn === null ? '' : `:${found.mappedFrom.bundleColumn}`
+                    }. ${found.mappedFrom.mapPath} says that came from here.`}
+                  >
+                    via source map
+                  </span>
+                ) : null}
                 {found.nameDrifted ? (
                   <span
                     className="paste-drift"
-                    title={`The trace called this ${found.frame.functionName}. The file is right; the exact function may have moved since the trace was taken.`}
+                    title={`The trace called this ${
+                      found.mappedFrom?.name ?? found.frame.functionName
+                    }. The file is right; the exact function may have moved since the trace was taken.`}
                   >
-                    named {found.frame.functionName} in the trace
+                    named {found.mappedFrom?.name ?? found.frame.functionName} in the trace
                   </span>
                 ) : null}
               </button>
@@ -346,6 +362,27 @@ function Frames({ frames, onSelect }: { frames: PlacedFrame[]; onSelect: (id: st
   );
 }
 
+/**
+ * The one kind of unplaceable frame with a fix worth naming.
+ *
+ * Every other reason a frame misses is a fact about the code — it is a dependency, it is
+ * the runtime, the atlas has not read that file. This one is a fact about the build, and
+ * the reader can change it, so it is worth more than a line in the frame list.
+ */
+function NeedsSourceMap() {
+  return (
+    <div className="paste-note">
+      <p>Some of those frames are inside a bundle rather than a file anybody wrote.</p>
+      <p className="paste-note-quiet">
+        App Atlas looks for a matching <code>.map</code> anywhere in the project, build directories included, and
+        found none that covers those lines. Emitting source maps and leaving the <code>.map</code> beside the bundle
+        is what makes them resolvable — and if you already do, the map next to that bundle is older than the bundle
+        itself. Nothing in the trace carries the original lines on its own.
+      </p>
+    </div>
+  );
+}
+
 function Doors({ result, onFollowDoor }: { result: ErrorTraceResult; onFollowDoor: (id: string) => void }) {
   const [showAll, setShowAll] = useState(false);
   const origin = result.origin as PlacedFrame;
@@ -357,7 +394,7 @@ function Doors({ result, onFollowDoor }: { result: ErrorTraceResult; onFollowDoo
       <p className="paste-label">
         The error happened in <strong>{origin.nodeName}</strong>
         <span className="paste-label-count">
-          {origin.path}:{origin.frame.line}
+          {origin.path}:{origin.sourceLine ?? origin.frame.line}
         </span>
       </p>
 
@@ -437,6 +474,8 @@ function whyUnplaced(reason: UnplacedReason | null, candidates: string[]): strin
       return 'the runtime itself';
     case 'ambiguous':
       return `${candidates.length} files here could be this one — the trace does not say which`;
+    case 'minified':
+      return 'build output — no source map here places this line';
     default:
       return 'no file here matches that path';
   }

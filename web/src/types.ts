@@ -584,7 +584,18 @@ export interface FlowView {
 export type TraceLanguage = 'javascript' | 'python' | 'go' | 'dotnet' | 'java';
 
 /** Why a frame could not be put on the map. */
-export type UnplacedReason = 'dependency' | 'runtime' | 'unknown-file' | 'ambiguous';
+export type UnplacedReason = 'dependency' | 'runtime' | 'unknown-file' | 'ambiguous' | 'minified';
+
+/** What a source map said, when one was needed to place a frame. */
+export interface MappedOrigin {
+  bundlePath: string;
+  bundleLine: number;
+  bundleColumn: number | null;
+  mapPath: string;
+  source: string;
+  line: number;
+  name: string | null;
+}
 
 export interface ErrorFrame {
   raw: string;
@@ -602,8 +613,12 @@ export interface PlacedFrame {
   nodeName: string | null;
   nodeKind: 'function' | 'file' | null;
   path: string | null;
+  /** The line within `path`. Not `frame.line` when a source map moved this frame. */
+  sourceLine: number | null;
   reason: UnplacedReason | null;
   candidates: string[];
+  /** Set when a source map moved this frame out of build output. */
+  mappedFrom: MappedOrigin | null;
   /** The runtime named one function and that line holds another — the two have drifted. */
   nameDrifted: boolean;
 }
@@ -647,6 +662,8 @@ export interface ErrorTraceResult {
   doors: DoorReach[];
   searchTruncated: boolean;
   parsedNothing: boolean;
+  /** A frame pointed into build output and no source map placed it. */
+  needsSourceMap: boolean;
 }
 
 export interface SourceSlice {
