@@ -63,6 +63,28 @@ const GUARD_DOTTED = [/\.auth\.getUser$/, /\.auth\.getSession$/, /^passport\.aut
 const GUARD_CLASS = /^([A-Z]\w*)?(Auth|Jwt|Roles|Permissions)\w*Guard$/;
 
 /**
+ * A guard's name with the app's own suffix on the end (#204).
+ *
+ * `GUARD_NAMES` matches whole names, and real applications name middleware after what it
+ * guards. Ghost declares 218 of its 261 admin routes as
+ * `router.get('/posts', mw.authAdminApi, …)`, where `authAdminApi` is
+ * `[auth.authenticate.authenticateAdminApi, auth.authorize.authorizeAdminApi, …]` — a
+ * genuine check, invisible to an exact-match set, on one of the largest Express
+ * applications there is. `authenticateAdminApi` and `authorizeAdminApi` miss for the
+ * same reason.
+ *
+ * **The boundary is the whole rule.** A suffix has to start with a capital or an
+ * underscore, so `auth` matches `authAdminApi` and not `author` — and Ghost is a blogging
+ * platform, so `authorExists`, `authorImage` and `authorFacebook` are all in it. Reading
+ * one of those as a lock is exactly the failure this file opens by warning about, and
+ * anchoring on the word boundary is what stops it.
+ *
+ * Weaker than an exact match, and it says so: a name that *begins* like a check is good
+ * evidence and not the same as a name that *is* one.
+ */
+const GUARD_PREFIX = new RegExp(`^(${[...GUARD_NAMES, 'auth'].join('|')})[A-Z_]\\w*$`);
+
+/**
  * Recognises a guard by the name it is called by. Exported so the route detectors can
  * label the middleware they see in a route's argument list.
  */
@@ -71,13 +93,13 @@ export function guardFromName(dotted: string, ctx: DetectorContext): GuardInfo |
   const last = parts[parts.length - 1];
   const root = parts[0];
 
-  const matched =
+  const exact =
     GUARD_NAMES.has(last) ||
     GUARD_CLASS.test(last) ||
     GUARD_DOTTED.some((pattern) => pattern.test(dotted)) ||
     (AMBIGUOUS_NAMES.has(last) && isAuthContext(root, ctx));
 
-  if (!matched) return null;
+  if (!exact && !GUARD_PREFIX.test(last)) return null;
 
   return {
     name: dotted,
@@ -85,7 +107,7 @@ export function guardFromName(dotted: string, ctx: DetectorContext): GuardInfo |
     provider: providerFor(root, ctx),
     path: ctx.ref.relPath,
     line: null,
-    confidence: 'certain',
+    confidence: exact ? 'certain' : 'likely',
   };
 }
 

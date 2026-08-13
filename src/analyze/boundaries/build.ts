@@ -1212,13 +1212,31 @@ function pushGuard(endpoint: MergedEndpoint, guard: GuardInfo): void {
   // 401 lives and again where `admin.use(requireAuth)` wires it is one function with
   // two kinds of evidence. On a single door, two genuinely different checks sharing a
   // name is a curiosity; the same check counted twice is a miscount every time.
+  // A chain counts as its first hop. `guardThroughHops` names a reached check after the
+  // route it was reached by — `requireUserId → redirect('/login')` — and the same
+  // function seen directly is plainly `requireUserId`. Comparing the whole string makes
+  // those two different checks and lists one lock twice, which is the same miscount the
+  // paragraph above is about, wearing the evidence as a suffix.
+  const head = (name: string) => name.split(' → ')[0];
   const already = endpoint.meta.guards.find(
     (g) =>
-      g.name === guard.name ||
+      head(g.name) === head(guard.name) ||
       (g.path !== null && g.path === guard.path && g.line !== null && g.line === guard.line),
   );
   if (already) {
     if (already.confidence === 'likely' && guard.confidence === 'certain') already.confidence = 'certain';
+    // Keep the one that shows its working, evidence link and all. A name with a chain on
+    // it was found where the refusal lives and says how the route reaches it; a bare one
+    // says only that something with that name ran, and its line is the call site rather
+    // than the check. Sending a reader to the wrong one of those two files is the whole
+    // cost of getting this wrong.
+    if (!already.name.includes(' → ') && guard.name.includes(' → ')) {
+      already.name = guard.name;
+      already.path = guard.path;
+      already.line = guard.line;
+      already.how = guard.how;
+      already.provider = guard.provider;
+    }
     return;
   }
   endpoint.meta.guards.push(guard);
