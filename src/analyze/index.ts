@@ -840,11 +840,11 @@ export function computeStats(nodes: AtlasNode[], edges: AtlasEdge[]): AtlasStats
         else endpoints++;
         if (isAuthRelevant(meta)) {
           routes++;
-          // Counted here rather than off the open-door tally, because that tally only
-          // ever sees doors with no guard on them. directus's mock license server checks
-          // a key on all five of its routes — a real check, on a server that exists for
-          // the length of an e2e run — and a denominator built from verdicts would keep
-          // all five while a denominator built from doors drops them (#247).
+          // Counted here rather than off the open-door tally, which only ever sees doors
+          // with no guard on them. Since #250 that is every door the suite declared, so
+          // the two agree — but they agree because of a rule in another file, and a
+          // denominator that is right only while that rule holds is one that goes wrong
+          // silently the day it changes (#247).
           if (meta.declaredInTest) testRoutes++;
           // A door with guards, none of which the analyzer could prove. Counted here so
           // the headline can carry the grade its cards already carry (#116) — over the

@@ -1690,6 +1690,29 @@ function guardConfidence(endpoint: MergedEndpoint, guard: GuardFinding): Confide
 }
 
 function pushGuard(endpoint: MergedEndpoint, guard: GuardInfo): void {
+  // A door the suite declared takes no check from anywhere (#250).
+  //
+  // directus's five mock-license-server routes came out wearing `authenticate`, sourced
+  // to `api/src/app.ts:328` — the shipped application's own `app.use`, reported as the
+  // lock on a Fastify service that exists for the length of an e2e run and that directus
+  // does not deploy. A catch-all covers a door whatever its address turns out to be
+  // (#172), and "whatever its address turns out to be" quietly included the addresses of
+  // a different program.
+  //
+  // It is a blanket refusal rather than a rule about catch-alls, because the suite's own
+  // checks are already gone: #25 filters a guard by the file it was registered in, so
+  // anything still able to reach a test-declared door was written in application code.
+  // The application does not stand in front of a server the harness started. "Not
+  // examined" is then the true answer, and it is the answer this door gets.
+  //
+  // Here rather than at the nine call sites for the reason `openDoors.ts` gives about
+  // `Record<OpenKind, …>`: a rule you have to remember in nine places is one that comes
+  // back. The reverse direction — a check registered by the suite reaching an
+  // application door — needs nothing, and that is measured rather than assumed: zero
+  // across nine repositories, and a constructed repro does not fire either, because a
+  // `.use` matcher carries its *registration* site as its path and #25 already drops it.
+  if (endpoint.meta.declaredInTest) return;
+
   // Two guards pointing at one line of one file are one check, whatever each of them
   // decided to call it. A controller that declares `@UseGuards(SessionGuard)` reaches
   // this twice — once as the decorator, once as the chain that inherits it — and
