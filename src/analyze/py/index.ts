@@ -155,6 +155,7 @@ export async function analyzePython(ctx: PluginContext): Promise<PluginResult> {
           fileId,
           nodeIdForScope: (scope) => (scope ? (own.get(scope)?.nodeId ?? fileId) : fileId),
           packages: project.signals.pythonPackages,
+          resolveImport: (module, level) => resolveModule(index, ref.relPath, module, level),
         }),
       );
     }

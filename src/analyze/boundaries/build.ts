@@ -42,7 +42,13 @@ import { isWorker } from '../wrangler.js';
 import { classifyZone } from '../zones.js';
 import { isCatchAllMatcher, matcherMatches } from './auth.js';
 import { composeRoutePrefixes, moduleOf, mountGraph, routerKey as moduleRouterKey } from './mounts.js';
-import { guardThroughHops, reachableGuards, servicesThroughUrlHelpers, servicesThroughWrappers } from './reach.js';
+import {
+  guardThroughHops,
+  reachableGuards,
+  servicesThroughPyWrappers,
+  servicesThroughUrlHelpers,
+  servicesThroughWrappers,
+} from './reach.js';
 import type { ReachedGuard } from './reach.js';
 import type {
   AuthAliasFinding,
@@ -50,6 +56,7 @@ import type {
   BoundaryFinding,
   EndpointFinding,
   GuardFinding,
+  HandlerDecoratorFinding,
   RouterBuildFinding,
   PathGuardFinding,
   RouterGuardFinding,
@@ -248,11 +255,36 @@ export function buildBoundaryGraph(raw: BuildInput): BoundaryGraph {
   // on the same box as the direct ones rather than a second one beside it.
   const input: BuildInput = {
     ...raw,
-    findings: [...shipped, ...servicesThroughWrappers(shipped), ...servicesThroughUrlHelpers(shipped)],
+    findings: [
+      ...shipped,
+      ...servicesThroughWrappers(shipped),
+      ...servicesThroughUrlHelpers(shipped),
+      ...servicesThroughPyWrappers(shipped),
+    ],
   };
 
   const endpoints = collectEndpoints(input);
-  const guards = input.findings.filter((f): f is GuardFinding => f.type === 'guard');
+  const checkers = input.findings.filter((f): f is AuthCheckerFinding => f.type === 'auth-checker');
+  const decorated = input.findings.filter((f): f is HandlerDecoratorFinding => f.type === 'handler-decorator');
+  const decoratorGuards = handlerDecoratorGuards(decorated, checkers);
+  // Which decorated functions the reference walk may carry a check *up* from.
+  //
+  // Not the ones some routing table already names. A Django views file is full of views
+  // that mention each other — `login` redirects to `profile`, and `profile` carries
+  // `@login_required` — and one hop of that put a check on healthchecks' login page,
+  // its signup page and its admin login: #147 with a different accent, a door the
+  // reader is told is locked and is not.
+  //
+  // A function *nothing* routes is the other case, and the useful one. `checks()`
+  // answers `/api/v1/checks/` by returning `get_checks(request)` or
+  // `create_check(request)`, both decorated, neither an address of its own — so the
+  // check reaches the door, and the trail on screen names the helper it came through.
+  const routed = new Set<string>();
+  for (const endpoint of endpoints.values()) for (const id of endpoint.handlerIds) routed.add(id);
+  const guards = [
+    ...input.findings.filter((f): f is GuardFinding => f.type === 'guard'),
+    ...decoratorGuards.filter((guard) => guard.nodeId !== null && !routed.has(guard.nodeId)),
+  ];
   applyWebhookPromotion(endpoints, input.findings);
   applyHandlerWrites(endpoints, input.findings);
   applyGuards(
@@ -262,9 +294,10 @@ export function buildBoundaryGraph(raw: BuildInput): BoundaryGraph {
     input.findings.filter((f): f is RouterBuildFinding => f.type === 'router-build'),
     input.findings.filter((f): f is RouterMountFinding => f.type === 'router-mount'),
   );
+  applyHandlerDecorators(endpoints, decoratorGuards);
   applyDependencyGuards(
     endpoints,
-    input.findings.filter((f): f is AuthCheckerFinding => f.type === 'auth-checker'),
+    checkers,
     input.findings.filter((f): f is AuthAliasFinding => f.type === 'auth-alias'),
     input.findings.filter((f): f is RouterBuildFinding => f.type === 'router-build'),
     input.findings.filter((f): f is RouterMountFinding => f.type === 'router-mount'),
@@ -950,6 +983,65 @@ function applyGuards(
     for (const guard of matchers) {
       if (gated.has(head(guard.guard.name))) continue;
       if (covers(guard)) pushGuard(endpoint, { ...guard.guard, confidence: 'likely' });
+    }
+  }
+}
+
+/**
+ * Decorators on handlers, turned into checks written on a node.
+ *
+ * Django is the reason this exists: it keeps the address in `urls.py` and the lock in
+ * `views.py`, and neither file mentions the other's half. Eighty-one of healthchecks'
+ * views carry `@login_required` in plain sight, and every door in the app read "not
+ * examined" because nothing joined the two.
+ *
+ * A decorator this tool knows by name arrives with its verdict already attached. Any
+ * other name has to earn it the same way a `Depends(...)` does — by being defined in
+ * this project as something that turns callers away with a 401 — so `@authorize` counts
+ * and `@csrf_exempt`, `@require_POST` and `@cors` do not.
+ */
+function handlerDecoratorGuards(
+  decorators: HandlerDecoratorFinding[],
+  checkers: AuthCheckerFinding[],
+): GuardFinding[] {
+  if (decorators.length === 0) return [];
+  const byName = new Map(checkers.map((checker) => [checker.name, checker.guard]));
+  const out: GuardFinding[] = [];
+  for (const decorator of decorators) {
+    const guard = decorator.guard ?? byName.get(decorator.name);
+    if (!guard) continue;
+    out.push({
+      type: 'guard',
+      guard,
+      scope: 'node',
+      nodeId: decorator.nodeId,
+      matchers: [],
+      sourceId: decorator.nodeId,
+    });
+  }
+  return out;
+}
+
+/**
+ * The decorator on the handler the routing table named — the direct hit.
+ *
+ * `applyGuards` matches a node-scoped check against the endpoints declared in the same
+ * *file*, which is exactly wrong for Django: the door is written in `urls.py` and the
+ * decorator in `views.py`. The reference walk covers the case where the check is a call
+ * or two below the handler; this covers the case where it is on the handler itself.
+ */
+function applyHandlerDecorators(endpoints: Map<string, MergedEndpoint>, guards: GuardFinding[]): void {
+  if (guards.length === 0) return;
+  const byNode = new Map<string, GuardInfo[]>();
+  for (const guard of guards) {
+    if (!guard.nodeId) continue;
+    const list = byNode.get(guard.nodeId);
+    if (list) list.push(guard.guard);
+    else byNode.set(guard.nodeId, [guard.guard]);
+  }
+  for (const endpoint of endpoints.values()) {
+    for (const handlerId of endpoint.handlerIds) {
+      for (const guard of byNode.get(handlerId) ?? []) pushGuard(endpoint, guard);
     }
   }
 }

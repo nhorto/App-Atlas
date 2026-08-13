@@ -52,7 +52,9 @@ test('a prefix written as a name is looked up rather than given up on', () => {
   // files away. This is how FastAPI's own project template writes it, and no route file
   // in such a repo contains the string `/api/v2` anywhere.
   assert.ok(routes(fastapi).every((name) => !name.includes('/api/v2/api/v2')), 'and only once');
-  assert.equal(routes(fastapi).filter((name) => name.startsWith('GET /api/v2/')).length, 4);
+  // Six, not four: `reports.router` is hung under two prefixes and answers at both, so
+  // it contributes two of these. See the twice-mounted test below.
+  assert.equal(routes(fastapi).filter((name) => name.startsWith('GET /api/v2/')).length, 6);
 });
 
 test('two files declaring the same decorator are two doors, not one', () => {
@@ -82,10 +84,25 @@ test('an unreadable prefix is shown as a gap, never dropped', () => {
   assert.ok(routes(fastapi).includes('GET …/anyone'));
 });
 
-test('a router hung in two places names neither address', () => {
-  // `reports.router` is included under `/reports` and again under `/exports`. Both are
-  // real, so naming one would be picking a favourite and calling it the truth.
-  assert.ok(routes(fastapi).includes('GET …/monthly'));
+test('a router hung in two places names both addresses', () => {
+  // `reports.router` is included under `/reports` and again under `/exports`, so the
+  // route really does answer at two addresses. This used to print one `…/monthly`, on
+  // the grounds that naming one of them would be picking a favourite — true, but naming
+  // *both* is not picking, and the ellipsis withheld two addresses that were fully
+  // readable. healthchecks is the case that settled it: it mounts one fifteen-route
+  // list under `api/v1/`, `api/v2/` and `api/v3/`, and a reader who has to call their
+  // own API needs the version in the string.
+  const names = routes(fastapi);
+  assert.ok(names.includes('GET /api/v2/reports/monthly'));
+  assert.ok(names.includes('GET /api/v2/exports/monthly'));
+  assert.ok(!names.includes('GET …/monthly'));
+});
+
+test('an address is still withheld when the alternatives cannot all be read', () => {
+  // The rule the test above relaxes has a floor: two mounts are two addresses only when
+  // both can be named. `…/anyone` is mounted once, through a prefix nothing declares,
+  // and no amount of enumerating mounts turns that into an address.
+  assert.ok(routes(fastapi).includes('GET …/anyone'));
 });
 
 // ---------------------------------------------------------------------------

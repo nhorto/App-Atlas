@@ -1,0 +1,4 @@
+<!-- A page the server renders and sends. No analyzer opens this file; the archetype
+     only needs to know it exists. -->
+<h1>Checks</h1>
+{% for check in checks %}<li>{{ check.name }}</li>{% endfor %}

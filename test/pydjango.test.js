@@ -11,13 +11,17 @@
  * Python fixture in this suite imported FastAPI, which is exactly why the suite stayed
  * green. This one imports Django and nothing else.
  *
- * And the routes must not be reported as unguarded. Django names a view in one file
- * and defines it in another, and this reader does not yet follow that link — so the
- * check on `widget_detail` is invisible from `urls.py`. Counting these as doors nobody
- * protects reported the tool's own stopping point as the application's, and on netbox
- * it said "84 of 84 have no auth check" about an app whose views sit behind a
- * permission mixin. Set aside, never hidden: the door stays on the map, out of the
- * count, and the sentence says which.
+ * And the verdict about who guards them must be earned. Django names a view in one file
+ * and defines it in another, so the check on `widget_detail` is invisible from
+ * `urls.py`. Counting these as doors nobody protects reported the tool's own stopping
+ * point as the application's — on netbox, "84 of 84 have no auth check" about an app
+ * whose views sit behind a permission mixin — so for two releases every Django door was
+ * set aside instead: on the map, out of the count, with a sentence saying which.
+ *
+ * Item 44 follows the link, and the fixture now holds both outcomes. Three views live
+ * in this repo and are read: one locked, two open, all three counted. The fourth comes
+ * from a package, has no file to open, and keeps the old honest silence — because the
+ * rule was never "stay quiet about Django", it was "claim only what was actually read".
  */
 import assert from 'node:assert/strict';
 import { fileURLToPath } from 'node:url';
@@ -45,7 +49,7 @@ test('a Django routing table is read without any other framework present', () =>
   // rather than the reader was identified as the cause.
   assert.deepEqual(
     routes.map((n) => n.name).sort(),
-    ['/legacy/widgets/', '/widgets/', '/widgets/<int:pk>/'],
+    ['/legacy/widgets/', '/signin/', '/widgets/', '/widgets/<int:pk>/'],
   );
 });
 
@@ -68,31 +72,52 @@ test('no method is invented, because the view decides it', () => {
   assert.equal(named('/widgets/').meta.method, null);
 });
 
-test('a route whose handler was never followed is not called unprotected', () => {
-  // `widget_list` genuinely has no check and `widget_detail` genuinely has one. This
-  // reader can tell neither from `urls.py`, so it must claim neither.
-  for (const route of routes) {
-    assert.equal(route.meta.handlerUnlinked, true, `${route.name} should be set aside`);
-    assert.deepEqual(route.meta.guards, [], `${route.name} should claim no guard it cannot see`);
+test('the guard on the view reaches the door the URLconf declares', () => {
+  // The link `urls.py` → `views.py` that nothing followed until item 44. `login_required`
+  // is written on `widget_detail` and named nowhere near the address it protects.
+  const detail = named('/widgets/<int:pk>/');
+  assert.equal(detail.meta.handlerUnlinked, undefined, 'the handler was found');
+  assert.deepEqual(
+    detail.meta.guards.map((g) => g.name),
+    ['login_required'],
+  );
+});
+
+test('a view with no check is reported as having none, not as unknown', () => {
+  // The other half, and the reason following the link is worth doing: once the handler
+  // is in hand, an open door is a fact rather than a gap.
+  for (const name of ['/widgets/', '/legacy/widgets/']) {
+    const route = named(name);
+    assert.equal(route.meta.handlerUnlinked, undefined, `${name} should be linked`);
+    assert.deepEqual(route.meta.guards, [], `${name} has no check`);
   }
-  assert.equal(atlas.meta.stats.unprotectedRoutes, 0);
-  assert.equal(atlas.meta.stats.unlinkedRoutes, 3);
+});
+
+test('a view this repo does not contain is still set aside, never counted', () => {
+  // `auth_views.login_view` comes from a package. There is no file to open, so the
+  // honest silence the rest of this fixture used to demonstrate still applies here —
+  // and it must stay out of both totals rather than land in the unprotected one.
+  const external = named('/signin/');
+  assert.equal(external.meta.handlerUnlinked, true);
+  assert.deepEqual(external.meta.guards, []);
+  assert.equal(atlas.meta.stats.unlinkedRoutes, 1);
+  assert.equal(atlas.meta.stats.unprotectedRoutes, 2);
 });
 
 test('the doors are still on the map — set aside, never hidden', () => {
   // #29 is the bug where a repo was told nothing answers a URL. The count coming out
   // of the auth verdict must not take the door off the map with it.
-  assert.equal(atlas.meta.stats.routes, 3);
+  assert.equal(atlas.meta.stats.routes, 4);
 });
 
-test('the headline says no verdict was reached rather than giving a green one', () => {
+test('the headline counts what was judged and states what was not', () => {
   const line = authHeadline(atlas.meta.stats);
-  assert.equal(line.tone, 'warn');
-  assert.match(line.headline, /not followed to its handler/);
-  // The two sentences this must never produce: every route counted as open, or every
-  // route counted as checked. Both were real outputs of the naive fix on netbox.
-  assert.doesNotMatch(line.headline, /no auth check App Atlas can see/);
-  assert.doesNotMatch(line.headline, /every one of the/);
+  // Two of the three readable doors are open, and the fourth is not in the denominator.
+  assert.match(line.headline, /2 of 3 routes have no auth check/);
+  assert.ok(
+    line.caveats.some((c) => /1 more is declared in a routing table/.test(c)),
+    'the set-aside route must be stated, not silently dropped',
+  );
 });
 
 test('a mix of assessed and unassessed routes keeps them in separate numbers', () => {

@@ -11,6 +11,7 @@
  * SQLAlchemy is somebody's own helper, and an invented box is worse than a missing one.
  */
 import type { CodeSite, GuardInfo, StoreKind } from '../../model/types.js';
+import { makeFunctionId } from '../../model/types.js';
 import type { StoreDef } from '../boundaries/catalog.js';
 import {
   engineForDatabaseUrl,
@@ -50,6 +51,19 @@ const GUARD_HINTS =
   /^((get_|require_|verify_|check_|ensure_)?(current_)?(active_)?(user|superuser|admin|auth|token|principal|identity)|authenticated_user|auth_user)$/;
 
 const HTTP_CLIENTS = new Set(['requests', 'httpx', 'aiohttp', 'urllib']);
+
+/**
+ * Libraries that, imported by a file exposing request-shaped functions, make that file
+ * this project's own HTTP client.
+ *
+ * `pycurl` is here and not in `HTTP_CLIENTS` on purpose: nobody calls it with a URL in
+ * the first argument, so it is no use as a call-site signal, and it is the strongest
+ * possible evidence about the file that imports it.
+ */
+const HTTP_LIBS = new Set(['requests', 'httpx', 'aiohttp', 'urllib', 'urllib3', 'pycurl', 'http']);
+
+/** Function names that make a request when a wrapper module exposes them. */
+const REQUEST_NAMES = new Set(['get', 'post', 'put', 'patch', 'delete', 'head', 'options', 'request', 'send']);
 const WRITE_METHODS = new Set(['post', 'put', 'patch', 'delete', 'send', 'stream']);
 
 /** SQLAlchemy and friends: the call that means the database was touched. */
@@ -64,6 +78,15 @@ export interface PythonBoundaryInput {
   nodeIdForScope: (scope: string | null) => string;
   /** Everything the project declares in requirements.txt / pyproject.toml / Pipfile. */
   packages: Set<string>;
+  /**
+   * An import as written → the file in this project that answers it, or null.
+   *
+   * Only the orchestrator knows this: `from hc.front import views` names a module
+   * relative to wherever the app is started from, and one file cannot say which of the
+   * repo's `views.py` it meant. Django's URLconf needs it, because the name of the code
+   * that answers a door is the only thing `urls.py` writes down.
+   */
+  resolveImport?: (module: string, level: number) => string | null;
 }
 
 export function detectPythonBoundaries(input: PythonBoundaryInput): BoundaryFinding[] {
@@ -82,10 +105,14 @@ export function detectPythonBoundaries(input: PythonBoundaryInput): BoundaryFind
   });
 
   detectRoutes(input, modules, findings, site);
-  if (has('django')) detectDjangoRoutes(input, findings, site);
+  if (has('django')) {
+    detectDjangoRoutes(input, findings, site);
+    detectHandlerDecorators(input, findings);
+  }
   if (modules.has('rest_framework')) detectDrfRouters(input, findings, site);
   detectTasks(input, has, findings, site);
   detectEnv(input, findings, site);
+  detectHttpWrapper(input, modules, findings);
   detectOutbound(input, modules, findings, site);
   detectStores(input, modules, has, findings, site);
   detectServices(input, findings, site);
@@ -296,8 +323,54 @@ function detectDjangoRoutes(
 ): void {
   if (!/(^|\/)urls\.py$/.test(input.file.path)) return;
 
+  // Every URLconf list is a router, and `include()` is how one gets mounted on another.
+  // Saying it in that vocabulary is what lets Django's addresses be assembled by the
+  // same code that assembles FastAPI's and Express's, prefix constants and all.
+  const structured = new Set<number>();
+  for (const list of input.file.urlLists ?? []) {
+    findings.push({
+      type: 'router-build',
+      routerName: 'urlpatterns',
+      varName: list.var,
+      path: input.file.path,
+      line: list.line,
+      hasPrefix: false,
+    });
+    for (const entry of list.entries) {
+      structured.add(entry.line);
+      if (entry.isInclude) {
+        findings.push({
+          type: 'router-mount',
+          path: input.file.path,
+          hostVar: list.var,
+          // `include("hc.front.urls")` names a module and always means its
+          // `urlpatterns`; `include(api_urls)` names a list in this same file.
+          childModule: entry.includeModule ? entry.includeModule.replace(/\./g, '/') : null,
+          childVar: entry.includeModule ? 'urlpatterns' : entry.includeList,
+          hasPrefix: entry.route !== '',
+          prefix: entry.route,
+          prefixName: entry.routeName,
+          // `path(prefix, include("hc.accounts.urls"))` is how a Django app offers to be
+          // served under a configured sub-path, and `prefix` is `""` in every deployment
+          // that has not set one. Treating a name we cannot read as a segment would put
+          // an ellipsis in front of all 179 of healthchecks' addresses to describe a
+          // prefix that is usually empty — so the name is followed if the repo declares
+          // it, and otherwise the address it already had is left alone.
+          prefixOnlyIfNamed: entry.routeName !== null,
+          line: entry.line,
+        });
+        continue;
+      }
+      pushDjangoRoute(input, findings, site, entry.line, entry.call, entry.route, list.var, entry.view);
+    }
+  }
+
+  // Anything the URLconf reader could not see as a list entry — a `path()` built inside
+  // a function, or handed to `urlpatterns` through a helper. Read flat, exactly as
+  // before, so no repo loses the routes it already had.
   for (const call of input.file.calls ?? []) {
     if (call.callee !== 'path' && call.callee !== 're_path' && call.callee !== 'url') continue;
+    if (structured.has(call.line)) continue;
     const route = strArg(call.args[0]);
     if (route === null) continue;
     const view = nameArg(call.args[1]);
@@ -306,33 +379,180 @@ function detectDjangoRoutes(
     // would trade an undercount for an overcount — and every one of those prefixes
     // would be a door with no handler and therefore no visible auth.
     if (view !== null && /^include\(/.test(view)) continue;
-    // `re_path(r'^legacy/widgets/$', …)` serves `/legacy/widgets/`. The anchors are
-    // regex punctuation, not part of the address, and leaving them in prints a URL
-    // nobody can visit. Only the anchors come off: the rest of the pattern is left
-    // exactly as written, because a capture group is a real part of the route and
-    // rewriting it into something prettier would be inventing an address.
-    const pattern = call.callee === 'path' ? route : route.replace(/^\^/, '').replace(/\$$/, '');
-    const shown = `/${pattern}`.replace(/\/+/g, '/');
-    findings.push({
-      type: 'endpoint',
-      endpointKind: 'http-route',
-      key: `GET ${shown}`,
-      // Django does not declare the method here; the view decides. Saying GET would
-      // be a guess, so the name says what is actually known: a URL is served.
-      name: shown,
-      method: null,
-      route: shown,
-      framework: 'Django',
-      writes: false,
-      guards: [],
-      site: site(call.line, view ? `path("${route}", ${view})` : undefined),
-      handlerId: null,
-      // The view lives in another file and this reader does not follow it there yet, so
-      // whatever guards it is invisible from `urls.py`. Say that, rather than counting
-      // it as a door nobody checks — see EndpointMeta.handlerUnlinked.
-      handlerUnlinked: true,
-    });
+    pushDjangoRoute(input, findings, site, call.line, call.callee, route, null, view);
   }
+}
+
+/**
+ * One Django route, relative to the list it was written in.
+ *
+ * The address stays a fragment on purpose: `composeRoutePrefixes` puts the `include()`
+ * chain in front of it, and it is the only thing that can, because the segments live in
+ * files this one never mentions.
+ */
+
+/**
+ * Every decorator on every module-level function, keyed by the function's atlas node.
+ *
+ * Reported without deciding anything: whether `@authorize` is a lock is a fact about
+ * wherever `authorize` is defined, which is not this file, and `build.ts` already
+ * settles exactly that question for FastAPI's dependencies. The ones this tool knows by
+ * name — Django's own `login_required` and friends — arrive with their verdict attached,
+ * because no other file has anything to add about them.
+ *
+ * Django only. Every other framework in this reader writes the route on the handler, so
+ * the two halves are already in one place and this would be noise.
+ */
+function detectHandlerDecorators(input: PythonBoundaryInput, findings: BoundaryFinding[]): void {
+  for (const def of input.file.defs ?? []) {
+    if (def.kind !== 'function') continue;
+    const nodeId = makeFunctionId(input.file.path, def.name);
+    // A Django view often locks its own front door rather than wearing a decorator:
+    // `if not request.user.is_authenticated: return HttpResponseForbidden()` is the
+    // first two lines of healthchecks' `log_events`. Never better than `likely` — the
+    // function refuses *somebody* somewhere, and a handler that answers a wrong
+    // password with a 401 is doing its job rather than guarding a door (#147).
+    if (typeof def.rejects === 'number') {
+      findings.push({
+        type: 'handler-decorator',
+        nodeId,
+        name: def.name,
+        guard: {
+          // Named after the function, the way `auth-checker` names one, so a chain
+          // through it reads `checks → authorize` rather than repeating itself.
+          name: def.name,
+          how: 'call',
+          provider: 'custom',
+          path: input.file.path,
+          line: def.rejects,
+          confidence: 'likely',
+        },
+      });
+    }
+    if (def.decorators.length === 0) continue;
+    for (const decorator of def.decorators) {
+      const name = decorator.callee.split('.').pop() ?? '';
+      if (!name) continue;
+      const label = GUARD_DECORATORS[name];
+      findings.push({
+        type: 'handler-decorator',
+        nodeId,
+        name,
+        guard: label
+          ? {
+              name,
+              how: 'decorator',
+              provider: label,
+              path: input.file.path,
+              line: decorator.line,
+              confidence: 'certain',
+            }
+          : null,
+      });
+    }
+  }
+}
+
+/**
+ * The atlas node for `views.checks`, given a `urls.py` that says `from hc.front import
+ * views` somewhere above.
+ *
+ * This is the hop the Security page was missing on every Django repo. `urls.py` names
+ * the view and nothing else about it; the decorator that keeps strangers out —
+ * `@login_required` on eighty-one of healthchecks' views — is in the file this resolves
+ * to. Without it every Django door reads "not examined", which is honest and worth
+ * nothing.
+ *
+ * Only an import this project answers for. A view that resolves to no file in the repo
+ * stays unlinked, because a handler we cannot open is a handler whose checks we have
+ * not read.
+ */
+function djangoHandlerId(input: PythonBoundaryInput, view: string | null): string | null {
+  if (!view || !input.resolveImport) return null;
+  const parts = view.split('.');
+  const name = parts.pop() as string;
+  if (!name || !/^[A-Za-z_]\w*$/.test(name)) return null;
+  // `views.checks` — the module is however `views` got into this file. A bare
+  // `checks` is defined here, and needs no import to find.
+  if (parts.length === 0) {
+    return input.file.defs?.some((def) => def.kind === 'function' && def.name === name)
+      ? makeFunctionId(input.file.path, name)
+      : null;
+  }
+  const target = resolveBoundModule(input, parts[parts.length - 1]);
+  return target ? makeFunctionId(target, name) : null;
+}
+
+/**
+ * The file behind a name an import bound to a module: `views`, `curl`, `client`.
+ *
+ * Null for anything that is not a module of this project, which is what keeps
+ * `requests.post` and `os.path` out of every reading built on top of it.
+ */
+function resolveBoundModule(input: PythonBoundaryInput, bound: string): string | null {
+  if (!input.resolveImport) return null;
+  for (const entry of input.file.imports ?? []) {
+    // `from hc.lib import curl` binds `curl`, and `… import curl as c` binds the same
+    // module under another name — so the module is the *exported* half of the pair,
+    // never the local one. `import hc.lib.curl as curl` binds through the alias, where
+    // the module is already whole. A relative `from . import views` is the ordinary
+    // spelling inside a Django app: its module is empty and the dots ride in `level`,
+    // so joining onto nothing would ask the resolver for `.views`.
+    const exported = (entry.names ?? []).find(([, local]) => local === bound)?.[0];
+    const module = exported
+      ? entry.module
+        ? `${entry.module}.${exported}`
+        : exported
+      : entry.alias === bound
+        ? entry.module
+        : null;
+    if (module === null) continue;
+    const target = input.resolveImport(module, entry.level);
+    if (target) return target;
+  }
+  return null;
+}
+
+function pushDjangoRoute(
+  input: PythonBoundaryInput,
+  findings: BoundaryFinding[],
+  site: (line: number, snippet?: string) => CodeSite,
+  line: number,
+  callee: string,
+  // An f-string route hands over its literal half — `f"{prefix}admin/"` gives `admin/`,
+  // the address in every deployment that leaves the sub-path unset.
+  route: string | null,
+  routerVar: string | null,
+  view: string | null,
+): void {
+  if (route === null) return;
+  const handlerId = djangoHandlerId(input, view);
+  // `re_path(r'^legacy/widgets/$', …)` serves `/legacy/widgets/`. The anchors are
+  // regex punctuation, not part of the address, and leaving them in prints a URL
+  // nobody can visit. Only the anchors come off: the rest of the pattern is left
+  // exactly as written, because a capture group is a real part of the route and
+  // rewriting it into something prettier would be inventing an address.
+  const pattern = callee === 'path' ? route : route.replace(/^\^/, '').replace(/\$$/, '');
+  const shown = `/${pattern}`.replace(/\/+/g, '/');
+  findings.push({
+    type: 'endpoint',
+    endpointKind: 'http-route',
+    key: `GET ${shown}`,
+    // Django does not declare the method here; the view decides. Saying GET would
+    // be a guess, so the name says what is actually known: a URL is served.
+    name: shown,
+    method: null,
+    route: shown,
+    framework: 'Django',
+    writes: false,
+    guards: [],
+    site: site(line, view ? `${callee}("${route}", ${view})` : undefined),
+    handlerId,
+    routerVar,
+    // Only when the view could not be found. A door whose handler we located is a door
+    // whose checks we have read — see EndpointMeta.handlerUnlinked.
+    ...(handlerId === null ? { handlerUnlinked: true as const } : {}),
+  });
 }
 
 /**
@@ -814,6 +1034,32 @@ function detectEnv(
   }
 }
 
+/**
+ * Whether this file is the project's own front door onto the network.
+ *
+ * Two things together, and neither on its own: it imports somebody's HTTP library, and
+ * it exposes functions named after HTTP verbs. A module that merely imports `requests`
+ * is a caller; a module with a `post` and no client is a mailbox or a queue. The pair is
+ * what makes `hc/lib/curl.py` — "requests-like interface for PycURL" — the thing every
+ * `curl.post(...)` in the repo is actually calling.
+ */
+function detectHttpWrapper(
+  input: PythonBoundaryInput,
+  modules: Set<string>,
+  findings: BoundaryFinding[],
+): void {
+  let wraps = false;
+  for (const module of modules) {
+    if (HTTP_LIBS.has(module.split('.')[0])) wraps = true;
+  }
+  if (!wraps) return;
+  const names = (input.file.defs ?? [])
+    .filter((def) => def.kind === 'function' && REQUEST_NAMES.has(def.name))
+    .map((def) => def.name);
+  if (names.length === 0) return;
+  findings.push({ type: 'http-wrapper', path: input.file.path, names });
+}
+
 /** Calls that leave the machine, and the company on the other end when we can tell. */
 function detectOutbound(
   input: PythonBoundaryInput,
@@ -827,9 +1073,49 @@ function detectOutbound(
   // constant across, so a URL defined in `config.py` and used in `client.py` is still
   // missed. Said plainly rather than papered over.
   const constants = new Map<string, string>();
+  /** `scope\0name` → the address that function gave it. Beats the file-wide answer. */
+  const local = new Map<string, string>();
+  /** `scope\0name` → the name it stands for, resolved once the addresses are in. */
+  const aliases: { key: string; alias: string }[] = [];
   for (const constant of input.file.constants ?? []) {
-    if (/^https?:\/\//i.test(constant.value)) constants.set(constant.name, constant.value);
+    const key = constant.scope ? `${constant.scope}\0${constant.name}` : constant.name;
+    if (constant.alias) {
+      if (constant.scope) aliases.push({ key, alias: constant.alias });
+      continue;
+    }
+    if (!/^https?:\/\//i.test(constant.value)) continue;
+    // First assignment wins. `url = "https://api.opsgenie.com/…"` followed by a
+    // conditional `url = "https://api.eu.opsgenie.com/…"` is a default and an override,
+    // and the default is the one that describes the deployment nobody configured.
+    const into = constant.scope ? local : constants;
+    if (!into.has(key)) into.set(key, constant.value);
   }
+  // One hop, after everything declared is known: `url = self.URL % account` where
+  // `URL` is the class constant above it — looked up in that class first, because four
+  // transports in one module each calling their address `URL` is ordinary.
+  for (const { key, alias } of aliases) {
+    if (local.has(key)) continue;
+    const bare = alias.replace(/^(self|cls)\./, '');
+    const owner = key.split('\0')[0].split('.')[0];
+    const value = local.get(`${owner}\0${bare}`) ?? constants.get(alias) ?? constants.get(bare);
+    if (value) local.set(key, value);
+  }
+
+  // A name written inside a function means whatever that function said it means. Two
+  // transports in one module both spell it `url`, and swapping their addresses would
+  // put one company's name on another's traffic.
+  const inScope = (scope: string | null | undefined): Map<string, string> => {
+    if (!scope || local.size === 0) return constants;
+    const merged = new Map(constants);
+    // The class this method belongs to first, then the method itself — nearest
+    // declaration wins, the way the reader of the file would resolve it.
+    for (const prefix of [`${scope.split('.')[0]}\0`, `${scope}\0`]) {
+      for (const [key, value] of local) {
+        if (key.startsWith(prefix)) merged.set(key.slice(prefix.length), value);
+      }
+    }
+    return merged;
+  };
 
   for (const call of input.file.calls ?? []) {
     const parts = call.callee.split('.');
@@ -838,10 +1124,37 @@ function detectOutbound(
     const viaClient = HTTP_CLIENTS.has(root) && modules.has(root);
     // `client.post(...)` where the client came out of httpx or requests.
     const viaLocal = /^(client|session|http|s)$/.test(root) && (modules.has('httpx') || modules.has('requests'));
-    if (!viaClient && !viaLocal) continue;
+    // `self.post(self.URL, data=payload)` in a transport class. healthchecks sends
+    // every one of its notifications this way, through four layers of its own wrapper
+    // ending in PycURL, so neither a known client nor an address is visible where the
+    // call is written. What *is* visible is a hardcoded external address being handed
+    // to a method named after an HTTP verb, and the address is the whole question —
+    // the reader wants to know their monitoring tool talks to Pushover, not which
+    // library carries the bytes. Still nothing is invented: without a literal URL
+    // resolving to an outside host, this falls through like everything else.
+    const viaSelf = (root === 'self' || root === 'cls') && parts.length === 2;
     if (!ROUTE_METHODS.has(method) && method !== 'request' && method !== 'send') continue;
 
-    const url = firstUrl(call, constants);
+    // `curl.post("https://slack.com/api/oauth.v2.access", data)` — a request shape
+    // aimed at a module of this project. Whether that module is an HTTP client is the
+    // other file's business, so this only records the pair for `build.ts` to join.
+    if (!viaClient && !viaLocal && !viaSelf && parts.length === 2) {
+      const modulePath = resolveBoundModule(input, root);
+      const target = modulePath ? firstUrl(call, inScope(call.scope)) : null;
+      if (modulePath && target) {
+        findings.push({
+          type: 'wrapper-url-call',
+          modulePath,
+          name: method,
+          url: target,
+          writes: WRITE_METHODS.has(method),
+          site: site(call.line, `${call.callee}("${target}")`),
+        });
+      }
+    }
+    if (!viaClient && !viaLocal && !viaSelf) continue;
+
+    const url = firstUrl(call, inScope(call.scope));
     const host = url ? hostOf(url) : null;
     // No literal URL means no destination to name. `s.get(build_url())` tells us an
     // HTTP call happens and nothing whatever about who answers it, and naming the box
@@ -873,7 +1186,10 @@ function firstUrl(call: PyCall, constants: Map<string, string>): string | null {
     // inferred from the name itself — an unknown one gives back null, exactly as
     // before, which is what keeps `s.get(build_url())` from naming a company.
     const named = nameArg(value);
-    return named ? (constants.get(named) ?? null) : null;
+    if (!named) return null;
+    // `self.URL` is how a class refers to its own constant, and the constant is
+    // recorded under the bare name it was declared with.
+    return constants.get(named) ?? constants.get(named.replace(/^(self|cls)\./, '')) ?? null;
   };
 
   for (const arg of call.args) {

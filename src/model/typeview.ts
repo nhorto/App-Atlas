@@ -83,7 +83,7 @@ const MAX_CARDS = 60;
 const MAX_FIELDS = 12;
 
 export function buildTypeView(graph: AtlasGraph, limit = MAX_CARDS): TypeView {
-  const all = graph.nodesOfKind('type');
+  const all = mergeDeclaredTables(graph.nodesOfKind('type'));
   const usage = new Map<string, { total: number; byZone: Map<Zone, number> }>();
 
   for (const node of all) {
@@ -121,6 +121,69 @@ export function buildTypeView(graph: AtlasGraph, limit = MAX_CARDS): TypeView {
     total: all.length,
     tables: cards.filter((card) => card.typeKind === 'table').length,
   };
+}
+
+/**
+ * One card for a table whose schema *is* a class in this repo (item 41).
+ *
+ * A Django model is not a table plus a class; it is a table, written as a class. The
+ * atlas holds two nodes for it all the same — the queries produce an observed table, the
+ * file produces the class — and `joinOrmModelsToTables` has already proved they are the
+ * same thing by copying one's columns onto the other. Drawing both put every one of
+ * healthchecks' thirteen models on the canvas twice, with identical field lists, and
+ * spent thirteen of sixty card slots saying everything once more.
+ *
+ * The class node survives, because it is the one the rest of the atlas points at: it
+ * carries the references, the usage count and the position in the folder tree. It
+ * inherits the table's badge and provider, so nothing about "this is a table" is lost.
+ *
+ * Prisma is deliberately untouched. Its schema file and a TypeScript interface of the
+ * same name are two real declarations that can disagree, and the dashed "same name only"
+ * link between them is the right way to say so.
+ */
+function mergeDeclaredTables(all: AtlasNode[]): AtlasNode[] {
+  const byId = new Map(all.map((node) => [node.id, node]));
+  /** Model node id → the table node it turned out to be. */
+  const promoted = new Map<string, AtlasNode>();
+  for (const node of all) {
+    const meta = node.meta as unknown as TypeMeta;
+    if (meta.typeKind !== 'table' || !meta.declaredById) continue;
+    const model = byId.get(meta.declaredById);
+    if (!model || model.id === node.id) continue;
+    // Two tables naming one class is the ambiguous case `joinOrmModelsToTables` refuses
+    // elsewhere, and it would be no better resolved here.
+    if (promoted.has(model.id)) continue;
+    promoted.set(model.id, node);
+  }
+  if (promoted.size === 0) return all;
+
+  const absorbed = new Set([...promoted.values()].map((node) => node.id));
+  return all
+    .filter((node) => !absorbed.has(node.id))
+    .map((node) => {
+      const table = promoted.get(node.id);
+      if (!table) return node;
+      const meta = node.meta as unknown as TypeMeta;
+      const tableMeta = table.meta as unknown as TypeMeta;
+      return {
+        ...node,
+        // The table's name, not the class's. They are the same word in Django, and in
+        // SQLAlchemy they are not: `class Invoice` with `__tablename__ = "invoices"` is
+        // a table called `invoices`, and that is the name someone will look for in a
+        // database. Everything else comes from the class, which is the node the rest of
+        // the atlas points at.
+        name: table.name,
+        meta: {
+          ...meta,
+          typeKind: 'table',
+          provider: tableMeta.provider,
+          rls: tableMeta.rls,
+          // The columns are the class's own, read from the declaration, so nothing here
+          // is unknowable.
+          observed: false,
+        } as unknown as AtlasNode['meta'],
+      };
+    });
 }
 
 /**

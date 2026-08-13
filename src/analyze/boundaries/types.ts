@@ -214,6 +214,64 @@ export interface GuardFinding {
 }
 
 /**
+ * A file of this project that wraps somebody's HTTP client (item 42).
+ *
+ * healthchecks writes `hc/lib/curl.py`, whose own docstring calls it a "requests-like
+ * interface for PycURL", and then makes all 282 of its outgoing requests through it.
+ * Nothing outside that file imports an HTTP library at all, so a reader of any single
+ * call site sees `curl.post(...)` and no library — and the boundary view said the app
+ * talks to one company, email, for a product whose entire purpose is notifying eleven
+ * others.
+ */
+export interface HttpWrapperFinding {
+  type: 'http-wrapper';
+  /** The file doing the wrapping. */
+  path: string;
+  /** The request-making names it exposes: `get`, `post`, `request`. */
+  names: string[];
+}
+
+/**
+ * A call to a module of this project that looks like a request, with an address.
+ *
+ * Reported without deciding whether the module is an HTTP client, because that is a
+ * fact about the other file. `build.ts` pairs it with the `http-wrapper` that answers
+ * to the same path; unpaired, it says nothing at all.
+ */
+export interface WrapperUrlCallFinding {
+  type: 'wrapper-url-call';
+  /** The imported module, resolved to a file in this project. */
+  modulePath: string;
+  /** The function called on it. */
+  name: string;
+  url: string;
+  writes: boolean;
+  site: CodeSite;
+}
+
+/**
+ * A decorator written on a function that some routing table elsewhere names (#44).
+ *
+ * Django keeps the address in `urls.py` and the lock in `views.py`, and neither file
+ * mentions the other's half: `path("checks/", views.checks)` says nothing about
+ * `@login_required`, and `@login_required` says nothing about an address. Every other
+ * detector in this file can answer from one file; this one cannot, so it reports the
+ * half it can see and `build.ts` joins them by the handler's node id.
+ *
+ * `guard` is filled only for decorators this tool knows by name. Anything else travels
+ * as a bare name and becomes a check only if the project defines something by that name
+ * that turns callers away with a 401 — the same test a FastAPI dependency has to pass.
+ */
+export interface HandlerDecoratorFinding {
+  type: 'handler-decorator';
+  /** The atlas node of the decorated function. */
+  nodeId: string;
+  /** The decorator's last segment: `login_required`, `authorize`. */
+  name: string;
+  guard: GuardInfo | null;
+}
+
+/**
  * A call into an auth library's own sign-in, sign-up, sign-out or password-reset
  * routine.
  *
@@ -571,6 +629,9 @@ export type BoundaryFinding =
   | RouterBuildFinding
   | RouterMountFinding
   | RouterGuardFinding
+  | HandlerDecoratorFinding
+  | HttpWrapperFinding
+  | WrapperUrlCallFinding
   | PathGuardFinding
   | PathConstantFinding
   | MountMethodFinding

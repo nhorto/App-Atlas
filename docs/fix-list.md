@@ -664,3 +664,147 @@ found the #35 fixes holding, and one new bug that only a live run could have sho
   what we can see rather than as an absence.
 
 **All four #35 repos are now verified against a live model**, not one.
+
+---
+
+## Phase 5 — the same questions, asked of Django
+
+One repo nobody here had opened: `healthchecks/healthchecks`, a real self-hosted
+cron-monitoring SaaS. 653 Python files, 130 templates, 30 notification integrations.
+Django had been read before (Sentry, items 29–30) but only for scope and store
+behaviour, never driven screen by screen. Evidence and method in
+[field-drive-healthchecks.md](field-drive-healthchecks.md) — every number below was
+derived from the repo with Python's `ast`, not taken from the atlas.
+
+**What held.** The Django ORM store is exactly right: 13 tables, the 12 in the
+migrations plus the built-in `User`, with `information_schema.columns` correctly held
+back as a catalog query. And the unlinked-handler message is the honest-blank rule
+doing its job — it refuses an auth verdict rather than reporting 141 open doors.
+
+- [x] **40. Django's `include()` prefix is dropped** — *Tier 1.*
+      Item 4 composed six mount spellings; Django's `include()` was not one of them, and
+      it is how essentially every Django app assembles its URL space. Of 179 real leaf
+      routes, 97 display correctly and **43 displayed addresses do not exist**.
+      `hc/api/urls.py` mounts one 15-route list three times under `api/v1|v2|v3`, so the
+      product's entire public REST API reads `/checks/` where the real address is
+      `/api/v1/checks/`, and all 45 real API addresses are absent.
+      With the prefixes gone two unrelated doors also merge: `path("", views.index)` and
+      `path("", views.ping)` both become `""`, so the homepage and the unauthenticated
+      ping endpoint share one row on the Security page.
+      `include("module.string")` already works — the failure is `include(<local list>)`
+      and composing the segment on the `path()` holding the include.
+      **Done. 97 of 179 correct → 178 of 179, and no address displayed that does not
+      exist.** Every URLconf list is now a router and `include()` is a mount, so Django
+      composes through the same code as FastAPI and Express — prefix constants and all.
+      The 179th is `/projects/<uuid:code>/add_webhook/`, read as a webhook rather than a
+      route, which is item 28's territory and unchanged by this.
+      Two things fell out of it. A router mounted at several readable prefixes now names
+      **all** of them instead of one ellipsis — the old rule refused to pick a favourite,
+      but naming both is not picking, and it was withholding 45 real API addresses. And
+      an unreadable prefix uses the existing `prefixOnlyIfNamed` rule rather than a gap:
+      `path(prefix, include(...))` with `prefix` assigned twice is the "serve me at `/`
+      unless configured" idiom, and an ellipsis in front of all 179 addresses describes a
+      segment that is usually empty.
+
+- [x] **41. Every Django model is drawn twice in the Data model tab** — *Tier 1 for the
+      location, Tier 2 for the duplication. This is the `data-tab-framework-aware` item.*
+      13 of the tab's 14 "database tables" are duplicates of a model class already on the
+      canvas, with byte-identical field lists. The table card's path points at whichever
+      file first queried it — a migration for `Profile`, `admin.py` for `Check`, a cron
+      command for `TokenBucket` — so clicking a table to find its definition lands
+      anywhere but `models.py`.
+      `typeview.ts:178` already detects the twin and draws a dashed *"same name only"*
+      link. That is right for Prisma, where schema file and TS interface are two real
+      artifacts; it is wrong for an ORM **whose class declaration is the schema**. Django,
+      SQLAlchemy declarative, Mongoose, TypeORM and EF Core should merge the pair and keep
+      the class's definition site, the table badge and the provider.
+      Also costs 13 of 60 card slots on a canvas already showing 60 of 632.
+      **Done, and the join that proved it were the same thing was already there.**
+      `joinOrmModelsToTables` had been copying the class's columns onto the table since
+      #80 — it just kept both nodes. It now also records *which node* declared the table
+      and moves the table's location to the declaration, and the type explorer draws the
+      pair as one card: the class node survives (it carries the references, the usage
+      count and the place in the folder tree) wearing the table's name, badge and
+      provider. healthchecks: 13 duplicate cards gone, every table now pointing at its
+      `models.py`, and `Check`'s usage reads 411 instead of the query site's 13.
+      Prisma is untouched by design — a schema file and an interface of the same name are
+      two real declarations that can disagree, and the dashed "same name only" link is
+      how to say so. The rule is "the class *is* the schema", not "merge same names".
+
+- [x] **42. Outbound calls through a first-party HTTP wrapper are invisible** — *Tier 1.*
+      The Security page says *"1 company, none of which receive data from you"* for a
+      product whose entire purpose is fanning out notifications. All 282 outbound calls go
+      through `hc/lib/curl.py` — *"requests-like interface for PycURL"* — so the sites read
+      `curl.post(...)`. `HTTP_CLIENTS` (`py/boundaries.ts:52`) lists
+      `requests, httpx, aiohttp, urllib`; adding `pycurl` would not help, since nothing
+      outside the wrapper imports it. Needs item 1's hop for Python: a local module that
+      imports a known HTTP client and exposes `get`/`post`/`request` is one.
+      Second half: the URLs are **class attributes** (`URL = "https://api.pushover.net/…"`
+      inside the transport class) and `detectOutbound`'s `constants` map reads only
+      module-level constants.
+      **Eleven** companies are provable from hardcoded hosts in production code — Twilio,
+      Discord, GitHub, ntfy, Opsgenie, PagerDuty, Pushover, Pushbullet, Slack, Telegram,
+      Trello. Eleven is the honest ceiling, not thirty: the rest post to user-supplied
+      webhook URLs stored in `Channel.value` and should stay blank.
+      **Done — 1 outside company → 11**, and the eleventh, ntfy, turned out to be an
+      over-count in this entry: its address comes from the channel's own configuration
+      and it is correctly still blank. Ten companies plus email, every one of them
+      hardcoded in the source.
+      Four shapes, because healthchecks writes the address four ways and each failed
+      differently. A file that imports an HTTP library *and* exposes `get`/`post`/
+      `request` is this project's own client, so `curl.post("https://slack.com/…")` is a
+      call (both halves required: a module with a `post` and no client is a mailbox).
+      `self.post(self.URL, …)` counts when the address resolves to a literal outside
+      host. An f-string contributes whatever host it completed before its first
+      placeholder — `f"https://api.telegram.org/bot{token}/…"` yes, `f"https://{host}/x"`
+      no. And a URL in a local variable or behind one `%` format is followed, scoped to
+      the function and class that wrote it. That scoping is the trap: four transports in
+      one module each call their address `URL`, and a flat namespace hands the first
+      one's company to all four — a wrong name on a boundary card, stated as a fact.
+      Also added the alerting destinations to the host catalog, so the cards read
+      "Pushover" rather than `api.pushover.net`.
+
+- [x] **43. A server-rendered app cannot be recognised as having a front end** — *Tier 1.*
+      healthchecks has 130 templates, 81 JS/CSS files and 27 `render()` calls, and the
+      Overview states **"no interface files"** and files it as *A service other things
+      call*. `archetype.ts:85` tests `files.some(f => f.zone === 'ui')`, but the atlas holds
+      653 `.py` and 35 `.js` and no template at all, so `hasUiFiles` can never be true.
+      `UI_FRAMEWORKS` is React/Vue/Svelte/Angular/Next/Expo/Streamlit/Electron — every
+      server-rendered stack falls through to `service` by construction, so Django,
+      Flask+Jinja and Rails-shaped apps are all mis-framed. This picks the landing view and
+      the language of every summary, so it is worth more than its one line.
+      **Done.** Templates are discovered the way `.vue` and `.rb` already are — counted,
+      never parsed — and a template is an interface file. healthchecks now opens on
+      *An app with a front end · 179 ways in over the network · 154 pages it renders*.
+      Two limits keep it from handing out front ends that do not exist. Only the
+      directories these frameworks use (`templates/`, `views/`, `jinja/`): a stray
+      `.html` at a repo root is a coverage report as often as it is a page. And an email
+      body is not an interface — `templates/emails` is excluded, which is why the number
+      is 154 and not 198. A service that mails receipts is still a service.
+
+- [x] **44. Django auth delivers nothing: 141 of 141 "not examined"** — *Tier 2.*
+      Honest, and correct given the handler is unlinked — but the repo is not subtle about
+      protection: 81 `@login_required`, 8 `@authorize`, 6 `@authorize_read`,
+      7 `@require_sudo_mode`. The only difficulty is the hop from
+      `path("checks/", views.checks)` to `views.checks` via `from hc.front import views`.
+      Items 1–3 bought this screen back on FastAPI, Express and NestJS; Django is the last
+      dominant web framework where it is blank. **Depends on 40** — without a composed
+      address there is nothing to hang a verdict on.
+      **Done. `all 141 not examined` → `81 checked · 44 probably checked · 1 not examined
+      · 53 nothing found`.** The URLconf now resolves `views.checks` to a file and a
+      function, so the door and its decorator finally meet; a view from a package still
+      has no file to open and keeps the old honest silence, which is the one remaining.
+      A decorator earns its verdict the same way a `Depends(...)` does: known by name, or
+      defined in this project as something that turns callers away with a 401. That last
+      test needed widening — healthchecks refuses with `error("missing api key", 401)`
+      through its own helper, and no list of framework names will ever contain `error`,
+      so a bare 401/403 passed as a *number* now counts while one mentioned in a message
+      does not. Views that lock their own front door (`if not request.user.
+      is_authenticated: return HttpResponseForbidden()`) count too, at `likely`.
+      **The rule that took two tries: a decorator guards the function it is written on.**
+      Walking the reference graph from it put a check on healthchecks' login page, its
+      signup page and its admin login — `login` redirects to `profile`, and `profile`
+      carries `@login_required`. That is #147 with a different accent, and the worse
+      direction to be wrong in. So a check travels up a call only from a function *no
+      routing table names*: `checks()` answering `/api/v1/checks/` by returning
+      `get_checks(request)` is covered, and one view mentioning another is not.
