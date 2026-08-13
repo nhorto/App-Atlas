@@ -46,19 +46,38 @@ test('one door per registration, no invented verbs', () => {
   assert.equal(door.meta.route, null);
 });
 
-test('the handler is named but not claimed followed', () => {
-  const door = named('…/documents (DocumentViewSet)');
+test('a registration whose class declares nothing is named but not claimed followed', () => {
+  // `StatusViewSet` is a `ReadOnlyModelViewSet` with no `permission_classes` and no
+  // guard mixin, so there is nothing to read and the door stays set aside. This is the
+  // original shape of this test, kept on the one class that still has no answer.
+  const door = named('…/status (StatusViewSet)');
   assert.equal(door.meta.handlerUnlinked, true);
   assert.equal(door.meta.open?.kind, 'unlinked');
 });
 
+test('a registration does carry the check its class declares', () => {
+  // The registration hands the door a *class*, not a handler, and the class is where DRF
+  // expects the policy to be written. Reading it is the whole point of the registration
+  // being a door at all (#241).
+  //
+  // `likely`, never `certain`: the owner chain reaches this through the framework's own
+  // inheritance rules, and a subclass that declares its own `permission_classes` replaces
+  // its parent's rather than adding to them.
+  const door = named('…/documents (DocumentViewSet)');
+  assert.deepEqual(
+    door.meta.guards.map((guard) => guard.name),
+    ['DocumentViewSet → permission_classes(IsAuthenticated)'],
+  );
+  assert.equal(door.meta.guards[0].confidence, 'likely');
+});
+
 test('set aside, never counted as unprotected', () => {
-  // The three registrations, still. A door whose handler was never followed is not a
-  // door known to be open, and this is the assertion that says so.
-  const viewsets = routes.filter((n) => n.name.startsWith('…/'));
-  assert.equal(viewsets.length, 3);
-  for (const door of viewsets) assert.equal(door.meta.handlerUnlinked, true);
-  assert.equal(atlas.meta.stats.unlinkedRoutes, 3);
+  // The rule this file was written for, and the one that must survive every change here:
+  // a door whose handler was never followed is not a door known to be open. Only
+  // `StatusViewSet` is in that position now, and it is still not counted unprotected.
+  assert.equal(atlas.meta.stats.unlinkedRoutes, 1);
+  assert.equal(named('…/status (StatusViewSet)').meta.guards.length, 0);
+  assert.notEqual(named('…/status (StatusViewSet)').meta.open?.kind, 'unprotected');
 });
 
 test('a view imported by name is followed, and an open page says so', () => {
