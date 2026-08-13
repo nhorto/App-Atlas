@@ -1692,3 +1692,159 @@ function fileHasDirective(sf: SourceFile, directive: string): boolean {
   }
   return false;
 }
+
+// ---------------------------------------------------------------------------
+// Recorded here, registered there — a helper that never calls a route method (#235)
+
+/**
+ * A class that writes its routes down in one method and hands them to a framework in
+ * another.
+ *
+ * `parse-community/parse-server` declares its entire API this way. `PromiseRouter.route`
+ * pushes `{ path, method, handler }` onto `this.routes` and calls nothing; forty lines
+ * later `mountOnto(expressApp)` walks that array and does
+ * `expressApp[method].call(expressApp, route.path, handler)`. Eighty-four
+ * `this.route('GET', '/users', …)` call sites against six direct verb calls in `src/` —
+ * so the helper *is* how that application declares its interface, and #229's rule cannot
+ * see any of it, because it asks whether the helper's own body registers a route.
+ *
+ * ## Both halves are the evidence, and the collection is what joins them
+ *
+ * Neither method means anything alone. A `push` into a field proves nothing — every
+ * application pushes objects into arrays — and a loop that calls `app[verb](x.path, …)`
+ * proves only that *something* in that array becomes a route. Together, over the same
+ * field, they say that what the first method records the second one serves. That is the
+ * same shape as `MountMethodFinding` and `RouteHelperFinding`: two facts that are inert
+ * apart, resolved where they meet.
+ *
+ * This is deliberately not the general rule the issue warns about. "A function that
+ * assigns its parameters into a structure something else later registers" would read
+ * every `{ method, path }` object literal in a repository as a door — and #246 found what
+ * that costs, in Strapi's own admin, where dozens of outbound `fetch` configs are written
+ * in exactly that shape. Requiring the replay loop, and requiring it over the same field
+ * on the same class, is what keeps the answer to things somebody actually serves.
+ *
+ * ## The address is not in the file
+ *
+ * Parse Server mounts the finished router with `app.use(options.mountPath, this.app)` —
+ * a deployment setting, defaulted in another file and overridable by anybody running it.
+ * So `/users` is a tail and not an address, and these doors carry `prefixUnread` (#245)
+ * rather than a head this repository never wrote down.
+ */
+function recordedRoutes(node: ClassDeclaration, ctx: DetectorContext): void {
+  const replayed = replayedFields(node);
+  if (replayed.size === 0) return;
+
+  for (const method of node.getMethods()) {
+    const name = method.getName();
+    if (!name) continue;
+    const parameters = method.getParameters().map((parameter) => parameter.getName());
+    if (parameters.length === 0) continue;
+
+    for (const call of method.getDescendantsOfKind(SyntaxKind.CallExpression)) {
+      const callee = call.getExpression();
+      if (!Node.isPropertyAccessExpression(callee) || callee.getName() !== 'push') continue;
+      const field = thisField(callee.getExpression());
+      if (!field || !replayed.has(field)) continue;
+
+      const recorded = call.getArguments()[0];
+      if (!recorded || !Node.isObjectLiteralExpression(recorded)) continue;
+
+      // Which parameter each of the properties the replay loop reads was built from.
+      const at = (property: string): ArgPosition | null => {
+        const value = objectProp(recorded, property);
+        if (!value || !Node.isIdentifier(value)) return null;
+        const index = parameters.indexOf(value.getText());
+        return index === -1 ? null : { from: 'start', index };
+      };
+
+      const pathArg = at('path');
+      const verbAt = at('method');
+      // Without both, the door has no address or no verb, and this tool does not print a
+      // guess for either. `handler` is genuinely optional — Parse Server derives it from
+      // a rest parameter, so it maps to no argument position at all.
+      if (!pathArg || !verbAt) continue;
+
+      ctx.emit({
+        type: 'route-helper',
+        name,
+        // There is no router argument: the routes go into a field, and the framework
+        // only meets them in the other method. `argAtPosition` answers `undefined` for
+        // an index nobody passed, which is the honest reading of "not one of these".
+        router: { from: 'start', index: -1 },
+        pathArg,
+        verb: { at: verbAt },
+        handler: at('handler'),
+        templates: ['{}'],
+        headUnread: true,
+        path: ctx.ref.relPath,
+        line: method.getStartLineNumber(),
+      });
+      return;
+    }
+  }
+}
+
+/**
+ * The fields this class replays into a framework: `this.routes.forEach(r => app[r.method](r.path, …))`.
+ *
+ * The loop has to read the element's *own* properties for its address, which is what
+ * separates registering a recorded route from any other iteration that happens to call
+ * something. A `forEach` callback and a `for…of` body are both accepted, because both
+ * spellings are ordinary and neither is more evidence than the other.
+ */
+function replayedFields(node: ClassDeclaration): Set<string> {
+  const fields = new Set<string>();
+
+  const registers = (body: Node, element: string): boolean =>
+    body.getDescendantsOfKind(SyntaxKind.CallExpression).some((call) => {
+      const callee = call.getExpression();
+      // `app[verb](…)`, `app.get(…)`, and `app[verb].call(app, …)` — the last is Parse
+      // Server's, and the receiver shuffles the arguments along by one.
+      const through = Node.isPropertyAccessExpression(callee) && callee.getName() === 'call';
+      const target = through ? (callee.getExpression() as Node) : callee;
+      if (!Node.isElementAccessExpression(target) && !Node.isPropertyAccessExpression(target)) return false;
+      if (Node.isPropertyAccessExpression(target) && !HTTP_METHODS.includes(target.getName().toUpperCase())) return false;
+      const args = through ? call.getArguments().slice(1) : call.getArguments();
+      return args.some(
+        (arg) =>
+          Node.isPropertyAccessExpression(arg) &&
+          arg.getExpression().getText() === element &&
+          arg.getName() === 'path',
+      );
+    });
+
+  for (const call of node.getDescendantsOfKind(SyntaxKind.CallExpression)) {
+    const callee = call.getExpression();
+    if (!Node.isPropertyAccessExpression(callee) || callee.getName() !== 'forEach') continue;
+    const field = thisField(callee.getExpression());
+    if (!field) continue;
+    const callback = call.getArguments()[0];
+    if (!callback || (!Node.isArrowFunction(callback) && !Node.isFunctionExpression(callback))) continue;
+    const element = callback.getParameters()[0]?.getName();
+    const body = callback.getBody();
+    if (element && body && registers(body, element)) fields.add(field);
+  }
+
+  for (const loop of node.getDescendantsOfKind(SyntaxKind.ForOfStatement)) {
+    const field = thisField(loop.getExpression());
+    const binding = loop.getInitializer().getDescendantsOfKind(SyntaxKind.Identifier)[0]?.getText();
+    if (field && binding && registers(loop.getStatement(), binding)) fields.add(field);
+  }
+
+  return fields;
+}
+
+/** `this.routes` → `routes`, and anything else → null. */
+function thisField(node: Node): string | null {
+  if (!Node.isPropertyAccessExpression(node)) return null;
+  return node.getExpression().getKind() === SyntaxKind.ThisKeyword ? node.getName() : null;
+}
+
+export const recordedRouteDetector: BoundaryDetector = {
+  id: 'recorded-routes',
+  enabled: () => true,
+  visit(node, ctx) {
+    if (Node.isClassDeclaration(node)) recordedRoutes(node, ctx);
+  },
+};

@@ -831,6 +831,16 @@ export interface RouteHelperFinding {
    * an address that appears nowhere in the calling file.
    */
   templates: string[];
+  /**
+   * The doors this helper opens have a head nobody wrote down (#235, #245).
+   *
+   * Set by the record-then-replay shape, where the collection meets a framework in
+   * another method and is mounted somewhere else again — Parse Server finishes with
+   * `app.use(options.mountPath, this.app)`, a deployment setting. `/users` is a tail
+   * there, and printing it as an address would be a wrong answer that does not look
+   * wrong.
+   */
+  headUnread?: boolean;
   path: string;
   line: number;
 }
