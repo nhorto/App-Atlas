@@ -729,7 +729,16 @@ function routerMount(call: CallExpression, ctx: DetectorContext): void {
   // merge layer, which has seen every file, decides. See `MountMethodFinding`.
   if (!COULD_MOUNT.test(method)) return;
   const hostVar = parts[parts.length - 2];
-  if (!looksLikeRouter(hostVar, ctx)) return;
+  // A router this file was *handed* is not built here and cannot be recognised by what
+  // it was constructed from, so the only other thing it can be recognised by is the
+  // name — and a name is a convention (#234). NodeBB carries 204 of its addresses on a
+  // parameter that happens to be spelled `router`; rename it and they collapse to 2.
+  //
+  // The evidence that settles it is the argument: you cannot mount a sub-router onto
+  // something that is not a router. So a parameter used as a `use` receiver is allowed
+  // through here, and the *merge* decides — the finding is dropped unless the module
+  // named in the argument really does build a router (`Builds.childOf`).
+  if (!looksLikeRouter(hostVar, ctx) && !handedOver(call.getExpression())) return;
 
   const args = call.getArguments();
   const prefix = literalString(args[0]);
@@ -861,6 +870,47 @@ function sequenceOf(call: CallExpression, sf: SourceFile): { from: number; to: n
   );
   if (fn) return { from: fn.getStartLineNumber(), to: fn.getEndLineNumber() };
   return { from: 1, to: sf.getEndLineNumber() };
+}
+
+/**
+ * Whether a `use` receiver is something this function was given rather than built (#234).
+ *
+ * ```js
+ * Write.reload = async (params) => {
+ *     const { router } = params;
+ *     router.use('/api/v3/users', require('./users')());
+ * ```
+ *
+ * `router` is destructured from a parameter. Nothing in this file says what it is, and
+ * `looksLikeRouter` only lets it through because `ROUTER_NAMES` matches the word — which
+ * is a coincidence of spelling standing under 204 of NodeBB's addresses.
+ *
+ * Two shapes: the parameter used directly, and one property pulled off it, which is how
+ * an options object is unpacked. Resolved through the identifier's symbol, so a shadowed
+ * name cannot be mistaken for the outer one.
+ *
+ * Deliberately not "any identifier this file did not build". The point is to recognise a
+ * *handover* — a value that arrived from a caller — because that is the case where the
+ * evidence genuinely lives in another file. A local built from something unrecognised is
+ * a different question and is still declined.
+ */
+function handedOver(callee: Node): boolean {
+  if (!Node.isPropertyAccessExpression(callee)) return false;
+  const receiver = callee.getExpression();
+  if (!Node.isIdentifier(receiver)) return false;
+
+  for (const declaration of receiver.getSymbol()?.getDeclarations() ?? []) {
+    if (Node.isParameterDeclaration(declaration)) return true;
+    if (!Node.isBindingElement(declaration)) continue;
+    // `const { router } = params` — the binding sits in a pattern whose declaration is
+    // initialised from something, and that something has to be a parameter too.
+    const variable = declaration.getFirstAncestorByKind(SyntaxKind.VariableDeclaration);
+    const initializer = variable?.getInitializer();
+    if (!initializer || !Node.isIdentifier(initializer)) continue;
+    const source = initializer.getSymbol()?.getDeclarations() ?? [];
+    if (source.some((node) => Node.isParameterDeclaration(node))) return true;
+  }
+  return false;
 }
 
 /**

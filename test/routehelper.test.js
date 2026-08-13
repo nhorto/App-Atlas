@@ -35,6 +35,7 @@
  * `src/routes/index.js`, which is a shape read elsewhere in this codebase.
  */
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import test from 'node:test';
@@ -81,8 +82,24 @@ test('the verb can come from the call site rather than the helper body', () => {
 test('a helper-registered route composes its mount prefix like any other', () => {
   // The fragment in `write/categories.js` is `/:cid`, and on its own it is not an address
   // — it is three different doors wearing one name. The prefix comes from
-  // `router.use('/api/v3/categories', require('./categories')())` a file away.
+  // `mountPoint.use('/api/v3/categories', require('./categories')())` a file away.
   assert.equal(byName.get('GET /api/v3/categories/:cid')?.meta.route, '/api/v3/categories/:cid');
+});
+
+test('the mount host is recognised by evidence, not by being spelled `router`', () => {
+  // #234. `write/index.js` receives its router as `params.mountPoint` — a name
+  // `ROUTER_NAMES` does not match — so the address above can only compose if the rule
+  // read the *argument*: you cannot mount a sub-router onto something that is not one.
+  //
+  // Measured on the real thing before this existed: renaming NodeBB's `router` to `rtr`
+  // took its `/api/v3` addresses from 204 to 2, with nothing else changed. Every one of
+  // those addresses was resting on a coincidence of spelling.
+  //
+  // Spelling this parameter `router` would make this test pass for the wrong reason, so
+  // if somebody renames it back, this comment is the reason not to.
+  const source = readFileSync(path.join(FIXTURE, 'src/routes/write/index.js'), 'utf8');
+  assert.match(source, /const \{ mountPoint \} = params/, 'the fixture stopped testing the rule');
+  assert.equal(byName.get('PUT /api/v3/categories/:cid')?.meta.route, '/api/v3/categories/:cid');
 });
 
 test('the router is found when it was built straight off a require', () => {
