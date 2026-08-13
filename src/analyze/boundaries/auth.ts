@@ -319,6 +319,7 @@ function routerMiddleware(call: CallExpression, dotted: string, ctx: DetectorCon
       nodeId: null,
       matchers: [prefix ? `${prefix.replace(/\/$/, '')}/:path*` : '/:path*'],
       routerVar: hostVar,
+      coversFrom: { path: ctx.ref.relPath, line: call.getStartLineNumber() },
       sourceId: ctx.fileId,
     });
   }

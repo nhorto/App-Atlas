@@ -188,6 +188,18 @@ export interface GuardFinding {
    */
   routerVar?: string | null;
   /**
+   * Where the check was registered, for the frameworks that only run it for what comes
+   * after it. Express is the whole of it: `app.use(requireAuth)` covers the routes
+   * written below that line and none of the ones above, and the two things every
+   * application puts above its gate are a health check and an unauthenticated webhook
+   * (#201).
+   *
+   * Set by the Express-family `.use` reader alone. A NestJS `APP_GUARD` covers what its
+   * module serves however the file is ordered, so it leaves this unset and is never
+   * asked the question.
+   */
+  coversFrom?: { path: string; line: number };
+  /**
    * The guard was found where the check is *defined*, not where somebody calls it
    * (#155). The reference walk must not carry it through a `file:` node, because for a
    * definition-site guard the file-level reference that survives every edit is the
