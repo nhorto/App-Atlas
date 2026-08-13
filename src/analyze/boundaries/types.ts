@@ -53,6 +53,18 @@ export interface EndpointFinding {
    * showing a fragment — `POST ""` — as its whole name.
    */
   prefixFromCaller?: boolean;
+  /**
+   * The head of this address is not written down anywhere in this repo, and the detector
+   * knows it — Strapi builds a plugin's prefix out of the directory the plugin was
+   * loaded from, Rocket.Chat out of a constructor's merged options (#245). The tail is
+   * still a fact, so the door is reported with an ellipsis where the head would be
+   * rather than dropped or, worse, printed as though it were whole.
+   *
+   * Distinct from {@link prefixFromCaller}, which means "the head exists somewhere, go
+   * and find it" and is only consulted once composition has already failed. This one
+   * skips composition outright, because there is nothing to find.
+   */
+  prefixUnread?: boolean;
   site: CodeSite;
   /** The atlas node that answers this door. */
   handlerId: string | null;

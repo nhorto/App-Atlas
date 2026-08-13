@@ -33,8 +33,15 @@ import {
   objectProp,
   permitsEverything,
 } from './ast.js';
+import { unreadHead } from './address.js';
 import { guardFromName } from './auth.js';
-import type { ArgPosition, BoundaryDetector, DetectorContext, RouteHelperFinding } from './types.js';
+import type {
+  ArgPosition,
+  BoundaryDetector,
+  DetectorContext,
+  EndpointFinding,
+  RouteHelperFinding,
+} from './types.js';
 
 /** The three ways a route helper gets written down. */
 type FunctionLike = FunctionDeclaration | FunctionExpression | ArrowFunction;
@@ -1217,24 +1224,22 @@ function nestController(cls: ClassDeclaration, ctx: DetectorContext): void {
       const sub = normalizeSegment(literalString(decorator.getArguments()[0]) ?? '');
       const path = `/${[base, sub].filter(Boolean).join('/')}`;
       const owner = cls.getName() ?? null;
-      // An unread prefix makes the whole address unknown, and two unknown addresses are
-      // not the same door. Keyed on the *file*, not the class name: a v1/v2 split puts
-      // a `UsersController` in two files, and keying on the name merged them back into
-      // one entry wearing one of their guards — #153's false green through a smaller
-      // hole (#159). A file holds one class of a given name, so file-plus-tail is the
-      // identity the class name only approximates. The tail is real and is shown; the
-      // ellipsis is where the prefix would be.
-      const route = prefixUnread ? null : path;
-      const shown = prefixUnread ? `${name} …${path}${owner ? ` (${owner})` : ''}` : `${name} ${path}`;
-      const key = prefixUnread ? `${name} ${ctx.ref.relPath}#${owner ?? ''}${path}` : `${name} ${path}`;
       const methodUseGuards = method.getDecorator('UseGuards');
-      ctx.emit({
+      // An unread prefix makes the whole address unknown, and two unknown addresses are
+      // not the same door. Discriminated by the *file* plus the class, not the class
+      // name alone: a v1/v2 split puts a `UsersController` in two files, and keying on
+      // the name merged them back into one entry wearing one of their guards — #153's
+      // false green through a smaller hole (#159). A file holds one class of a given
+      // name, so file-plus-class-plus-tail is the identity the class name only
+      // approximates. The tail is real and is shown; the ellipsis is where the prefix
+      // would be, and `unreadHead` is where that sentence is written down once (#245).
+      const door: EndpointFinding = {
         type: 'endpoint',
         endpointKind: 'http-route',
-        key,
-        name: shown,
+        key: `${name} ${path}`,
+        name: `${name} ${path}`,
         method: name,
-        route,
+        route: path,
         framework: 'NestJS',
         writes: WRITE_METHODS.has(name),
         // A guard that permits everything is not a lock and not silence either: it is
@@ -1246,7 +1251,8 @@ function nestController(cls: ClassDeclaration, ctx: DetectorContext): void {
         // The class this route was declared on, so a check written further up the chain
         // than this file goes can still be found.
         handlerOwner: owner,
-      });
+      };
+      ctx.emit(prefixUnread ? unreadHead(door, [owner], owner) : door);
     }
   }
 }
