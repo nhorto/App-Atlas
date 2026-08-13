@@ -868,9 +868,12 @@ function applyGuards(
   const byFile = new Map<string, GuardFinding[]>();
   const matchers: GuardFinding[] = [];
 
+  const mountedAt = mountGraph(builds, mounts);
+  const isTheRouter = routersMountedHere(mountedAt);
+
   for (const guard of guards) {
     if (guard.scope === 'matcher') {
-      matchers.push(guard);
+      if (!isTheRouter(guard)) matchers.push(guard);
       continue;
     }
     const file = guard.guard.path;
@@ -880,18 +883,39 @@ function applyGuards(
     else byFile.set(file, [guard]);
   }
 
-  const above = registeredAboveTheGate(builds, mounts);
+  const above = registeredAboveTheGate(mountedAt);
 
   for (const endpoint of endpoints.values()) {
+    const route = endpoint.meta.route;
+    const addressable = typeof route === 'string' && route.startsWith('/');
+    // A pattern needs an address to match against, so a door whose address could not
+    // be resolved is out of reach of `/admin/:path*` — honestly, since we cannot say
+    // it lives under /admin. A *catch-all* is the one exception (#172): it covers a
+    // door whatever its address turns out to be, which is precisely what a NestJS
+    // APP_GUARD means, and immich's 46 unresolved-prefix routes are exactly as
+    // behind its global AuthGuard as the 224 readable ones. HTTP routes only —
+    // a server action or an IPC channel is not what a route middleware serves.
+    const covers = (guard: GuardFinding): boolean =>
+      addressable
+        ? guard.matchers.some((matcher) => matcherMatches(matcher, route as string) || isCatchAllMatcher(matcher))
+        : endpoint.kind === 'http-route' && guard.matchers.some(isCatchAllMatcher);
+
     // Asked once, and answered for the whole endpoint rather than for one of the ways
     // its check reaches it. `app.use(requireAuth)` in the file that also *defines*
     // `requireAuth` arrives twice — as a matcher covering every address, and as a check
     // written in this door's own file — and suppressing only the first leaves the door
     // reported as guarded by the second, which is the same false green through a
     // different rule.
+    //
+    // Only registrations that reach this door get a say. One check is commonly applied
+    // twice — globally at the top of the file and again on a sub-path further down —
+    // and asking the second one where a door outside its prefix sits gives an answer
+    // about a registration that never covered it. Keyed by name, that answer then
+    // silenced the *global* registration as well, which turns a door's real check off
+    // by way of a line it has nothing to do with.
     const gated = new Set<string>();
     for (const guard of matchers) {
-      if (guard.coversFrom && above(endpoint, guard)) gated.add(head(guard.guard.name));
+      if (guard.coversFrom && covers(guard) && above(endpoint, guard)) gated.add(head(guard.guard.name));
     }
 
     for (const site of endpoint.meta.sites) {
@@ -923,21 +947,9 @@ function applyGuards(
       }
     }
 
-    const route = endpoint.meta.route;
-    const addressable = typeof route === 'string' && route.startsWith('/');
     for (const guard of matchers) {
       if (gated.has(head(guard.guard.name))) continue;
-      // A pattern needs an address to match against, so a door whose address could not
-      // be resolved is out of reach of `/admin/:path*` — honestly, since we cannot say
-      // it lives under /admin. A *catch-all* is the one exception (#172): it covers a
-      // door whatever its address turns out to be, which is precisely what a NestJS
-      // APP_GUARD means, and immich's 46 unresolved-prefix routes are exactly as
-      // behind its global AuthGuard as the 224 readable ones. HTTP routes only —
-      // a server action or an IPC channel is not what a route middleware serves.
-      const hit = addressable
-        ? guard.matchers.some((matcher) => matcherMatches(matcher, route as string) || isCatchAllMatcher(matcher))
-        : endpoint.kind === 'http-route' && guard.matchers.some(isCatchAllMatcher);
-      if (hit) pushGuard(endpoint, { ...guard.guard, confidence: 'likely' });
+      if (covers(guard)) pushGuard(endpoint, { ...guard.guard, confidence: 'likely' });
     }
   }
 }
@@ -968,11 +980,8 @@ function applyGuards(
  * under-claiming all of them is not.
  */
 function registeredAboveTheGate(
-  builds: RouterBuildFinding[],
-  mounts: RouterMountFinding[],
+  mountedAt: Map<string, RouterMountFinding[]>,
 ): (endpoint: MergedEndpoint, guard: GuardFinding) => boolean {
-  const mountedAt = mountGraph(builds, mounts);
-
   return (endpoint, guard) => {
     const gate = guard.coversFrom;
     const host = guard.routerVar;
@@ -994,6 +1003,43 @@ function registeredAboveTheGate(
       }
     }
     return false;
+  };
+}
+
+/**
+ * The argument was the router, so it was never the check (#225).
+ *
+ * `app.use('/auth', authRouter)` mounts a router. The auth reader sees the same call,
+ * sees a name that begins `auth` followed by a capital, and offers `authRouter` as a
+ * check — which is how directus came to report `POST /auth/logout` and both halves of
+ * its password reset as locked, by a "check" that is the router those doors live on.
+ * The prefix rule that matches it is the one Ghost needs for `authAdminApi` (#221), so
+ * the answer is not a narrower name pattern: `authRouter`, `authRoutes`, `authService`
+ * and `authProvider` are all in the corpus and no list of suffixes ends.
+ *
+ * The evidence is that the project *builds a router* in the module this argument names.
+ * A mount finding alone does not say so — every internally-imported identifier handed to
+ * `.use` gets one, middleware included — but a mount that survives `mountGraph` does,
+ * because resolution requires a `router-build` in the target. So the question asked here
+ * is the one that can be answered from facts: did this exact argument, at this exact
+ * call, turn out to be a router somebody built?
+ *
+ * Matched on file, line and the argument's written name, so the mixed call keeps its
+ * check: `app.use('/admin', requireAuth, adminRouter)` mounts one argument and guards
+ * with the other, and only the mounted name is withdrawn.
+ */
+function routersMountedHere(mountedAt: Map<string, RouterMountFinding[]>): (guard: GuardFinding) => boolean {
+  const resolved = new Set<string>();
+  for (const list of mountedAt.values()) {
+    for (const mount of list) {
+      if (mount.childName) resolved.add(`${mount.path}\0${mount.line}\0${mount.childName}`);
+    }
+  }
+  if (resolved.size === 0) return () => false;
+
+  return (guard) => {
+    const at = guard.coversFrom;
+    return at !== undefined && resolved.has(`${at.path}\0${at.line}\0${guard.guard.name}`);
   };
 }
 

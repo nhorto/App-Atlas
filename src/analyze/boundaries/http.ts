@@ -396,6 +396,7 @@ function routerMount(call: CallExpression, ctx: DetectorContext): void {
       hostVar,
       childModule: target.module,
       childVar: target.varName,
+      childName: mountedName(arg),
       hasPrefix: prefix !== null || named !== null,
       prefix,
       prefixName: named,
@@ -460,6 +461,21 @@ function mountedRouter(
   if (Node.isIdentifier(callee)) return mountTarget(callee.getText(), ctx);
 
   return null;
+}
+
+/**
+ * The name a mounted argument was written under here, in the two spellings that have
+ * one: `authRouter` and `routes()`. `require('./users')` names nothing.
+ *
+ * Deliberately the *written* name rather than the resolved one. What this answers is
+ * "which argument of this call was the router", and the other reader of the same call
+ * knows its arguments by the names in front of it.
+ */
+function mountedName(arg: Node): string | null {
+  if (Node.isIdentifier(arg)) return arg.getText();
+  if (!Node.isCallExpression(arg)) return null;
+  const callee = arg.getExpression();
+  return Node.isIdentifier(callee) ? callee.getText() : null;
 }
 
 /** `require('./x')` → `./x`, and null for anything that is not exactly that. */
