@@ -1283,6 +1283,8 @@ function reasonPhrase(kind: string, count: number): string {
       return `${plural(count, 'route', 'routes')} declared in a routing table App Atlas has not followed to a handler`;
     case 'declared-public':
       return `${plural(count, 'door', 'doors')} the code declares open on purpose`;
+    case 'identity-only':
+      return `${plural(count, 'door', 'doors')} fronted by a middleware that reads who is calling and refuses nobody`;
     case 'in-test':
       return `${plural(count, 'route', 'routes')} the test suite declares — nobody outside a test run can knock on ${count === 1 ? 'it' : 'them'}`;
     default:

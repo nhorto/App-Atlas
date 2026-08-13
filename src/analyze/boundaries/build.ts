@@ -1162,7 +1162,15 @@ function applyGuards(
 
     for (const guard of matchers) {
       if (gated.has(head(guard.guard.name))) continue;
-      if (covers(guard)) pushGuard(endpoint, { ...guard.guard, confidence: 'likely' });
+      if (!covers(guard)) continue;
+      // Named like a check, read to be none. It reached this door, so the door records
+      // what stood in front of it — and records it somewhere no count can mistake for a
+      // lock (#237).
+      if (guard.parsesOnly) {
+        if (!endpoint.meta.declaredInTest) endpoint.meta.identityOnly ??= guard.guard.name;
+        continue;
+      }
+      pushGuard(endpoint, { ...guard.guard, confidence: 'likely' });
     }
   }
 }

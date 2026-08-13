@@ -216,6 +216,19 @@ export function classifyOpenDoors(nodes: AtlasNode[], edges: AtlasEdge[]): Map<s
     // Above the page rule and below the ignorance rules, in the same order the rest of
     // this function reads: a stated decision outranks a guess about what a door is for,
     // and nothing outranks admitting we could not see.
+    // Something named like a check ran here and let everybody through (#237). The door
+    // is as open as one with nothing in front of it, which is why this sits with the
+    // reasons that stay in the count rather than the ones that leave it — the value is
+    // in naming what a reader will otherwise find and mistake for a lock, exactly as
+    // this tool did.
+    if (meta.identityOnly) {
+      verdicts.set(node.id, {
+        kind: 'identity-only',
+        because: `${meta.identityOnly} runs in front of this door and refuses nobody — it reads who is calling and hands them on`,
+      });
+      continue;
+    }
+
     if (meta.declaredPublic) {
       verdicts.set(node.id, {
         kind: 'declared-public',
@@ -278,6 +291,8 @@ export interface OpenTally {
   declaredPublic: number;
   /** Routes a test file declared, which no deployed app answers at (#247). */
   inTest: number;
+  /** Routes fronted by a middleware that reads identity and refuses nobody (#237). */
+  identityOnly: number;
 }
 
 export function tallyOpenDoors(verdicts: Iterable<OpenVerdict>): OpenTally {
@@ -290,6 +305,7 @@ export function tallyOpenDoors(verdicts: Iterable<OpenVerdict>): OpenTally {
     unlinked: 0,
     declaredPublic: 0,
     inTest: 0,
+    identityOnly: 0,
   };
   for (const verdict of verdicts) {
     if (verdict.kind === 'page') tally.page++;
@@ -299,6 +315,7 @@ export function tallyOpenDoors(verdicts: Iterable<OpenVerdict>): OpenTally {
     else if (verdict.kind === 'unlinked') tally.unlinked++;
     else if (verdict.kind === 'declared-public') tally.declaredPublic++;
     else if (verdict.kind === 'in-test') tally.inTest++;
+    else if (verdict.kind === 'identity-only') tally.identityOnly++;
     else tally.worthALook++;
   }
   return tally;

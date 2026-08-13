@@ -637,7 +637,7 @@ function helperGuards(call: CallExpression, ctx: DetectorContext): GuardInfo[] {
     const name = dottedName(Node.isCallExpression(node) ? node.getExpression() : node);
     if (!name || seen.has(name)) return;
     seen.add(name);
-    const guard = guardFromName(name, ctx);
+    const guard = guardFromName(name, ctx, Node.isCallExpression(node) ? node.getExpression() : node);
     if (guard) guards.push({ ...guard, how: 'middleware', line: call.getStartLineNumber() });
   };
 
@@ -1495,7 +1495,7 @@ function middlewareGuards(call: CallExpression, ctx: DetectorContext): GuardInfo
   for (const arg of call.getArguments().slice(1, -1)) {
     const name = dottedName(Node.isCallExpression(arg) ? arg.getExpression() : arg);
     if (!name) continue;
-    const guard = guardFromName(name, ctx);
+    const guard = guardFromName(name, ctx, Node.isCallExpression(arg) ? arg.getExpression() : arg);
     if (guard) guards.push({ ...guard, how: 'middleware', line: call.getStartLineNumber() });
   }
   return guards;

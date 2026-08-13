@@ -179,7 +179,7 @@ export function buildInsights(graph: AtlasGraph): InsightsView {
       total: routes.length,
       protectedCount: routes.filter((route) => route.protection === 'protected').length,
       likelyCount: routes.filter((route) => route.protection === 'likely').length,
-      openCount: openOfKind('worth-a-look'),
+      openCount: openOfKind('worth-a-look') + openOfKind('identity-only'),
       // Every verdict lands in a bucket, or the meter's segments stop summing to
       // `total` and the bar quietly misstates its proportions (#161). "Unchecked with
       // a reason" mirrors computeStats.publicRoutes; `unlinked` sits with `unreadable`

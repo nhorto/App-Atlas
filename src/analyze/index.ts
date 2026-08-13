@@ -902,7 +902,10 @@ export function computeStats(nodes: AtlasNode[], edges: AtlasEdge[]): AtlasStats
     aiFiles,
     endpoints,
     routes,
-    unprotectedRoutes: open.worthALook,
+    // Counted with the unexplained ones, because the exposure is identical: something
+    // ran and refused nobody. The split exists so each row can say what that was, not
+    // so the total can shrink (#237).
+    unprotectedRoutes: open.worthALook + open.identityOnly,
     likelyOnlyRoutes,
     // "Unchecked, with a reason." A door the code declares open belongs here beside the
     // marketing page and the sign-in mount — it is the most explicit reason of the three,
