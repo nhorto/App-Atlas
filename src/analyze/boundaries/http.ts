@@ -602,6 +602,68 @@ function handlerPosition(arg: Node | undefined, positions: Map<string, ArgPositi
  * literal is a filter on noise rather than the check — a helper call with no readable
  * path would be an address nobody could print anyway.
  */
+/**
+ * The checks a *caller* hands a route helper, which are not the helper's own (#229).
+ *
+ * `helperRoutes` deliberately refuses to read the middleware a helper injects into every
+ * door it opens, because NodeBB's is `authenticateRequest` and it lets anonymous callers
+ * straight through. This is the other list, and it is ordinary evidence:
+ *
+ *   const middlewares = [middleware.ensureLoggedIn, middleware.admin.checkPrivileges];
+ *   setupApiRoute(router, 'get', '/analytics', [...middlewares], controllers…);
+ *
+ * `checkPrivileges` refuses a guest outright. Written beside the door by the person
+ * declaring it, it is the same evidence as `router.get('/x', requireAuth, handler)` — and
+ * withholding it left 21 of NodeBB's `/api/v3/admin/*` doors reading as unchecked.
+ *
+ * Three shapes, because the list is usually assembled rather than written out: the name
+ * on its own, inside an array literal, and spread from a local the file built earlier.
+ * The spread is resolved through the identifier's symbol rather than by scanning the
+ * file, so a `middlewares` declared inside a factory is still found — the scope trap
+ * that hid every one of Ghost's routers in #204.
+ */
+function helperGuards(call: CallExpression, ctx: DetectorContext): GuardInfo[] {
+  const guards: GuardInfo[] = [];
+  const seen = new Set<string>();
+
+  const consider = (node: Node): void => {
+    const name = dottedName(Node.isCallExpression(node) ? node.getExpression() : node);
+    if (!name || seen.has(name)) return;
+    seen.add(name);
+    const guard = guardFromName(name, ctx);
+    if (guard) guards.push({ ...guard, how: 'middleware', line: call.getStartLineNumber() });
+  };
+
+  const expand = (node: Node, depth: number): void => {
+    if (depth > 2) return;
+    if (Node.isArrayLiteralExpression(node)) {
+      for (const element of node.getElements()) expand(element, depth + 1);
+      return;
+    }
+    if (Node.isSpreadElement(node)) {
+      const inner = node.getExpression();
+      for (const declared of arrayBehind(inner)) expand(declared, depth + 1);
+      return;
+    }
+    consider(node);
+  };
+
+  for (const arg of call.getArguments()) expand(arg, 0);
+  return guards;
+}
+
+/** The elements of `const x = [a, b]`, given the `x` in `...x`. */
+function arrayBehind(node: Node): Node[] {
+  if (!Node.isIdentifier(node)) return [];
+  const declarations = node.getSymbol()?.getDeclarations() ?? [];
+  for (const declaration of declarations) {
+    if (!Node.isVariableDeclaration(declaration)) continue;
+    const initializer = declaration.getInitializer();
+    if (initializer && Node.isArrayLiteralExpression(initializer)) return initializer.getElements();
+  }
+  return [];
+}
+
 function helperRouteCall(call: CallExpression, ctx: DetectorContext): void {
   const callee = dottedName(call.getExpression());
   if (!callee) return;
@@ -617,6 +679,7 @@ function helperRouteCall(call: CallExpression, ctx: DetectorContext): void {
     callee,
     args: literals,
     names: args.map((arg) => (Node.isIdentifier(arg) ? arg.getText() : dottedName(arg))),
+    guards: helperGuards(call, ctx),
     framework: serverFrameworks(ctx)[0] ?? 'HTTP',
     path: ctx.ref.relPath,
     line: call.getStartLineNumber(),

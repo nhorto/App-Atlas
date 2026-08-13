@@ -810,6 +810,12 @@ export interface HelperRouteCallFinding {
   args: (string | null)[];
   /** Identifier text of each argument, for finding the router and the handler. */
   names: (string | null)[];
+  /**
+   * Checks the *caller* passed in the argument list — not the ones the helper injects.
+   * See `helperGuards`: a check written beside the door by whoever declared it is
+   * ordinary evidence, and the same evidence `router.get('/x', requireAuth, h)` gives.
+   */
+  guards: GuardInfo[];
   framework: string;
   path: string;
   line: number;
