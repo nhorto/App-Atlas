@@ -46,11 +46,23 @@ export function composeRoutePrefixes(findings: BoundaryFinding[]): BoundaryFindi
   const mounts: RouterMountFinding[] = [];
   const constants: PathConstantFinding[] = [];
   const globals: GlobalPrefixFinding[] = [];
+  /** Method names this project declared as mounts, anywhere in it. */
+  const wrappers = new Set<string>();
+  const candidates: RouterMountFinding[] = [];
   for (const finding of findings) {
     if (finding.type === 'router-build') builds.push(finding);
-    else if (finding.type === 'router-mount') mounts.push(finding);
+    else if (finding.type === 'router-mount') candidates.push(finding);
     else if (finding.type === 'path-constant') constants.push(finding);
     else if (finding.type === 'global-prefix') globals.push(finding);
+    else if (finding.type === 'mount-method') wrappers.add(finding.name);
+  }
+
+  // The whole file has been read by now, which is the only place the question can be
+  // answered: `lazyUse` is a mount in Ghost because Ghost's `shared/express.js` makes it
+  // one, and it is nothing at all in a repo that never wrote that line.
+  for (const mount of candidates) {
+    const method = mount.method;
+    if (method === undefined || method === 'use' || method === 'route' || wrappers.has(method)) mounts.push(mount);
   }
   const hasPrefixes = mounts.length > 0 || globals.length > 0 || builds.some((build) => build.hasPrefix);
   const hasCallerPrefixed = findings.some((finding) => finding.type === 'endpoint' && finding.prefixFromCaller);
@@ -414,7 +426,12 @@ class Chains {
 
   private mountPrefix(mount: RouterMountFinding): Part[] {
     if (!mount.hasPrefix) return [];
-    return [this.read(mount.prefix, mount.prefixName, mount.path)];
+    const part = this.read(mount.prefix, mount.prefixName, mount.path);
+    // `app.use(x, router)` where nothing in the repo declares `x` as a path. It was
+    // middleware, not a prefix, and saying so is the difference between leaving a correct
+    // address alone and putting an unreadable segment in front of it.
+    if (mount.prefixOnlyIfNamed && part.known === null) return [];
+    return [part];
   }
 
   /**

@@ -1,14 +1,14 @@
-// The other half of Ghost's wiring, and the half that carries the prefixes App Atlas
-// still cannot read. `lazyUse` is the app's own method, assigned onto the router in
-// `shared/express.js`, and it forwards to `app.use(mountPath, …)`. Seven calls in Ghost
-// mount everything under `/ghost/api`, so every route below is served one prefix deeper
-// than App Atlas reports.
+// The other half of Ghost's wiring: a mount through the app's own `lazyUse`, with the
+// prefix written as an imported constant rather than a literal. Both have to be readable
+// or the routes under here are reported at an address two segments short of the one they
+// answer at.
 const express = require('../../../shared/express');
+const { BASE_API_PATH } = require('../../../shared/url-utils');
 
 module.exports = () => {
   const frontendApp = express('frontend');
 
-  frontendApp.lazyUse('/members', require('../members')());
+  frontendApp.lazyUse(BASE_API_PATH, require('../members')());
 
   return frontendApp;
 };

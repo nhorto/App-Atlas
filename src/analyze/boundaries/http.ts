@@ -11,7 +11,7 @@
  * honest list of every way in.
  */
 import { Node, SyntaxKind } from 'ts-morph';
-import type { CallExpression, ClassDeclaration, SourceFile } from 'ts-morph';
+import type { BinaryExpression, CallExpression, ClassDeclaration, SourceFile, VariableDeclaration } from 'ts-morph';
 import type { GuardInfo } from '../../model/types.js';
 import {
   argAt,
@@ -287,9 +287,74 @@ export const nodeRoutesDetector: BoundaryDetector = {
       globalPrefix(node, ctx);
     } else if (Node.isClassDeclaration(node)) {
       nestController(node, ctx);
+    } else if (Node.isBinaryExpression(node)) {
+      mountMethod(node, ctx);
+    } else if (Node.isVariableDeclaration(node)) {
+      pathConstant(node, ctx);
     }
   },
 };
+
+/**
+ * `app.lazyUse = function (mountPath, fn) { app.use(mountPath, …) }` — a mount method an
+ * app gave its own name (#204).
+ *
+ * The evidence is the body, never the name: the function hands its own first parameter
+ * to `use` as the path, which is the whole of what "this is a mount" means. Ghost's seven
+ * `lazyUse` calls carry every API mount in the repo, and a whitelist that simply grew to
+ * include the word would mount whatever anybody else called `lazyUse`.
+ */
+function mountMethod(node: BinaryExpression, ctx: DetectorContext): void {
+  if (node.getOperatorToken().getKind() !== SyntaxKind.EqualsToken) return;
+
+  const target = node.getLeft();
+  if (!Node.isPropertyAccessExpression(target)) return;
+  const host = target.getExpression();
+  if (!Node.isIdentifier(host) || !looksLikeRouter(host.getText(), ctx)) return;
+
+  const fn = node.getRight();
+  if (!Node.isFunctionExpression(fn) && !Node.isArrowFunction(fn)) return;
+  const first = fn.getParameters()[0]?.getNameNode();
+  if (!first || !Node.isIdentifier(first)) return;
+  const pathParam = first.getText();
+
+  // Somewhere inside, `<a router>.use(<that same parameter>, …)`. The receiver is not
+  // required to be the same variable — a wrapper that forwards to a router it closes
+  // over is the same fact — but it does have to be one.
+  const forwards = fn.getDescendantsOfKind(SyntaxKind.CallExpression).some((call) => {
+    const dotted = dottedName(call.getExpression());
+    if (!dotted?.endsWith('.use')) return false;
+    const receiver = dotted.slice(0, -'.use'.length);
+    if (receiver.includes('.') || !looksLikeRouter(receiver, ctx)) return false;
+    const arg = call.getArguments()[0];
+    return Boolean(arg && Node.isIdentifier(arg) && arg.getText() === pathParam);
+  });
+  if (!forwards) return;
+
+  ctx.emit({ type: 'mount-method', name: target.getName(), path: ctx.ref.relPath, line: node.getStartLineNumber() });
+}
+
+/**
+ * `const BASE_API_PATH = '/ghost/api'` — a name a mount elsewhere may be written with.
+ *
+ * Only values that begin with a slash, for the reason the Python side gives: a prefix is
+ * the one that starts with one, and `https://updates.example/…` is somebody else's
+ * address that would only collide with a real one. The merge layer is what turns a name
+ * back into a path, and it already refuses when two files disagree about the value.
+ */
+function pathConstant(decl: VariableDeclaration, ctx: DetectorContext): void {
+  const name = decl.getNameNode();
+  if (!Node.isIdentifier(name)) return;
+  const value = literalString(decl.getInitializer());
+  if (!value || !value.startsWith('/')) return;
+  ctx.emit({
+    type: 'path-constant',
+    name: name.getText(),
+    value,
+    path: ctx.ref.relPath,
+    line: decl.getStartLineNumber(),
+  });
+}
 
 /**
  * `app.use('/api/users', usersRouter)` and Hono's `app.route('/api', users)` — the line
@@ -305,15 +370,24 @@ function routerMount(call: CallExpression, ctx: DetectorContext): void {
   if (!dotted?.includes('.')) return;
   const parts = dotted.split('.');
   const method = parts[parts.length - 1];
-  if (method !== 'use' && method !== 'route') return;
+  // Anything but `use`/`route` is only a mount if this project declared it as one, and
+  // that is a fact from another file. So the method travels with the finding and the
+  // merge layer, which has seen every file, decides. See `MountMethodFinding`.
+  if (!COULD_MOUNT.test(method)) return;
   const hostVar = parts[parts.length - 2];
   if (!looksLikeRouter(hostVar, ctx)) return;
 
   const args = call.getArguments();
   const prefix = literalString(args[0]);
   if (prefix !== null && !prefix.startsWith('/')) return;
+
+  // `lazyUse(BASE_API_PATH, …)`. Carried as a name because JavaScript will not say
+  // whether it is a path or a middleware, and resolved only if the repo declares it as
+  // a path constant — see `prefixOnlyIfNamed`.
+  const named = prefix === null && args.length > 1 ? dottedName(args[0]) : null;
+
   // Hono's `.route(path, app)` takes exactly one; Express's `.use` takes a chain.
-  for (const arg of prefix === null ? args : args.slice(1)) {
+  for (const arg of prefix === null && named === null ? args : args.slice(1)) {
     const target = mountedRouter(arg, ctx);
     if (!target) continue;
     ctx.emit({
@@ -322,13 +396,25 @@ function routerMount(call: CallExpression, ctx: DetectorContext): void {
       hostVar,
       childModule: target.module,
       childVar: target.varName,
-      hasPrefix: prefix !== null,
+      hasPrefix: prefix !== null || named !== null,
       prefix,
-      prefixName: null,
+      prefixName: named,
+      prefixOnlyIfNamed: named !== null,
+      method,
       line: call.getStartLineNumber(),
     });
   }
 }
+
+/**
+ * Method names worth carrying to the merge layer at all.
+ *
+ * `use` and `route` are mounts everywhere. Beyond them only a name a project could
+ * plausibly have given its own wrapper is worth the finding — Ghost's is `lazyUse` —
+ * and the merge still throws it away unless that project declared it. This is a filter
+ * on noise, not the check: the check is `MountMethodFinding`.
+ */
+const COULD_MOUNT = /^(use|route|\w*[uU]se)$/;
 
 /**
  * The router an argument to `use` stands for, in the four spellings that are one.
