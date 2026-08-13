@@ -53,6 +53,22 @@ test('the handler is named but not claimed followed', () => {
 });
 
 test('set aside, never counted as unprotected', () => {
-  assert.equal(atlas.meta.stats.unprotectedRoutes, 0);
-  assert.equal(atlas.meta.stats.unlinkedRoutes, 4);
+  // The three registrations, still. A door whose handler was never followed is not a
+  // door known to be open, and this is the assertion that says so.
+  const viewsets = routes.filter((n) => n.name.startsWith('…/'));
+  assert.equal(viewsets.length, 3);
+  for (const door of viewsets) assert.equal(door.meta.handlerUnlinked, true);
+  assert.equal(atlas.meta.stats.unlinkedRoutes, 3);
+});
+
+test('a view imported by name is followed, and an open page says so', () => {
+  // `from .views import landing` binds a *symbol*, not a module, and the Django handler
+  // resolver only read the module spelling — so `/about/` used to be set aside with the
+  // viewsets, and `unlinkedRoutes` was 4. It is an ordinary function view with no check
+  // on it, and now that it is actually read, "no auth check" is the true answer rather
+  // than the absence of one.
+  const about = named('/about/');
+  assert.equal(about.meta.handlerUnlinked ?? false, false);
+  assert.deepEqual(about.meta.guards, []);
+  assert.equal(atlas.meta.stats.unprotectedRoutes, 1);
 });

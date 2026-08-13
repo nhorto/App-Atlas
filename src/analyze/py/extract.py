@@ -685,10 +685,22 @@ def url_lists(tree):
                 # `views.checks` — the one lead from a URLconf to the code that answers,
                 # and the only way a decorator two files away can ever be read.
                 "view": None,
+                # `MyView.as_view()` names a *class*, and its checks are declared on the
+                # class rather than worn as a decorator. Carried separately because the
+                # two resolve to different kinds of atlas node.
+                "viewIsClass": False,
             }
             target = element.args[1] if len(element.args) > 1 else None
             if target is not None and not isinstance(target, ast.Call):
                 entry["view"] = dotted(target)
+            # `path("statistics/", StatisticsView.as_view())` — a call, so the old reader
+            # saw no view at all and the door stayed unlinked. paperless-ngx writes 32 of
+            # these and reached an auth verdict on none of its 74 routes.
+            if isinstance(target, ast.Call):
+                called = dotted(target.func) or ""
+                if called.endswith(".as_view"):
+                    entry["view"] = called[: -len(".as_view")]
+                    entry["viewIsClass"] = True
             if isinstance(target, ast.Call) and (dotted(target.func) or "").split(".")[-1] == "include":
                 entry["isInclude"] = True
                 if target.args:
