@@ -558,12 +558,9 @@ function detectViewClassGuards(input: PythonBoundaryInput, findings: BoundaryFin
 
     // The nearest declaration wins, which is what Python does: a subclass setting
     // `permission_classes` replaces its parent's rather than adding to it.
-    const owner = family.find((relative) => (relative.fields ?? []).some((f) => f.name === 'permission_classes'));
-    const declared = (owner?.fields ?? []).find((field) => field.name === 'permission_classes');
-    if (!declared || !owner) continue;
-    for (const raw of declared.type.split(',')) {
-      const name = raw.replace(/[()[\]\s]/g, '').split('.').pop() ?? '';
-      if (!name) continue;
+    const owner = family.find((relative) => permissionNames(relative).length > 0);
+    if (!owner) continue;
+    for (const name of permissionNames(owner)) {
       // `AllowAny` is somebody writing down that this door is open, which is a fact and
       // not a lock — the same distinction #152 draws for a NestJS guard that permits
       // everything. Recorded as a non-guard so the door reads examined-and-open rather
@@ -573,16 +570,33 @@ function detectViewClassGuards(input: PythonBoundaryInput, findings: BoundaryFin
         continue;
       }
       const label = GUARD_PERMISSIONS[name];
-      findings.push({
-        type: 'handler-decorator',
-        nodeId,
-        name,
-        guard: label
-          ? { name, how: 'config', provider: label, path: input.file.path, line: owner.line, confidence: 'certain' }
-          : null,
-      });
+      const guard = label
+        ? ({ name, how: 'config', provider: label, path: input.file.path, line: owner.line, confidence: 'certain' } as GuardInfo)
+        : null;
+      findings.push({ type: 'handler-decorator', nodeId, name, guard });
+      // Also registered as a check in its own right, so the *name* resolves wherever the
+      // merge meets it. A DRF registration hands its door the class rather than the
+      // handler — `api_router.register(r"documents", DocumentViewSet)` — and the owner
+      // chain that resolves it looks names up in the checker table, not in the node ids
+      // these findings are keyed on (#241).
+      if (guard) findings.push({ type: 'auth-checker', name, guard });
     }
   }
+}
+
+/**
+ * The permission classes a view declares, as bare names.
+ *
+ * `permission_classes = (IsAuthenticated, PaperlessObjectPermissions)` arrives as the
+ * unparsed right-hand side, so the brackets and the module prefixes come off here.
+ */
+function permissionNames(def: PyDef): string[] {
+  const declared = (def.fields ?? []).find((field) => field.name === 'permission_classes');
+  if (!declared) return [];
+  return declared.type
+    .split(',')
+    .map((raw) => raw.replace(/[()[\]\s]/g, '').split('.').pop() ?? '')
+    .filter(Boolean);
 }
 
 /**
@@ -943,8 +957,25 @@ function detectAuthAliases(input: PythonBoundaryInput, findings: BoundaryFinding
   for (const def of input.file.defs ?? []) {
     if (def.kind !== 'class') continue;
     const bases = (def.bases ?? []).map((base) => base.split('.').pop() ?? base).filter(Boolean);
-    const depends = (def.depends ?? []).map((name) => name.split('.').pop() ?? name);
-    findings.push({ type: 'auth-alias', name: def.name, depends, bases, path: input.file.path, line: def.line });
+    // `permission_classes` is the same statement as a `Depends(…)` in a class body —
+    // "nobody reaches these handlers without passing this" — so it travels the same way.
+    // Routing it through the alias rather than only onto the class's node id is what
+    // lets a DRF registration find it, and it inherits **across files** for free: the
+    // merge already joins a class to its parents by name, which this reader cannot do
+    // because it sees one file at a time (#241).
+    const own = (def.depends ?? []).map((name) => name.split('.').pop() ?? name);
+    const permissions = permissionNames(def).filter((name) => !OPEN_PERMISSIONS.has(name));
+    findings.push({
+      type: 'auth-alias',
+      name: def.name,
+      depends: [...own, ...permissions],
+      // Named after the statement the reader will actually find in the file. `Depends` is
+      // FastAPI's word and would send somebody looking for the wrong line.
+      ...(own.length === 0 && permissions.length > 0 ? { binds: 'permission_classes' } : {}),
+      bases,
+      path: input.file.path,
+      line: def.line,
+    });
   }
 
   // …and the other half: which variable in this file was built out of what.
