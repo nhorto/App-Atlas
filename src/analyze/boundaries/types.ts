@@ -169,6 +169,50 @@ export interface EnvFinding {
  * middleware). Resolving scope to actual endpoints happens in `build.ts`, once every
  * endpoint in the project is known.
  */
+export interface GuardFinding {
+  type: 'guard';
+  guard: GuardInfo;
+  scope: 'node' | 'file' | 'matcher';
+  /** Set when scope is `node`. */
+  nodeId: string | null;
+  /** Set when scope is `matcher`: Next.js-style path patterns. */
+  matchers: string[];
+  /**
+   * The router variable a matcher was written on, when it was written on one.
+   *
+   * `app.use(requireAuth)` and `admin.use(requireAuth)` are the same line and mean
+   * different things: the first is the whole application, the second is one prefix. The
+   * matcher a router-scoped check produces is relative to wherever that router is
+   * mounted, and the mount is in another file — so the pattern here is a fragment until
+   * the merge layer puts the address in front of it.
+   */
+  routerVar?: string | null;
+  /**
+   * Where the check was registered, for the frameworks that only run it for what comes
+   * after it. Express is the whole of it: `app.use(requireAuth)` covers the routes
+   * written below that line and none of the ones above, and the two things every
+   * application puts above its gate are a health check and an unauthenticated webhook
+   * (#201).
+   *
+   * Set by the Express-family `.use` reader alone. A NestJS `APP_GUARD` covers what its
+   * module serves however the file is ordered, so it leaves this unset and is never
+   * asked the question.
+   */
+  coversFrom?: { path: string; line: number };
+  /**
+   * The guard was found where the check is *defined*, not where somebody calls it
+   * (#155). The reference walk must not carry it through a `file:` node, because for a
+   * definition-site guard the file-level reference that survives every edit is the
+   * import — and "this file imports a rejecting function" is exactly what remains
+   * after the wiring is deleted, which is the lost-check case the diff exists to
+   * catch. Call-site guards keep the file hop: `export const GET = withTeam(…)` wires
+   * its check in a module-scope call, and that reference disappears with the wiring.
+   */
+  definitionSite?: boolean;
+  /** The atlas node that implements the check, for the `protected-by` edge. */
+  sourceId: string;
+}
+
 /**
  * A file of this project that wraps somebody's HTTP client (item 42).
  *
@@ -225,38 +269,6 @@ export interface HandlerDecoratorFinding {
   /** The decorator's last segment: `login_required`, `authorize`. */
   name: string;
   guard: GuardInfo | null;
-}
-
-export interface GuardFinding {
-  type: 'guard';
-  guard: GuardInfo;
-  scope: 'node' | 'file' | 'matcher';
-  /** Set when scope is `node`. */
-  nodeId: string | null;
-  /** Set when scope is `matcher`: Next.js-style path patterns. */
-  matchers: string[];
-  /**
-   * The router variable a matcher was written on, when it was written on one.
-   *
-   * `app.use(requireAuth)` and `admin.use(requireAuth)` are the same line and mean
-   * different things: the first is the whole application, the second is one prefix. The
-   * matcher a router-scoped check produces is relative to wherever that router is
-   * mounted, and the mount is in another file — so the pattern here is a fragment until
-   * the merge layer puts the address in front of it.
-   */
-  routerVar?: string | null;
-  /**
-   * The guard was found where the check is *defined*, not where somebody calls it
-   * (#155). The reference walk must not carry it through a `file:` node, because for a
-   * definition-site guard the file-level reference that survives every edit is the
-   * import — and "this file imports a rejecting function" is exactly what remains
-   * after the wiring is deleted, which is the lost-check case the diff exists to
-   * catch. Call-site guards keep the file hop: `export const GET = withTeam(…)` wires
-   * its check in a module-scope call, and that reference disappears with the wiring.
-   */
-  definitionSite?: boolean;
-  /** The atlas node that implements the check, for the `protected-by` edge. */
-  sourceId: string;
 }
 
 /**
@@ -464,6 +476,18 @@ export interface RouterMountFinding {
    * that file declares exactly one router.
    */
   childVar: string | null;
+  /**
+   * The argument as *this* file wrote it — `authRouter` in `app.use('/auth', authRouter)`
+   * — where `childVar` is the name its own file gave it. Null when the mount names no
+   * identifier at all (`require('./users')`).
+   *
+   * Kept because one `.use` call is read by two detectors, and only one of them can be
+   * right about any given argument: `app.use('/auth', authRouter)` is a mount, and the
+   * auth reader sees a name beginning `auth` and offers it as a check. Telling those
+   * apart needs the argument's own name, and the merge layer is where the second half of
+   * the evidence — whether that module builds a router — arrives.
+   */
+  childName?: string | null;
   hasPrefix: boolean;
   prefix: string | null;
   prefixName: string | null;

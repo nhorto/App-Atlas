@@ -287,7 +287,13 @@ export function buildBoundaryGraph(raw: BuildInput): BoundaryGraph {
   ];
   applyWebhookPromotion(endpoints, input.findings);
   applyHandlerWrites(endpoints, input.findings);
-  applyGuards(endpoints, guards, reachableGuards(guards, input.references ?? [], input.nodeNames ?? new Map()));
+  applyGuards(
+    endpoints,
+    guards,
+    reachableGuards(guards, input.references ?? [], input.nodeNames ?? new Map()),
+    input.findings.filter((f): f is RouterBuildFinding => f.type === 'router-build'),
+    input.findings.filter((f): f is RouterMountFinding => f.type === 'router-mount'),
+  );
   applyHandlerDecorators(endpoints, decoratorGuards);
   applyDependencyGuards(
     endpoints,
@@ -889,13 +895,18 @@ function applyGuards(
   endpoints: Map<string, MergedEndpoint>,
   guards: GuardFinding[],
   reached: Map<string, ReachedGuard[]>,
+  builds: RouterBuildFinding[],
+  mounts: RouterMountFinding[],
 ): void {
   const byFile = new Map<string, GuardFinding[]>();
   const matchers: GuardFinding[] = [];
 
+  const mountedAt = mountGraph(builds, mounts);
+  const isTheRouter = routersMountedHere(mountedAt);
+
   for (const guard of guards) {
     if (guard.scope === 'matcher') {
-      matchers.push(guard);
+      if (!isTheRouter(guard)) matchers.push(guard);
       continue;
     }
     const file = guard.guard.path;
@@ -905,9 +916,44 @@ function applyGuards(
     else byFile.set(file, [guard]);
   }
 
+  const above = registeredAboveTheGate(mountedAt);
+
   for (const endpoint of endpoints.values()) {
+    const route = endpoint.meta.route;
+    const addressable = typeof route === 'string' && route.startsWith('/');
+    // A pattern needs an address to match against, so a door whose address could not
+    // be resolved is out of reach of `/admin/:path*` — honestly, since we cannot say
+    // it lives under /admin. A *catch-all* is the one exception (#172): it covers a
+    // door whatever its address turns out to be, which is precisely what a NestJS
+    // APP_GUARD means, and immich's 46 unresolved-prefix routes are exactly as
+    // behind its global AuthGuard as the 224 readable ones. HTTP routes only —
+    // a server action or an IPC channel is not what a route middleware serves.
+    const covers = (guard: GuardFinding): boolean =>
+      addressable
+        ? guard.matchers.some((matcher) => matcherMatches(matcher, route as string) || isCatchAllMatcher(matcher))
+        : endpoint.kind === 'http-route' && guard.matchers.some(isCatchAllMatcher);
+
+    // Asked once, and answered for the whole endpoint rather than for one of the ways
+    // its check reaches it. `app.use(requireAuth)` in the file that also *defines*
+    // `requireAuth` arrives twice — as a matcher covering every address, and as a check
+    // written in this door's own file — and suppressing only the first leaves the door
+    // reported as guarded by the second, which is the same false green through a
+    // different rule.
+    //
+    // Only registrations that reach this door get a say. One check is commonly applied
+    // twice — globally at the top of the file and again on a sub-path further down —
+    // and asking the second one where a door outside its prefix sits gives an answer
+    // about a registration that never covered it. Keyed by name, that answer then
+    // silenced the *global* registration as well, which turns a door's real check off
+    // by way of a line it has nothing to do with.
+    const gated = new Set<string>();
+    for (const guard of matchers) {
+      if (guard.coversFrom && covers(guard) && above(endpoint, guard)) gated.add(head(guard.guard.name));
+    }
+
     for (const site of endpoint.meta.sites) {
       for (const guard of byFile.get(site.path) ?? []) {
+        if (gated.has(head(guard.guard.name))) continue;
         const reach = guardConfidence(endpoint, guard);
         if (!reach) continue;
         // Two questions, and only one of them was being asked. `guardConfidence` answers
@@ -927,23 +973,16 @@ function applyGuards(
     }
 
     for (const handlerId of endpoint.handlerIds) {
-      for (const hop of reached.get(handlerId) ?? []) pushGuard(endpoint, guardThroughHops(hop));
+      for (const hop of reached.get(handlerId) ?? []) {
+        const through = guardThroughHops(hop);
+        if (gated.has(head(through.name))) continue;
+        pushGuard(endpoint, through);
+      }
     }
 
-    const route = endpoint.meta.route;
-    const addressable = typeof route === 'string' && route.startsWith('/');
     for (const guard of matchers) {
-      // A pattern needs an address to match against, so a door whose address could not
-      // be resolved is out of reach of `/admin/:path*` — honestly, since we cannot say
-      // it lives under /admin. A *catch-all* is the one exception (#172): it covers a
-      // door whatever its address turns out to be, which is precisely what a NestJS
-      // APP_GUARD means, and immich's 46 unresolved-prefix routes are exactly as
-      // behind its global AuthGuard as the 224 readable ones. HTTP routes only —
-      // a server action or an IPC channel is not what a route middleware serves.
-      const hit = addressable
-        ? guard.matchers.some((matcher) => matcherMatches(matcher, route as string) || isCatchAllMatcher(matcher))
-        : endpoint.kind === 'http-route' && guard.matchers.some(isCatchAllMatcher);
-      if (hit) pushGuard(endpoint, { ...guard.guard, confidence: 'likely' });
+      if (gated.has(head(guard.guard.name))) continue;
+      if (covers(guard)) pushGuard(endpoint, { ...guard.guard, confidence: 'likely' });
     }
   }
 }
@@ -1005,6 +1044,105 @@ function applyHandlerDecorators(endpoints: Map<string, MergedEndpoint>, guards: 
       for (const guard of byNode.get(handlerId) ?? []) pushGuard(endpoint, guard);
     }
   }
+}
+
+/**
+ * Express middleware runs for the routes registered *after* it and for no others.
+ * Registration order is not a detail there — it is the entire mechanism — so
+ * `app.use(requireAuth)` says nothing about the lines above it, and the two things
+ * every application puts above its gate are a health check and a webhook whose
+ * signature is its lock (#201).
+ *
+ * Two positions are readable, and both are read:
+ *
+ *   - a route written on the guarded router in the file that writes the gate, ordered
+ *     by its own line;
+ *   - a router *mounted* onto the guarded one in that file, ordered by the **mount's**
+ *     line. `app.use('/webhooks', webhooks)` above the gate puts every route in
+ *     `webhooks.js` above it, and nothing in that file mentions the check — which is
+ *     the half that matters, since the file being wrong is not the file you would look
+ *     in.
+ *
+ * Only the first hop out of the guarded file is followed, and everything else keeps its
+ * guard. That asymmetry is deliberate, and it is the correction the first attempt at
+ * this needed: an app that registers every route from another file would otherwise go
+ * to "no auth check found" on all of them, and a reader who sees every door red
+ * discounts the column entirely — spending the same trust an over-claim spends, across
+ * a whole application rather than one door. Under-claiming one door is recoverable;
+ * under-claiming all of them is not.
+ */
+function registeredAboveTheGate(
+  mountedAt: Map<string, RouterMountFinding[]>,
+): (endpoint: MergedEndpoint, guard: GuardFinding) => boolean {
+  return (endpoint, guard) => {
+    const gate = guard.coversFrom;
+    const host = guard.routerVar;
+    if (!gate || !host) return false;
+
+    // Written on the guarded router itself, in the file that writes the gate. Matched by
+    // the router variable and not just the file: one module holding a locked router and
+    // an open one beside it is ordinary, and the line numbers of the second say nothing
+    // about the first.
+    if (endpoint.routers.has(routerKey(gate.path, host))) {
+      const site = endpoint.meta.sites.find((entry) => entry.path === gate.path);
+      if (site && site.line !== null) return site.line < gate.line;
+    }
+
+    for (const key of endpoint.routers) {
+      for (const mount of mountedAt.get(byModule(key)) ?? []) {
+        if (mount.path !== gate.path || mount.hostVar !== host) continue;
+        return mount.line < gate.line;
+      }
+    }
+    return false;
+  };
+}
+
+/**
+ * The argument was the router, so it was never the check (#225).
+ *
+ * `app.use('/auth', authRouter)` mounts a router. The auth reader sees the same call,
+ * sees a name that begins `auth` followed by a capital, and offers `authRouter` as a
+ * check — which is how directus came to report `POST /auth/logout` and both halves of
+ * its password reset as locked, by a "check" that is the router those doors live on.
+ * The prefix rule that matches it is the one Ghost needs for `authAdminApi` (#221), so
+ * the answer is not a narrower name pattern: `authRouter`, `authRoutes`, `authService`
+ * and `authProvider` are all in the corpus and no list of suffixes ends.
+ *
+ * The evidence is that the project *builds a router* in the module this argument names.
+ * A mount finding alone does not say so — every internally-imported identifier handed to
+ * `.use` gets one, middleware included — but a mount that survives `mountGraph` does,
+ * because resolution requires a `router-build` in the target. So the question asked here
+ * is the one that can be answered from facts: did this exact argument, at this exact
+ * call, turn out to be a router somebody built?
+ *
+ * Matched on file, line and the argument's written name, so the mixed call keeps its
+ * check: `app.use('/admin', requireAuth, adminRouter)` mounts one argument and guards
+ * with the other, and only the mounted name is withdrawn.
+ */
+function routersMountedHere(mountedAt: Map<string, RouterMountFinding[]>): (guard: GuardFinding) => boolean {
+  const resolved = new Set<string>();
+  for (const list of mountedAt.values()) {
+    for (const mount of list) {
+      if (mount.childName) resolved.add(`${mount.path}\0${mount.line}\0${mount.childName}`);
+    }
+  }
+  if (resolved.size === 0) return () => false;
+
+  return (guard) => {
+    const at = guard.coversFrom;
+    return at !== undefined && resolved.has(`${at.path}\0${at.line}\0${guard.guard.name}`);
+  };
+}
+
+/**
+ * A guard named after the route it was reached by — `requireUserId →
+ * redirect('/login')` — is the same check as the bare `requireUserId` beside it, which
+ * is why the dedup in `pushGuard` compares heads. Anything deciding whether two guards
+ * are one check has to ask the question the same way.
+ */
+function head(name: string): string {
+  return name.split(' → ')[0];
 }
 
 /**
@@ -1309,7 +1447,6 @@ function pushGuard(endpoint: MergedEndpoint, guard: GuardInfo): void {
   // function seen directly is plainly `requireUserId`. Comparing the whole string makes
   // those two different checks and lists one lock twice, which is the same miscount the
   // paragraph above is about, wearing the evidence as a suffix.
-  const head = (name: string) => name.split(' → ')[0];
   const already = endpoint.meta.guards.find(
     (g) =>
       head(g.name) === head(guard.name) ||
