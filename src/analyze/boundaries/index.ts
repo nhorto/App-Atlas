@@ -82,6 +82,7 @@ export function detectBoundaries(input: BoundaryInput): BoundaryFinding[] {
   for (const binding of imports.values()) {
     if (binding.external) packages.add(binding.module);
   }
+  for (const specifier of unboundRequires(input.sf)) packages.add(specifier);
 
   const ctx: DetectorContext = {
     ref: input.ref,
@@ -225,6 +226,39 @@ function buildLocals(sf: SourceFile, imports: Map<string, ImportBinding>): Map<s
   for (const name of ambiguous) locals.delete(name);
 
   return locals;
+}
+
+/**
+ * Packages a file requires without ever binding the result to a name (#229).
+ *
+ * `buildImports` records bindings, so `require('express').Router()` and a bare
+ * `require('./side-effect')` leave nothing behind — and the route detectors are gated on
+ * whether a server framework is in play. In a repo with a manifest that gate is answered
+ * project-wide and none of this shows; in one without, it is answered per file, and
+ * NodeBB's `src/routes/write/index.js` is the case that matters. Its top of file names
+ * winston, meta, plugins and its own controllers, and the only mention of Express is an
+ * unbound `require('express').Router()` further down — so the detector was switched off
+ * in the file that carries all fourteen `router.use('/api/v3/…')` mounts, and 152 real
+ * addresses came out as bare fragments like `/:cid`.
+ *
+ * Same rule as #230, one level finer: a manifest says what somebody declared and an
+ * import says what this code uses, and a require is an import whether or not anyone kept
+ * hold of what it returned.
+ */
+function unboundRequires(sf: SourceFile): string[] {
+  const found: string[] = [];
+  for (const call of sf.getDescendantsOfKind(SyntaxKind.CallExpression)) {
+    const callee = call.getExpression();
+    const isRequire = Node.isIdentifier(callee) && callee.getText() === 'require';
+    if (!isRequire && callee.getKind() !== SyntaxKind.ImportKeyword) continue;
+    const specifier = call.getArguments()[0];
+    if (!specifier || !Node.isStringLiteral(specifier)) continue;
+    const value = specifier.getLiteralValue();
+    // Relative paths are this repo's own files; the gate is about third-party frameworks.
+    if (value.startsWith('.') || value.startsWith('/')) continue;
+    found.push(value);
+  }
+  return found;
 }
 
 /**
