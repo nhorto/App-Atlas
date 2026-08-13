@@ -714,7 +714,11 @@ function helperRoutes(findings: BoundaryFinding[]): EndpointFinding[] {
         // is the other case: `setupPageRoute(app, '/login', …)` is already whole, and
         // putting an ellipsis in front of it would describe a prefix that is usually
         // empty.
-        ...(routerVar && built.has(`${call.path}\0${routerVar}`) ? { prefixFromCaller: true } : {}),
+        ...(helper.headUnread
+          ? { prefixUnread: true }
+          : routerVar && built.has(`${call.path}\0${routerVar}`)
+            ? { prefixFromCaller: true }
+            : {}),
       });
     }
   }
