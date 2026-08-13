@@ -541,26 +541,97 @@ function detectViewClassGuards(input: PythonBoundaryInput, findings: BoundaryFin
   for (const def of classes.values()) {
     const nodeId = makeTypeId(input.file.path, def.name);
     const family = inheritanceChain(def, classes);
+    // Whether this class said anything at all about who may call it, which decides
+    // only whether the DRF blank below applies.
+    let speaks = false;
 
     for (const relative of family) {
       for (const base of relative.bases ?? []) {
-        const name = base.split('.').pop()?.replace(/\(.*/, '') ?? '';
+        const name = baseName(base);
         const label = GUARD_MIXINS[name];
         if (!label) continue;
-        findings.push({
-          type: 'handler-decorator',
-          nodeId,
-          name,
-          guard: { name, how: 'decorator', provider: label, path: input.file.path, line: relative.line, confidence: 'certain' },
-        });
+        const guard: GuardInfo = {
+          // Named with the class it came from when that is not this one, because the
+          // reader's next question about an inherited check is always *inherited from
+          // where*, and the chain is the answer. Written here rather than left to the
+          // reference walk to discover, which is where #147 keeps coming from: a
+          // reference edge between two classes means "mentions", and an open login page
+          // mentioning a locked view is the commonest shape in a Django app.
+          name: relative === def ? name : `${relative.name} → ${name}`,
+          how: 'decorator',
+          provider: label,
+          path: input.file.path,
+          line: relative.line,
+          confidence: 'certain',
+        };
+        findings.push({ type: 'handler-decorator', nodeId, name, guard });
+        speaks = true;
       }
+    }
+
+    // `@method_decorator(login_required, name="dispatch")` — the only way to put a
+    // plain view decorator on a class, and Django's documented one. `method_decorator`
+    // is the adapter; the lock is the name inside the parentheses. Read off the methods
+    // too, because the same decorator is as often written on `dispatch` directly.
+    for (const relative of family) {
+      const written = [...relative.decorators, ...(relative.methods ?? []).flatMap((m) => m.decorators)];
+      for (const decorator of written) {
+        const called = decorator.callee.split('.').pop() ?? '';
+        const names =
+          called === 'method_decorator'
+            ? decorator.args.flatMap((arg) => (arg && arg.t === 'name' ? [arg.v.replace(/\(.*$/, '')] : []))
+            : [called];
+        for (const each of names) {
+          const name = each.split('.').pop() ?? '';
+          const label = GUARD_DECORATORS[name];
+          if (!label) continue;
+          const guard: GuardInfo = {
+            name: relative === def ? name : `${relative.name} → ${name}`,
+            how: 'decorator',
+            provider: label,
+            path: input.file.path,
+            line: decorator.line,
+            confidence: 'certain',
+          };
+          findings.push({ type: 'handler-decorator', nodeId, name, guard });
+          speaks = true;
+        }
+      }
+    }
+
+    // The class turning callers away in its own `dispatch`, which is where a view that
+    // wants a condition no mixin covers puts it. Same rule and same reason as a function
+    // that does it: never better than `likely`, because a method answering a bad request
+    // with a 403 is doing its job rather than guarding a door (#147).
+    const gate = (def.methods ?? []).find((m) => m.name === 'dispatch' && typeof m.rejects === 'number');
+    if (gate) {
+      const guard: GuardInfo = {
+        name: def.name,
+        how: 'call',
+        provider: 'custom',
+        path: input.file.path,
+        line: gate.rejects as number,
+        confidence: 'likely',
+      };
+      findings.push({ type: 'handler-decorator', nodeId, name: def.name, guard });
+      speaks = true;
     }
 
     // The nearest declaration wins, which is what Python does: a subclass setting
     // `permission_classes` replaces its parent's rather than adding to it.
     const owner = family.find((relative) => permissionNames(relative).length > 0);
-    if (!owner) continue;
-    for (const name of permissionNames(owner)) {
+    // A DRF view that named no permission of its own has not said it is open. DRF falls
+    // back to `DEFAULT_PERMISSION_CLASSES` in settings, which this reader has not read,
+    // so "no auth check App Atlas can see" would report our blind spot as the
+    // application's. paperless-ngx's `/api/remote_version/` is the case.
+    if (!owner && !speaks && (def.bases ?? []).some((base) => DRF_VIEW_BASES.test(baseName(base)))) {
+      findings.push({
+        type: 'handler-blind',
+        nodeId,
+        why: `\`${def.name}\` declares no permission_classes — a DRF view without one answers to DEFAULT_PERMISSION_CLASSES in your settings, which App Atlas has not read`,
+      });
+    }
+    for (const name of owner ? permissionNames(owner) : []) {
       // `AllowAny` is somebody writing down that this door is open, which is a fact and
       // not a lock — the same distinction #152 draws for a NestJS guard that permits
       // everything. Recorded as a non-guard so the door reads examined-and-open rather
@@ -571,7 +642,14 @@ function detectViewClassGuards(input: PythonBoundaryInput, findings: BoundaryFin
       }
       const label = GUARD_PERMISSIONS[name];
       const guard = label
-        ? ({ name, how: 'config', provider: label, path: input.file.path, line: owner.line, confidence: 'certain' } as GuardInfo)
+        ? ({
+            name: owner === def ? name : `${(owner as PyDef).name} → ${name}`,
+            how: 'config',
+            provider: label,
+            path: input.file.path,
+            line: (owner as PyDef).line,
+            confidence: 'certain',
+          } as GuardInfo)
         : null;
       findings.push({ type: 'handler-decorator', nodeId, name, guard });
       // Also registered as a check in its own right, so the *name* resolves wherever the
@@ -581,8 +659,33 @@ function detectViewClassGuards(input: PythonBoundaryInput, findings: BoundaryFin
       // these findings are keyed on (#241).
       if (guard) findings.push({ type: 'auth-checker', name, guard });
     }
+
   }
 }
+
+/**
+ * A base class reduced to the name it is known by: `rest_framework.GenericAPIView[Any]`
+ * is `GenericAPIView`.
+ *
+ * The subscript is the part that bites. paperless-ngx types every DRF base it inherits
+ * — `GenericViewSet[Document]`, `ModelViewSet[ApplicationConfiguration]`,
+ * `GenericAPIView[Any]` — and with the brackets left on, none of them matched anything,
+ * so `RemoteVersionView` was read as a plain class with no check rather than as a DRF
+ * view whose permissions live in settings. Reported open, and it is not.
+ */
+function baseName(base: string): string {
+  return (base.split('.').pop() ?? base).replace(/[[(].*$/, '').trim();
+}
+
+/**
+ * Base classes that make a class a Django REST Framework view.
+ *
+ * Worth naming because DRF's permissions have a *project-wide* default, so silence on
+ * one of these classes is a question this reader has not answered rather than an open
+ * door — see the `handler-blind` finding above.
+ */
+const DRF_VIEW_BASES =
+  /^(APIView|GenericAPIView|(ReadOnly)?ModelViewSet|GenericViewSet|ViewSet|ViewSetMixin|(List|Create|Retrieve|Update|Destroy|ListCreate|RetrieveUpdate|RetrieveDestroy|RetrieveUpdateDestroy)APIView)$/;
 
 /**
  * The permission classes a view declares, as bare names.
@@ -621,8 +724,7 @@ function inheritanceChain(def: PyDef, classes: Map<string, PyDef>): PyDef[] {
     seen.add(current.name);
     chain.push(current);
     for (const base of current.bases ?? []) {
-      const name = base.split('.').pop()?.replace(/\(.*/, '') ?? '';
-      const parent = classes.get(name);
+      const parent = classes.get(baseName(base));
       if (parent) queue.push(parent);
     }
   }
@@ -956,7 +1058,7 @@ function detectAuthAliases(input: PythonBoundaryInput, findings: BoundaryFinding
   // (#162).
   for (const def of input.file.defs ?? []) {
     if (def.kind !== 'class') continue;
-    const bases = (def.bases ?? []).map((base) => base.split('.').pop() ?? base).filter(Boolean);
+    const bases = (def.bases ?? []).map(baseName).filter(Boolean);
     // `permission_classes` is the same statement as a `Depends(…)` in a class body —
     // "nobody reaches these handlers without passing this" — so it travels the same way.
     // Routing it through the alias rather than only onto the class's node id is what

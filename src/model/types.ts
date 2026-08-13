@@ -385,8 +385,8 @@ export interface EndpointMeta {
   generatedEntry?: boolean;
   /**
    * The route was declared in a routing table, away from the code that answers it, and
-   * that code was not located — a Django `path('x/', SomeView.as_view())` names a class
-   * this reader cannot yet follow.
+   * what that code says about who may come in was not read — usually because the
+   * handler could not be located at all.
    *
    * The door stays on the map, because the URL is served and that is a fact. What it
    * must not do is join the auth count: every check such a handler carries is written
@@ -396,6 +396,15 @@ export interface EndpointMeta {
    * whose views are behind a permission mixin (#139).
    */
   handlerUnlinked?: boolean;
+  /**
+   * Why, when the ordinary "not followed to its handler" is not what happened.
+   *
+   * A DRF ViewSet with no `permission_classes` was followed, opened and read — and the
+   * answer to who may call it is in `DEFAULT_PERMISSION_CLASSES` in a settings file
+   * instead. Same silence, different reason, and telling a reader we never found the
+   * handler would send them to look for a link that is already there.
+   */
+  handlerUnlinkedWhy?: string;
   /**
    * The code declares this door open on purpose — NestJS's `@UseGuards(PublicEndpointGuard)`,
    * where the guard's `canActivate` is `return true` and the class docstring says it

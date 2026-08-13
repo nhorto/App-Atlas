@@ -396,6 +396,7 @@ export function knownServiceNames(): string[] {
   const names = new Set<string>();
   for (const def of Object.values(PACKAGE_SERVICES)) names.add(def.name);
   for (const def of Object.values(PYTHON_SERVICES)) names.add(def.name);
+  for (const [, def] of PYTHON_MODULE_SERVICES) names.add(def.name);
   for (const { def } of HOST_SERVICES) names.add(def.name);
   return [...names].sort();
 }
@@ -412,9 +413,44 @@ export function storeForPackage(pkg: string): StoreDef | null {
   return STORE_CLIENTS[pkg] ?? null;
 }
 
+/**
+ * Import paths whose *first* segment names a library and whose later segments name the
+ * company (#178).
+ *
+ * `from httpx_oauth.clients.google import GoogleOAuth2` says Google as plainly as
+ * `import openai` says OpenAI, and paperless-ngx reaches Gmail and Outlook through
+ * exactly these two lines — the only place in 748 files where either company is named,
+ * because the mail server itself comes from the user's own account settings and has no
+ * literal to read. Reduced to a top-level name they are both `httpx_oauth`, which is a
+ * library nobody sends data to.
+ *
+ * Longest match wins, so a more specific path beats a more general one.
+ */
+const PYTHON_MODULE_SERVICES: [string, ServiceDef][] = [
+  ['httpx_oauth.clients.google', { name: 'Google', category: 'auth' }],
+  ['httpx_oauth.clients.microsoft', { name: 'Microsoft', category: 'auth' }],
+  ['httpx_oauth.clients.github', { name: 'GitHub', category: 'auth' }],
+  ['httpx_oauth.clients.discord', { name: 'Discord', category: 'auth' }],
+  ['httpx_oauth.clients.okta', { name: 'Okta', category: 'auth' }],
+  ['httpx_oauth.clients.linkedin', { name: 'LinkedIn', category: 'auth' }],
+  ['google.cloud.storage', { name: 'Google Cloud Storage', category: 'storage' }],
+  ['google.cloud.bigquery', { name: 'BigQuery', category: 'other' }],
+  ['google.oauth2', { name: 'Google', category: 'auth' }],
+  ['azure.storage', { name: 'Azure Storage', category: 'storage' }],
+  ['msal', { name: 'Microsoft', category: 'auth' }],
+];
+
 /** The top-level import name, so `sqlalchemy.orm` is still SQLAlchemy. */
 export function serviceForPythonModule(module: string): ServiceDef | null {
-  return PYTHON_SERVICES[module.split('.')[0]] ?? null;
+  let best: ServiceDef | null = null;
+  let longest = 0;
+  for (const [prefix, def] of PYTHON_MODULE_SERVICES) {
+    if (module !== prefix && !module.startsWith(`${prefix}.`)) continue;
+    if (prefix.length <= longest) continue;
+    longest = prefix.length;
+    best = def;
+  }
+  return best ?? PYTHON_SERVICES[module.split('.')[0]] ?? null;
 }
 
 export function storeForPythonModule(module: string): StoreDef | null {

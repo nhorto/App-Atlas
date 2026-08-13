@@ -204,7 +204,9 @@ export function classifyOpenDoors(nodes: AtlasNode[], edges: AtlasEdge[]): Map<s
     if (meta.handlerUnlinked) {
       verdicts.set(node.id, {
         kind: 'unlinked',
-        because: 'declared in a routing table — App Atlas has not followed it to the code that answers it',
+        because:
+          meta.handlerUnlinkedWhy ??
+          'declared in a routing table — App Atlas has not followed it to the code that answers it',
       });
       continue;
     }
