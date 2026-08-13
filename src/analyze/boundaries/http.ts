@@ -1117,6 +1117,8 @@ function routeCall(call: CallExpression, ctx: DetectorContext): void {
     guards: middlewareGuards(call, ctx),
     site: ctx.site(call, `${dotted}('${route}', …)`),
     handlerId: guessHandlerId(call, ctx),
+    // `guessHandlerId` can only ever answer with the enclosing scope here — see #255.
+    handlerIsScope: true,
     // Which router this hangs off, so whatever prefix that router was mounted under
     // becomes part of the address before anything is merged.
     routerVar: holder,
@@ -1158,6 +1160,7 @@ function fastifyRouteObject(call: CallExpression, ctx: DetectorContext): void {
         : [],
       site: ctx.site(call, `route({ method: '${method}', url: '${route}' })`),
       handlerId: ctx.enclosing(call),
+      handlerIsScope: true,
     });
   }
 }
