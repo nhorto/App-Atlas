@@ -24,6 +24,7 @@ export const OPEN_LABELS: Record<OpenKind, string> = {
   generated: 'a build wrote it',
   unlinked: 'not followed',
   'declared-public': 'open on purpose',
+  'in-test': 'declared in a test',
 };
 
 /**
@@ -31,11 +32,16 @@ export const OPEN_LABELS: Record<OpenKind, string> = {
  * ignorance owned honestly, `public` is unchecked with a reason. `unlinked` sits with
  * `unreadable` because "we have not followed it" is a fact about this reader, not
  * about the door.
+ *
+ * `in-test` sits with them for the mirror of that reason: it is a fact about which
+ * program declared the door, and calling it `public` would say the deployed app answers
+ * at an address the deployed app has never heard of (#247).
  */
 export const OPEN_TONES: Record<OpenKind, 'open' | 'unknown' | 'public'> = {
   'worth-a-look': 'open',
   unreadable: 'unknown',
   unlinked: 'unknown',
+  'in-test': 'unknown',
   page: 'public',
   'auth-mount': 'public',
   generated: 'public',

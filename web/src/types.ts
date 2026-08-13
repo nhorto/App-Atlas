@@ -829,7 +829,8 @@ export type OpenKind =
   | 'unreadable'
   | 'generated'
   | 'unlinked'
-  | 'declared-public';
+  | 'declared-public'
+  | 'in-test';
 
 export interface OpenVerdict {
   kind: OpenKind;

@@ -183,10 +183,12 @@ export function buildInsights(graph: AtlasGraph): InsightsView {
       // Every verdict lands in a bucket, or the meter's segments stop summing to
       // `total` and the bar quietly misstates its proportions (#161). "Unchecked with
       // a reason" mirrors computeStats.publicRoutes; `unlinked` sits with `unreadable`
-      // because "not followed" is our ignorance, not the door's openness.
+      // because "not followed" is our ignorance, not the door's openness, and `in-test`
+      // sits there too because "the suite declared it" is a fact about which program we
+      // are looking at rather than about whether anything guards it (#247).
       publicCount:
         openOfKind('page') + openOfKind('auth-mount') + openOfKind('generated') + openOfKind('declared-public'),
-      unreadableCount: openOfKind('unreadable') + openOfKind('unlinked'),
+      unreadableCount: openOfKind('unreadable') + openOfKind('unlinked') + openOfKind('in-test'),
       unread: unreadableFiles(nodes),
       routes,
     },

@@ -128,6 +128,24 @@ export function classifyOpenDoors(nodes: AtlasNode[], edges: AtlasEdge[]): Map<s
     const meta = node.meta as unknown as EndpointMeta;
     const files = filesBehind(node, meta);
 
+    // Which program this is, first — above even the ignorance rule, and the one place
+    // that ordering is right to invert. "A check may live in the file we could not read"
+    // is a statement about how much of *the application* we saw, and this door is not
+    // the application: it is a route a test stood up for the length of a run. Nothing
+    // reassuring is being said about the app by saying so, which is the whole of what
+    // the rule below exists to protect (#247).
+    //
+    // It also has to come first for the arithmetic to hold. `testRoutes` leaves the
+    // denominator whatever verdict a door gets, so a test route classified as
+    // `unreadable` would be subtracted once and reported once more.
+    if (meta.declaredInTest) {
+      verdicts.set(node.id, {
+        kind: 'in-test',
+        because: 'declared by the test suite — nobody outside a test run can knock on this',
+      });
+      continue;
+    }
+
     // Ignorance first. An unreadable file is the one explanation that must never be
     // masked by a reassuring one, because it is the only one that admits we may be
     // wrong about the rest.
@@ -222,6 +240,30 @@ export function classifyOpenDoors(nodes: AtlasNode[], edges: AtlasEdge[]): Map<s
   return verdicts;
 }
 
+/**
+ * Why no route got an auth verdict, when none did.
+ *
+ * Kept apart from the sentence that reports it so the two reasons cannot be blurred into
+ * a single reassuring-sounding one. "Not followed to a handler" is App Atlas describing
+ * its own reach (#139); "declared by the test suite" is App Atlas describing the
+ * repository (#247), and a repo whose every door is scaffolding is being told something
+ * true and useful rather than being apologised to.
+ */
+function nothingJudged(routes: number, unlinked: number, inTest: number): string {
+  const subject = routes === 1 ? 'the one route is' : `all ${routes} routes are`;
+  const unfollowed =
+    'declared in a routing table App Atlas has not followed to its handler — ' +
+    'no auth verdict was reached for any of them';
+  if (inTest === 0) return `${subject} ${unfollowed}`;
+  if (unlinked === 0) {
+    return `${subject} declared by the test suite — nothing here answers a URL in a deployed app`;
+  }
+  return (
+    `no route was judged: ${inTest} ${inTest === 1 ? 'is' : 'are'} declared by the test suite, and ` +
+    `${unlinked} ${unlinked === 1 ? 'is' : 'are'} in a routing table App Atlas has not followed to a handler`
+  );
+}
+
 /** Counts by reason, for headlines that have to be honest in one sentence. */
 export interface OpenTally {
   worthALook: number;
@@ -234,6 +276,8 @@ export interface OpenTally {
   unlinked: number;
   /** Routes the code declares open on purpose — Nest's answer to `[AllowAnonymous]` (#152). */
   declaredPublic: number;
+  /** Routes a test file declared, which no deployed app answers at (#247). */
+  inTest: number;
 }
 
 export function tallyOpenDoors(verdicts: Iterable<OpenVerdict>): OpenTally {
@@ -245,6 +289,7 @@ export function tallyOpenDoors(verdicts: Iterable<OpenVerdict>): OpenTally {
     generated: 0,
     unlinked: 0,
     declaredPublic: 0,
+    inTest: 0,
   };
   for (const verdict of verdicts) {
     if (verdict.kind === 'page') tally.page++;
@@ -253,6 +298,7 @@ export function tallyOpenDoors(verdicts: Iterable<OpenVerdict>): OpenTally {
     else if (verdict.kind === 'generated') tally.generated++;
     else if (verdict.kind === 'unlinked') tally.unlinked++;
     else if (verdict.kind === 'declared-public') tally.declaredPublic++;
+    else if (verdict.kind === 'in-test') tally.inTest++;
     else tally.worthALook++;
   }
   return tally;
@@ -341,18 +387,27 @@ export function authHeadline(stats: AtlasStats): AuthHeadline | null {
   // read "84 of 84 have no auth check" before the set-aside and "every one of the 84 has
   // an auth check" after it. Both were the tool describing its own reach as the app's.
   const unlinked = stats.unlinkedRoutes ?? 0;
-  const assessed = Math.max(0, routes - unlinked);
+  // And a route the suite declared was never the application's to begin with, so it
+  // cannot sit in that denominator either (#247). Sails reads "29 of 30 routes have no
+  // auth check" and every one of the 29 is `GET /res_sending_back_a_boolean/1`, stood up
+  // inside a `.test.js` file — a true sentence about a program nobody deploys, and the
+  // whole of what its only security screen showed. The set-aside is the one #132 already
+  // made for a file we could not read; the doors were simply left out of it.
+  const inTest = stats.testRoutes ?? 0;
+  const assessed = Math.max(0, routes - unlinked - inTest);
 
   let headline: string;
   let mentionedPublic = false;
   if (assessed === 0) {
     // Nothing was judged at all. The number of doors is still a real finding, and it is
-    // the only one this sentence is entitled to make.
+    // the only one this sentence is entitled to make — but *why* nothing was judged now
+    // has two answers, and they are not interchangeable. One is a failure of this
+    // reader's reach; the other is a fact about the repository. Sails is entirely the
+    // second, and telling its owner we could not follow their routes would be the tool
+    // confessing to a failure it did not have.
     return {
       tone: 'warn',
-      headline:
-        `${routes === 1 ? 'the one route is' : `all ${routes} routes are`} declared in a routing table App Atlas ` +
-        'has not followed to its handler — no auth verdict was reached for any of them',
+      headline: nothingJudged(routes, unlinked, inTest),
       caveats: [],
       hedged: false,
     };
@@ -408,6 +463,15 @@ export function authHeadline(stats: AtlasStats): AuthHeadline | null {
       `${unlinked} more ${unlinked === 1 ? 'is' : 'are'} declared in a routing table App Atlas has not followed to ` +
         `${unlinked === 1 ? 'its handler' : 'their handlers'}; ${unlinked === 1 ? 'it is' : 'they are'} ` +
         'in no number above, protected or not',
+    );
+  }
+  // Said out loud, not quietly deducted. A set-aside a reader cannot see is a number
+  // they have no way to disagree with, and this one rests on a file path — the weakest
+  // evidence in the tool, and the one most worth showing your working for (#247).
+  if (inTest > 0) {
+    caveats.push(
+      `${inTest} more ${inTest === 1 ? 'is' : 'are'} declared by the test suite rather than by the app; ` +
+        `${inTest === 1 ? 'it is' : 'they are'} in no number above`,
     );
   }
   if (unread > 0) {
