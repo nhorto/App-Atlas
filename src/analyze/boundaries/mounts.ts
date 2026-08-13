@@ -17,6 +17,7 @@
  *    with the constant out of reach yields `…/items/{id}` — which tells the reader there
  *    is more in front, rather than handing them a shorter address that looks complete.
  */
+import { unreadFromSite } from './address.js';
 import type {
   BoundaryFinding,
   EndpointFinding,
@@ -73,8 +74,13 @@ export function composeRoutePrefixes(findings: BoundaryFinding[]): BoundaryFindi
     if (method === undefined || method === 'use' || method === 'route' || wrappers.has(method)) mounts.push(mount);
   }
   const hasPrefixes = mounts.length > 0 || globals.length > 0 || builds.some((build) => build.hasPrefix);
-  const hasCallerPrefixed = findings.some((finding) => finding.type === 'endpoint' && finding.prefixFromCaller);
-  if (!hasPrefixes && !hasCallerPrefixed) return findings;
+  // A repo can declare doors whose head is unread and mount nothing at all — a Strapi
+  // plugin is a directory of route data and no `use` call anywhere — so the ellipsis
+  // pass has to run even when there is no prefix in the repo to compose.
+  const hasUnplaced = findings.some(
+    (finding) => finding.type === 'endpoint' && (finding.prefixFromCaller || finding.prefixUnread),
+  );
+  if (!hasPrefixes && !hasUnplaced) return findings;
 
   const chains = new Chains(builds, mounts, constants);
   const everywhere = globalPrefixes(globals);
@@ -88,6 +94,14 @@ export function composeRoutePrefixes(findings: BoundaryFinding[]): BoundaryFindi
       return { ...finding, matcher: global.known === null ? '' : render([global], finding.matcher) };
     }
     if (finding.type !== 'endpoint' || finding.route === null) return finding;
+    // The detector already knows the head is not written anywhere in this repo — a
+    // Strapi plugin's prefix is its *directory name*, read off a registry at boot. No
+    // mount can supply what was never written, so composition is not attempted rather
+    // than attempted and failed: trying would let an unrelated mount in the same package
+    // put a prefix in front of it, which is how a door gets an address nobody serves it
+    // at. `prefixFromCaller` is the opposite case and still goes the long way round —
+    // there the head does exist somewhere and is worth looking for.
+    if (finding.prefixUnread) return unreadFromSite(finding);
     const global = finding.framework ? everywhere.get(finding.framework) : undefined;
     const places = finding.routerVar
       ? chains.addressesFor(routerKey(moduleOf(finding.site.path), finding.routerVar))
@@ -107,37 +121,10 @@ export function composeRoutePrefixes(findings: BoundaryFinding[]): BoundaryFindi
       // signs users up, guards pooled across the pair. #153's rule, in Go: an address
       // that could not be read is not an address, and two of them are never one door.
       if (!finding.prefixFromCaller) return finding;
-      return unresolvedAddress(finding);
+      return unreadFromSite(finding);
     }
     return applyPrefix(finding, global ? [global, ...own] : own);
   });
-}
-
-/**
- * #153's pattern for a door whose prefix lives with a caller nothing connected: keyed
- * on its file and router so strangers never merge, shown with the ellipsis where the
- * prefix would be, and `route: null` so nothing downstream matches a prefix or a
- * webhook shape against a fragment. The handler's name rides along in the label
- * because `POST …` on its own sends the reader searching; the ellipsis is honest and
- * the parenthesis is the way back to the code.
- */
-function unresolvedAddress(finding: EndpointFinding): EndpointFinding {
-  const method = finding.method ?? 'ANY';
-  const tail = finding.route ?? '';
-  const handler =
-    finding.handlerId?.startsWith('func:') === true
-      ? finding.handlerId.slice(finding.handlerId.lastIndexOf('#') + 1)
-      : null;
-  return {
-    ...finding,
-    // The handler is part of the key: realworld registers ArticleList on both its
-    // public and its authed group, and those are two addresses even when one function
-    // answers both — merging them would pool whatever guard either mount carries.
-    // A closure has no handler id, so the line stands in for it.
-    key: `${method} ${finding.site.path}#${finding.routerVar ?? ''}#${finding.handlerId ?? `L${finding.site.line}`}${tail}`,
-    name: `${method} …${tail}${handler ? ` (${handler})` : ''}`,
-    route: null,
-  };
 }
 
 /**
