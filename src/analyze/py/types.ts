@@ -190,6 +190,8 @@ export interface PyUrlEntry {
   isInclude: boolean;
   /** The view as written: `views.checks`. Null when the entry names no handler. */
   view: string | null;
+  /** `views.WidgetList.as_view()` — the view named above is a class, not a function. */
+  viewIsClass: boolean;
 }
 
 /** A module-level list Django assembles URLs from: `urlpatterns`, and its helper lists. */

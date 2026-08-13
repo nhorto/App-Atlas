@@ -808,3 +808,55 @@ doing its job — it refuses an auth verdict rather than reporting 141 open door
       direction to be wrong in. So a check travels up a call only from a function *no
       routing table names*: `checks()` answering `/api/v1/checks/` by returning
       `get_checks(request)` is covered, and one view mentioning another is not.
+
+## Phase 6 — the same questions, asked of a second Django repo
+
+Items 40–44 were all found on one repo. [paperless-ngx](https://github.com/paperless-ngx/paperless-ngx)
+(748 files, Django + DRF + Celery, `2a8579f`) was driven to check them against a codebase
+that writes Django differently — and it writes almost every one of these shapes
+differently.
+
+- [x] **45. A class-based view is a door with no handler and no verdict** — *Tier 2.*
+      Item 44 followed `path("checks/", views.checks)` to the function and read the
+      decorator on it. `path("widgets/", views.WidgetList.as_view())` it could not follow
+      anywhere: `as_view()` is a call, so the URLconf reader saw no view name at all.
+      Every class-based door in every Django repo came back `unlinked` with an empty
+      guard list, with `LoginRequiredMixin` on the line under the class statement.
+      paperless routes 37 of its doors this way and registers 20 DRF ViewSets besides.
+      **Done. On paperless, 43 of 47 readable doors now carry the verdict its source
+      says they should, and the four reported open are open.** `as_view()` resolves to
+      the *class*, so the door links to a type node rather than to a function id that
+      exists nowhere. Five spellings of a lock are read, because Django gives a class
+      five: a mixin in the bases, `permission_classes`, `@method_decorator(login_required,
+      name="dispatch")`, a decorator on `dispatch`, and a `dispatch` that returns 403
+      itself. A bare `from documents.views import DocumentViewSet` resolves too, which is
+      the only spelling `router.register` accepts — so the 20 registrations are opened
+      and read rather than named and set aside.
+      **Silence on a DRF class is not an open door.** DRF falls back to
+      `DEFAULT_PERMISSION_CLASSES` in settings, which this reader has not read, so a
+      ViewSet declaring no permission keeps the blank and says which file holds the
+      answer instead of the stock "not followed to its handler" — it *was* followed.
+      `IsAuthenticatedOrReadOnly` gets the same treatment for a different reason: it locks
+      the writes and opens the reads, and DRF's router declares no method to say which of
+      those this door is. Calling it guarded claims a lock the GET has not got.
+      **And #147 for the third time.** A check on a class travels by inheritance and by
+      nothing else. Seeded into the reference walk — where an edge means "mentions" —
+      `SecureView` reached the billing view that inherits it, then the login page that
+      merely names the billing view, and the product's front door was reported locked. So
+      class-level checks are excluded from that walk, and inheritance is followed through
+      the bases instead, which is also what makes paperless's six document operations
+      report the `IsAuthenticated` they inherit from one mixin rather than a serializer
+      validator three hops away.
+
+- [x] **46. `include()` around a list literal drops every prefix** — *Tier 1.*
+      Item 40 composed Django's `include()` for a module string and for a named local
+      list. paperless writes neither: its whole URL tree is nested list literals inside
+      the `include()` calls themselves, six levels deep, not one assigned to a name. With
+      no list to mount, every leaf fell through to the flat scan and lost its prefix —
+      **46 of 53 addresses were wrong**, and `/api/documents/bulk_edit/` was printed as
+      `/bulk_edit/`. Two smaller cuts of the same wound: `re_path(r"^api/", include(...))`
+      carried its `^` into the middle of every address underneath, and Django's
+      `include((patterns, "app_name"))` two-tuple looked like a list with no routes in it,
+      which is where `/api/auth/login/` went.
+      **Done. 53 of 53 addresses correct, none invented** — plus `/ws/status/`, a
+      Channels consumer the hand-written ground-truth resolver had missed.

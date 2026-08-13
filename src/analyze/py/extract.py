@@ -685,18 +685,56 @@ def url_lists(tree):
                 # `views.checks` — the one lead from a URLconf to the code that answers,
                 # and the only way a decorator two files away can ever be read.
                 "view": None,
+                # `views.WidgetList.as_view()` names a class, and the difference matters
+                # all the way down: the node to link is a type rather than a function,
+                # and the lock is written on the class — a mixin in its bases, a
+                # `permission_classes`, a `@method_decorator` — never on a `def`.
+                "viewIsClass": False,
             }
             target = element.args[1] if len(element.args) > 1 else None
             if target is not None and not isinstance(target, ast.Call):
                 entry["view"] = dotted(target)
-            if isinstance(target, ast.Call) and (dotted(target.func) or "").split(".")[-1] == "include":
+            called = (dotted(target.func) or "") if isinstance(target, ast.Call) else ""
+            if called.split(".")[-1] == "include":
                 entry["isInclude"] = True
                 if target.args:
                     inner = target.args[0]
+                    # `include((patterns, "app_name"))` — Django's two-tuple form, which
+                    # names the app the URLs belong to. The routes are the first half;
+                    # the second is a label. Unwrapped here so everything below sees the
+                    # ordinary shape, rather than a tuple with no `path()` in it.
+                    if (
+                        isinstance(inner, ast.Tuple)
+                        and len(inner.elts) == 2
+                        and isinstance(inner.elts[0], (ast.List, ast.Tuple, ast.Name))
+                        and isinstance(inner.elts[1], ast.Constant)
+                    ):
+                        inner = inner.elts[0]
                     if isinstance(inner, ast.Constant) and isinstance(inner.value, str):
                         entry["includeModule"] = inner.value
                     elif isinstance(inner, ast.Name):
                         entry["includeList"] = inner.id
+                    elif isinstance(inner, (ast.List, ast.Tuple)):
+                        # `include([...])` written inline, which is how paperless-ngx
+                        # writes its whole URL tree — six levels of nested list literal,
+                        # not one of them assigned to a name. Read as a flat pile of
+                        # `path()` calls it says the bulk-edit endpoint is at
+                        # `/bulk_edit/`; it is at `/api/documents/bulk_edit/`, and
+                        # forty-six of its fifty-three addresses came out wrong the same
+                        # way. A list nobody named still needs one to be mounted under,
+                        # so it gets the only unique thing it has: where it was written.
+                        anonymous = f"<inline:{getattr(inner, 'lineno', 0)}>"
+                        entry["includeList"] = anonymous
+                        take(anonymous, getattr(inner, "lineno", 0), inner)
+            elif called.split(".")[-1] == "as_view":
+                # Django's own spelling for "this class answers here". `as_view` is the
+                # only method name that means it, and the class is everything to its
+                # left — which may be `WidgetList`, `views.WidgetList`, or a dotted path
+                # through several packages.
+                owner = called[: -len(".as_view")] if "." in called else ""
+                if owner:
+                    entry["view"] = owner
+                    entry["viewIsClass"] = True
             found.append(entry)
         return found
 

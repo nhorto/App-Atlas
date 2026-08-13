@@ -56,6 +56,7 @@ import type {
   BoundaryFinding,
   EndpointFinding,
   GuardFinding,
+  HandlerBlindFinding,
   HandlerDecoratorFinding,
   RouterBuildFinding,
   PathGuardFinding,
@@ -279,11 +280,21 @@ export function buildBoundaryGraph(raw: BuildInput): BoundaryGraph {
   // answers `/api/v1/checks/` by returning `get_checks(request)` or
   // `create_check(request)`, both decorated, neither an address of its own — so the
   // check reaches the door, and the trail on screen names the helper it came through.
+  //
+  // And never a class. A check on a class travels by *inheritance* and by nothing else,
+  // which `checkInherited` follows through the bases; a reference edge between two
+  // classes is "mentions", and mentioning a locked view is exactly what an open login
+  // page does. Left in, `class SecureView(LoginRequiredMixin)` walked to the billing
+  // view that inherits it, then on to the login page that names the billing view, and
+  // reported the front door locked — #147 for the third time, so the rule is written
+  // here rather than discovered again.
   const routed = new Set<string>();
   for (const endpoint of endpoints.values()) for (const id of endpoint.handlerIds) routed.add(id);
   const guards = [
     ...input.findings.filter((f): f is GuardFinding => f.type === 'guard'),
-    ...decoratorGuards.filter((guard) => guard.nodeId !== null && !routed.has(guard.nodeId)),
+    ...decoratorGuards.filter(
+      (guard) => guard.nodeId !== null && !routed.has(guard.nodeId) && !guard.nodeId.startsWith('type:'),
+    ),
   ];
   applyWebhookPromotion(endpoints, input.findings);
   applyHandlerWrites(endpoints, input.findings);
@@ -303,6 +314,12 @@ export function buildBoundaryGraph(raw: BuildInput): BoundaryGraph {
     input.findings.filter((f): f is RouterMountFinding => f.type === 'router-mount'),
     input.findings.filter((f): f is RouterGuardFinding => f.type === 'router-guard'),
     input.findings.filter((f): f is PathGuardFinding => f.type === 'path-guard'),
+  );
+  // Last, and after every source of a check has had its say: a door left with nothing
+  // whose handler told us its lock is written elsewhere goes back to saying so.
+  applyHandlerBlindness(
+    endpoints,
+    input.findings.filter((f): f is HandlerBlindFinding => f.type === 'handler-blind'),
   );
 
   nameCommandLineDoors(endpoints, input);
@@ -1030,6 +1047,33 @@ function handlerDecoratorGuards(
  * decorator in `views.py`. The reference walk covers the case where the check is a call
  * or two below the handler; this covers the case where it is on the handler itself.
  */
+/**
+ * The door whose handler was found and whose lock still is not here.
+ *
+ * Following `urls.py` to a DRF `ModelViewSet` is progress right up to the moment the
+ * class turns out to say nothing about permissions — because DRF's answer to that is
+ * `DEFAULT_PERMISSION_CLASSES` in settings, and a reader who has not read settings
+ * knows nothing. So the door keeps the honest blank it had before anyone followed the
+ * link, and the reason names the file to open.
+ *
+ * Only when the merge ended with no check at all. A ViewSet mounted behind a guarded
+ * router has a lock this reader *did* see, and re-blinding it would throw away a fact.
+ */
+function applyHandlerBlindness(endpoints: Map<string, MergedEndpoint>, blind: HandlerBlindFinding[]): void {
+  if (blind.length === 0) return;
+  const byNode = new Map(blind.map((finding) => [finding.nodeId, finding]));
+  for (const endpoint of endpoints.values()) {
+    if (endpoint.meta.guards.length > 0) continue;
+    const found = [...endpoint.handlerIds].map((id) => byNode.get(id)).find(Boolean);
+    if (!found) continue;
+    endpoint.meta.handlerUnlinked = true;
+    // The handler *was* followed here, so the stock sentence about not following it
+    // would send a reader looking for a link that already exists. Say which file
+    // actually holds the answer instead.
+    endpoint.meta.handlerUnlinkedWhy = found.why;
+  }
+}
+
 function applyHandlerDecorators(endpoints: Map<string, MergedEndpoint>, guards: GuardFinding[]): void {
   if (guards.length === 0) return;
   const byNode = new Map<string, GuardInfo[]>();

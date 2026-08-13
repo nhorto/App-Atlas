@@ -107,9 +107,36 @@ test('templates are a front end, and email bodies are not (item 43)', () => {
   );
 });
 
-test('the addresses are exactly the seven this app answers at', () => {
+test('an include() handed a list literal is still a mount (#178)', () => {
+  // paperless-ngx writes its entire URL tree this way: `include([...])` around an
+  // inline list, six levels deep, and not one level assigned to a name. With nothing
+  // to mount, every leaf fell through to the flat scan and forty-six of its
+  // fifty-three addresses were printed without their prefix — the bulk-edit endpoint
+  // reported at `/bulk_edit/` when it answers at `/api/documents/bulk_edit/`.
+  assert.ok(routes.includes('/admin/audit/'), routes.join(', '));
+});
+
+test("re_path's anchor is not part of a mount prefix", () => {
+  // `re_path(r"^admin/", include(...))` mounts at `/admin/`. Left in, the caret lands
+  // in the middle of every address underneath it.
+  assert.equal(
+    routes.some((r) => r.includes('^')),
+    false,
+    routes.join(', '),
+  );
+});
+
+test('include((patterns, "app_name")) is the routes, not a tuple with none in it', () => {
+  // Django's two-tuple form, which names the app the URLs belong to. Two levels down
+  // from a `re_path` mount, so it also proves the composition nests.
+  assert.ok(routes.includes('/admin/tokens/rotate/'), routes.join(', '));
+});
+
+test('the addresses are exactly the nine this app answers at', () => {
   assert.deepEqual(routes, [
     '/',
+    '/admin/audit/',
+    '/admin/tokens/rotate/',
     '/api/v1/checks/',
     '/api/v1/checks/<uuid:code>',
     '/api/v2/checks/',

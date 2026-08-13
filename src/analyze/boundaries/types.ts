@@ -272,6 +272,28 @@ export interface HandlerDecoratorFinding {
 }
 
 /**
+ * A handler whose auth is configured somewhere this reader has not read (#178).
+ *
+ * The counterpart of the finding above, and it exists because linking a door to its
+ * handler is only worth doing if the silence that follows can be trusted. A DRF view
+ * with no `permission_classes` is not an open door: DRF has a project-wide
+ * `DEFAULT_PERMISSION_CLASSES` and the class simply did not override it. Following the
+ * URLconf to that class and then reporting "no auth check we can see" would turn a
+ * blind spot into a claim about the application — the one error this screen cannot
+ * afford.
+ *
+ * Only heeded when the door ends the merge with no check from any other source, so a
+ * ViewSet locked by its router or its mount keeps the lock it earned.
+ */
+export interface HandlerBlindFinding {
+  type: 'handler-blind';
+  /** The atlas node of the handler — a class, for every case this covers so far. */
+  nodeId: string;
+  /** Shown to the reader in place of a verdict. */
+  why: string;
+}
+
+/**
  * A call into an auth library's own sign-in, sign-up, sign-out or password-reset
  * routine.
  *
@@ -630,6 +652,7 @@ export type BoundaryFinding =
   | RouterMountFinding
   | RouterGuardFinding
   | HandlerDecoratorFinding
+  | HandlerBlindFinding
   | HttpWrapperFinding
   | WrapperUrlCallFinding
   | PathGuardFinding
