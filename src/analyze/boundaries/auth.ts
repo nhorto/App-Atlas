@@ -85,6 +85,29 @@ const GUARD_CLASS = /^([A-Z]\w*)?(Auth|Jwt|Roles|Permissions)\w*Guard$/;
 const GUARD_PREFIX = new RegExp(`^(${[...GUARD_NAMES, 'auth'].join('|')})[A-Z_]\\w*$`);
 
 /**
+ * The other end of that boundary: a tail naming the thing routes hang off (#225).
+ *
+ * `app.use('/auth', authRouter)` mounts a router, and the prefix rule above reads
+ * `authRouter` as a check — so directus reported `POST /auth/logout`, `POST
+ * /auth/refresh` and both halves of its password reset as locked, by a "check" that is
+ * the router those five doors are declared on. The doors that most need to read as open
+ * were the ones wearing a lock.
+ *
+ * Narrow on purpose, and only ever applied to a *prefix* match — an exact `GUARD_NAMES`
+ * hit is a whole name and needs no help. Scanning directus, Ghost and NodeBB for every
+ * identifier the prefix rule accepts turns up one family that ends this way, and it is
+ * this one; nothing anybody would name a check ends in `Router` or `Routes`.
+ *
+ * It is not the whole answer, because the general case is not a suffix question:
+ * `authService`, `authProvider`, `authUrl` and `auth_data` are all in that same scan and
+ * no list of nouns ever finishes. What settles those is evidence rather than spelling —
+ * see `routersMountedHere` in the merge, which withdraws a name the project turns out to
+ * mount a real router under. This rule covers the case that evidence cannot reach,
+ * where the router is a local the mount reader could not resolve.
+ */
+const NAMES_A_ROUTER = /(Router|Routers|Routes)$/;
+
+/**
  * Recognises a guard by the name it is called by. Exported so the route detectors can
  * label the middleware they see in a route's argument list.
  */
@@ -99,7 +122,7 @@ export function guardFromName(dotted: string, ctx: DetectorContext): GuardInfo |
     GUARD_DOTTED.some((pattern) => pattern.test(dotted)) ||
     (AMBIGUOUS_NAMES.has(last) && isAuthContext(root, ctx));
 
-  if (!exact && !GUARD_PREFIX.test(last)) return null;
+  if (!exact && (!GUARD_PREFIX.test(last) || NAMES_A_ROUTER.test(last))) return null;
 
   return {
     name: dotted,

@@ -418,6 +418,18 @@ export interface RouterMountFinding {
    * that file declares exactly one router.
    */
   childVar: string | null;
+  /**
+   * The argument as *this* file wrote it — `authRouter` in `app.use('/auth', authRouter)`
+   * — where `childVar` is the name its own file gave it. Null when the mount names no
+   * identifier at all (`require('./users')`).
+   *
+   * Kept because one `.use` call is read by two detectors, and only one of them can be
+   * right about any given argument: `app.use('/auth', authRouter)` is a mount, and the
+   * auth reader sees a name beginning `auth` and offers it as a check. Telling those
+   * apart needs the argument's own name, and the merge layer is where the second half of
+   * the evidence — whether that module builds a router — arrives.
+   */
+  childName?: string | null;
   hasPrefix: boolean;
   prefix: string | null;
   prefixName: string | null;
