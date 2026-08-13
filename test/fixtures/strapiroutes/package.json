@@ -1,0 +1,7 @@
+{
+  "name": "@strapi/upload-fixture",
+  "version": "1.0.0",
+  "dependencies": {
+    "@strapi/utils": "^5.0.0"
+  }
+}

@@ -669,11 +669,17 @@ function scopeLine(atlas: Atlas): string {
   // Short enough for a table, and never greener than the truth: a repo whose checks
   // are hidden in a file we could not parse must not read as a clean bill of health.
   const unlinked = s.unlinkedRoutes ?? 0;
-  const assessed = Math.max(0, s.routes - unlinked);
+  // Set aside for the same arithmetic reason `authHeadline` sets it aside: a route the
+  // suite declared is not one this app serves, so it is not in the denominator of a
+  // sentence about how many of them are checked (#247).
+  const inTest = s.testRoutes ?? 0;
+  const assessed = Math.max(0, s.routes - unlinked - inTest);
   // …nor one whose handlers were never followed. With every route set aside, all three
   // counts below are zero and the green sentence would be the only one left (#139).
   if (assessed === 0) {
-    return `${line}  ${pc.yellow(`${s.routes} ${plural(s.routes, 'route', 'routes')} not followed to a handler`)}`;
+    const reason =
+      inTest > unlinked ? 'declared by the test suite' : `not followed to a handler`;
+    return `${line}  ${pc.yellow(`${s.routes} ${plural(s.routes, 'route', 'routes')} ${reason}`)}`;
   }
   if (s.unprotectedRoutes > 0) {
     return `${line}  ${pc.yellow(`${s.unprotectedRoutes} of ${assessed} routes unprotected`)}`;

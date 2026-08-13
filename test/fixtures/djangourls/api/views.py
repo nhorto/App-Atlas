@@ -17,14 +17,3 @@ def checks(request: HttpRequest) -> HttpResponse:
 def single(request: HttpRequest, code: str) -> HttpResponse:
     """One check. Behind an API key."""
     return JsonResponse({"code": code})
-
-
-@authorize
-def audit(request: HttpRequest) -> HttpResponse:
-    """The audit log. Behind an API key."""
-    return JsonResponse({"events": []})
-
-
-def rotate(request: HttpRequest) -> HttpResponse:
-    """Rotates a token. Open, and that is a fact worth reporting correctly."""
-    return JsonResponse({"ok": True})

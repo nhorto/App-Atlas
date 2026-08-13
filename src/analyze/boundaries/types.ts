@@ -53,6 +53,18 @@ export interface EndpointFinding {
    * showing a fragment — `POST ""` — as its whole name.
    */
   prefixFromCaller?: boolean;
+  /**
+   * The head of this address is not written down anywhere in this repo, and the detector
+   * knows it — Strapi builds a plugin's prefix out of the directory the plugin was
+   * loaded from, Rocket.Chat out of a constructor's merged options (#245). The tail is
+   * still a fact, so the door is reported with an ellipsis where the head would be
+   * rather than dropped or, worse, printed as though it were whole.
+   *
+   * Distinct from {@link prefixFromCaller}, which means "the head exists somewhere, go
+   * and find it" and is only consulted once composition has already failed. This one
+   * skips composition outright, because there is nothing to find.
+   */
+  prefixUnread?: boolean;
   site: CodeSite;
   /** The atlas node that answers this door. */
   handlerId: string | null;
@@ -407,6 +419,26 @@ export interface AuthCheckerFinding {
   /** The function's name, which is what a dependency list will say. */
   name: string;
   guard: GuardInfo;
+  /**
+   * The check has a switch on it, and the switch is thrown by whoever calls it.
+   *
+   * ```go
+   * func AuthMiddleware(auto401 bool) gin.HandlerFunc {
+   *     …
+   *     if auto401 { c.AbortWithStatus(http.StatusUnauthorized) }
+   * ```
+   *
+   * The realworld example attaches that same function twice — `AuthMiddleware(false)`
+   * in front of its anonymous reads, `AuthMiddleware(true)` in front of everything else
+   * — so the name alone says nothing about whether a group behind it is shut. The
+   * generic IR carries a nested call as its callee and drops the arguments, so the
+   * value is not available to read, and both attachments arrive identical.
+   *
+   * Only ever a reason to say *less*. A check written straight onto a handler is still
+   * a check; what this withdraws is the claim over a whole group, where one wrong
+   * answer is multiplied by every door under it (#194).
+   */
+  switched?: boolean;
 }
 
 /**
@@ -510,6 +542,27 @@ export interface RouterMountFinding {
    * the evidence — whether that module builds a router — arrives.
    */
   childName?: string | null;
+  /**
+   * The child was *made* by this line, and carries only what its host had at the time.
+   *
+   * Gin, echo and their relatives copy the host's middleware into a group when `Group()`
+   * runs, so a check added to the parent afterwards never reaches it. The realworld
+   * example is the whole argument for reading it:
+   *
+   *   v1 := r.Group("/api")
+   *   users.UsersRegister(v1.Group("/users"))     // made first — public, and must be
+   *   v1.Use(users.AuthMiddleware(false))
+   *   articles.ArticlesRegister(v1.Group("/articles"))
+   *
+   * Without this, composing those addresses puts `AuthMiddleware` beside
+   * `POST /api/users/login` — a lock on the door that hands out the sessions, which is a
+   * worse answer than the honest ellipsis it replaced (#194).
+   *
+   * Opt-in per emitter, because it is not true everywhere: ASGI's `add_middleware`
+   * wraps the whole application whatever order it is written in, and a FastAPI router's
+   * `dependencies=` belong to its constructor rather than to a sequence.
+   */
+  inheritsInOrder?: boolean;
   hasPrefix: boolean;
   prefix: string | null;
   prefixName: string | null;
@@ -546,6 +599,59 @@ export interface RouterMountFinding {
    */
   dependencies?: string[];
   line: number;
+}
+
+/**
+ * The router left this file as an *argument* — `require('./routes')(app)`,
+ * `registerRoutes(app)` — rather than as a mount (#206).
+ *
+ * A mount hangs a child router under a parent, and `RouterMountFinding` records where.
+ * This is the other half of the same question and the commoner shape in CommonJS: the
+ * app itself is handed to another module, which writes `app.get(…)` on the parameter it
+ * arrived in. Nothing in that module is a mount, so the mount graph has no edge, and the
+ * ordering rule has no line to compare against the gate:
+ *
+ *   const app = express();
+ *   require('./public')(app);   // ← this line, and every route registered beneath it
+ *   app.use(requireAuth);       // ← the gate
+ *
+ * The knowable fact is the position of *this call*. `require` runs where it is written,
+ * and so does an ordinary function call, so every route the receiving module registers
+ * on the router it was handed is registered at this line. Above the gate means above the
+ * gate, however far down the callee's file the `.get` happens to sit.
+ *
+ * Deliberately not "the direction of the import", which is what #206 asked for. In ESM
+ * the shape that argument rests on — `app.js` importing `routes.js`, which imports `app`
+ * back — is a `ReferenceError` on the `const app` binding: the program never starts, so
+ * there is no wrong answer to correct. The CJS cycle does run, and what decides it there
+ * is where the `require()` call sits. So the line is the fact, and the import edge is not.
+ */
+export interface RouterHandoffFinding {
+  type: 'router-handoff';
+  /** Where the call is written. Only ever compared against a gate in this same file. */
+  path: string;
+  /** The router variable handed over — `app` in `require('./routes')(app)`. */
+  hostVar: string;
+  /**
+   * The module receiving it, as this file spelled it: slashes, no extension. Matched
+   * against a route's own module by tail, the same way a mount's `childModule` is,
+   * because a specifier is relative to wherever it was written.
+   */
+  targetModule: string;
+  /** The call's own line — the position every route registered inside the target inherits. */
+  line: number;
+  /**
+   * The lines of the innermost function containing the call, or the whole file when it
+   * sits at module scope.
+   *
+   * Comparing two line numbers only means anything when both statements run in one
+   * sequence. `function wire(app) { require('./x')(app) }` written at the top of a file
+   * and called from the bottom of it has the smaller line number and runs *last* — so
+   * the merge asks whether the gate falls inside this span before it compares, and
+   * declines when it does not. A module-scope handoff spans the file, which is the same
+   * statement of the same fact: everything else in the file is in its sequence.
+   */
+  scope: { from: number; to: number };
 }
 
 /**
@@ -650,6 +756,7 @@ export type BoundaryFinding =
   | AuthAliasFinding
   | RouterBuildFinding
   | RouterMountFinding
+  | RouterHandoffFinding
   | RouterGuardFinding
   | HandlerDecoratorFinding
   | HandlerBlindFinding
@@ -658,7 +765,98 @@ export type BoundaryFinding =
   | PathGuardFinding
   | PathConstantFinding
   | MountMethodFinding
+  | RouteHelperFinding
+  | HelperRouteCallFinding
   | GlobalPrefixFinding;
+
+/**
+ * Where one of a helper's arguments sits in the list its callers write (#229).
+ *
+ * Counted from the front for a plain parameter, and from the back for the
+ * `args[args.length - 1]` idiom that a rest parameter forces on anyone with an optional
+ * argument in the middle. NodeBB's helpers take `(...args)` and pull the controller off
+ * the end precisely so the middleware array can be omitted, so both directions are
+ * needed to read a single one of its 334 call sites.
+ */
+export type ArgPosition = { from: 'start' | 'end'; index: number };
+
+/**
+ * A function of the app's own that registers a route on the caller's behalf (#229).
+ *
+ * `NodeBB/NodeBB` declares almost every door through one of three of these:
+ *
+ *   helpers.setupPageRoute = function (...args) {
+ *       const [router, name] = args;
+ *       router.get(name, middlewares, helpers.tryRoute(controller));
+ *       router.get(`/api${name}`, middlewares, helpers.tryRoute(controller));
+ *   };
+ *
+ * 334 calls against 41 plain `router.get(…)` ones, so the helper *is* how that
+ * application declares its interface — and every one of those doors was missing from the
+ * map, `/login` and `/register` among them.
+ *
+ * The same shape as {@link MountMethodFinding} one level down, and recognised the same
+ * way: by what the body does — it hands one of its own parameters to a route method as
+ * the path — and never by the name. `setupPageRoute` is not a word this file knows.
+ *
+ * What it deliberately does *not* carry is the middleware the helper injects. See
+ * `helperGuards` in the merge: NodeBB puts `middleware.authenticateRequest` into every
+ * list it builds, and that function returns true for an anonymous caller. Reading it as
+ * a check would print a lock on the login page.
+ */
+export interface RouteHelperFinding {
+  type: 'route-helper';
+  /** The name it is called by, as written: `setupPageRoute`, `helpers.setupApiRoute`. */
+  name: string;
+  /** Which argument is the router the route is registered on. */
+  router: ArgPosition;
+  /** Which argument is the path. */
+  pathArg: ArgPosition;
+  /**
+   * The verb, when the body names one (`router.get`), or where to read it when the body
+   * computes it from an argument (`router[verb](…)`, which is `setupApiRoute`).
+   */
+  verb: { literal: string } | { at: ArgPosition };
+  /** Which argument is the handler, when the body forwards one. */
+  handler: ArgPosition | null;
+  /**
+   * One entry per route the body registers, with `{}` where the path argument lands.
+   * `setupPageRoute` yields `['{}', '/api{}']` — one call, two doors, and the second is
+   * an address that appears nowhere in the calling file.
+   */
+  templates: string[];
+  path: string;
+  line: number;
+}
+
+/**
+ * A call that might be to one of the above — resolved only in the merge (#229).
+ *
+ * Whether `setupPageRoute('/login', …)` is a route or an unrelated function of the same
+ * name is a fact from another file, so this carries the arguments and the merge decides,
+ * exactly as `mount-method` does for `lazyUse`. Emitted for any call with a `/…` string
+ * literal in it, which is a filter on noise rather than the check.
+ */
+export interface HelperRouteCallFinding {
+  type: 'helper-route-call';
+  /** The callee as written, matched against `RouteHelperFinding.name`. */
+  callee: string;
+  /** Every argument, flattened: the literal string, or `null` where it was not one. */
+  args: (string | null)[];
+  /** Identifier text of each argument, for finding the router and the handler. */
+  names: (string | null)[];
+  /**
+   * Checks the *caller* passed in the argument list — not the ones the helper injects.
+   * See `helperGuards`: a check written beside the door by whoever declared it is
+   * ordinary evidence, and the same evidence `router.get('/x', requireAuth, h)` gives.
+   */
+  guards: GuardInfo[];
+  framework: string;
+  path: string;
+  line: number;
+  nodeId: string | null;
+  snippet: string;
+}
 
 /**
  * A method an app assigns onto its own router that forwards to `use` — a mount wearing

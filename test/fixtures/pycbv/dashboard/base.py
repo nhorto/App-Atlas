@@ -1,14 +1,14 @@
-"""The base every locked page in this app inherits from.
+"""A base in a file of its own — the case this reader deliberately does not follow.
 
-Nothing here is written on the views the URLconf names, and nothing in the URLconf
-mentions this file. The chain from one to the other runs through `bases` and only
-through `bases` — see `LoginPage` in `views.py` for what happens when it runs through
-anything looser.
+`inheritanceChain` reads bases within one file, which is where a project keeps a view
+and its view mixins. Reaching further would mean resolving a bare class name across a
+whole repo, and two apps each with a `Base` is ordinary; a lock attributed to the wrong
+one of those is the expensive direction. So `ArchiveView` in `views.py` comes out blank.
 """
 
 from django.contrib.auth.mixins import LoginRequiredMixin
 from django.views.generic import View
 
 
-class SecureView(LoginRequiredMixin, View):
+class RemoteSecureView(LoginRequiredMixin, View):
     login_url = "/accounts/login/"

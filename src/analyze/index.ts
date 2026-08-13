@@ -23,6 +23,7 @@ import { countStaleDocs } from '../model/staleness.js';
 import { FORMAT_VERSION, makeAppId, makeEdgeId } from '../model/types.js';
 import { appendAll } from '../util/append.js';
 import { hashParts } from '../util/hash.js';
+import { headCommit } from '../util/head.js';
 import { classifyArchetype } from './archetype.js';
 import { buildBoundaryGraph } from './boundaries/build.js';
 import { buildExportDoors } from './boundaries/exports.js';
@@ -153,7 +154,20 @@ import { dominantZone } from './zones.js';
  * is now the sign-in door rather than an unchecked one (#186), and a test fixture is no
  * longer a scope (#185), so the very set of atlases a workspace produces is different.
  */
-export const TOOL_VERSION = '0.25.0';
+/*
+ * 0.26.0 is the 0.12.1 case, and worth naming as such because the feature it ships is
+ * about staleness and could be mistaken for a reason to expire caches. It is not one. The
+ * analyzer sees exactly what it saw; every finding, every guard and every door is
+ * unchanged. What is new is one meta field recording the commit those findings describe,
+ * and it is deliberately computed outside the per-file cache on every run — git history
+ * moves while file text does not, so a commit restored from a cache slice would be the
+ * stale-but-never-invalidated answer this whole comment exists to prevent.
+ *
+ * The number moves anyway, for the reason 0.10.0 and 0.12.0 moved: it is stamped into
+ * `ATLAS.md`, which people commit, and a build that writes another version's number into
+ * a checked-in file is making a false claim about where that file came from.
+ */
+export const TOOL_VERSION = '0.26.0';
 
 export interface AnalyzeOptions {
   maxFiles?: number;
@@ -459,6 +473,12 @@ export async function analyzeProject(rootDir: string, options: AnalyzeOptions = 
 
   options.onProgress?.('Building the map', 1, 1);
 
+  // Read last, so it names the commit the analysis finished on rather than one a commit
+  // made mid-run has already replaced. Either answer would be defensible; the later one
+  // is the conservative direction, because it can only ever make a fresh atlas look
+  // stale, and never a stale one look fresh.
+  const commit = headCommit(project.root);
+
   const atlas: Atlas = {
     meta: {
       formatVersion: FORMAT_VERSION,
@@ -489,6 +509,11 @@ export async function analyzeProject(rootDir: string, options: AnalyzeOptions = 
       // is zero-by-absence: a map that quietly leaves code out is the failure this
       // project exists to avoid (#87).
       retiredFiles: retiredCount,
+      // Which commit these facts describe. Recorded at the moment they were derived,
+      // because nothing downstream can recover it afterwards: a second process reading
+      // this atlas sees whatever the tree has moved to since, which is the comparison
+      // this is here to make possible rather than a substitute for it.
+      ...(commit ? { vcs: { commit } } : {}),
       warnings,
     },
     nodes: nodes.sort((a, b) => a.id.localeCompare(b.id)),
@@ -764,6 +789,7 @@ export function computeStats(nodes: AtlasNode[], edges: AtlasEdge[]): AtlasStats
   let endpoints = 0;
   let routes = 0;
   let likelyOnlyRoutes = 0;
+  let testRoutes = 0;
   let unreadFiles = 0;
   let unreadTestFiles = 0;
   let services = 0;
@@ -814,10 +840,25 @@ export function computeStats(nodes: AtlasNode[], edges: AtlasEdge[]): AtlasStats
         else endpoints++;
         if (isAuthRelevant(meta)) {
           routes++;
+          // Counted here rather than off the open-door tally, which only ever sees doors
+          // with no guard on them. Since #250 that is every door the suite declared, so
+          // the two agree — but they agree because of a rule in another file, and a
+          // denominator that is right only while that rule holds is one that goes wrong
+          // silently the day it changes (#247).
+          if (meta.declaredInTest) testRoutes++;
           // A door with guards, none of which the analyzer could prove. Counted here so
-          // the headline can carry the grade its cards already carry (#116).
+          // the headline can carry the grade its cards already carry (#116) — over the
+          // doors that headline is about, which is why a test route is not one of them:
+          // "20 of the checks were matched rather than proven" has to be 20 out of a
+          // number the reader can see, and a set-aside route is in none of them.
           const guards = meta.guards ?? [];
-          if (guards.length > 0 && guards.every((guard) => guard.confidence !== 'certain')) likelyOnlyRoutes++;
+          if (
+            !meta.declaredInTest &&
+            guards.length > 0 &&
+            guards.every((guard) => guard.confidence !== 'certain')
+          ) {
+            likelyOnlyRoutes++;
+          }
         }
         break;
       }
@@ -869,6 +910,7 @@ export function computeStats(nodes: AtlasNode[], edges: AtlasEdge[]): AtlasStats
     publicRoutes: open.page + open.authMount + open.generated + open.declaredPublic,
     unreadableRoutes: open.unreadable,
     unlinkedRoutes: open.unlinked,
+    testRoutes,
     unreadFiles,
     unreadTestFiles,
     services,

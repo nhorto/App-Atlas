@@ -23,8 +23,15 @@
  * The last one is not an oversight and is the correction this fix needed: an app that
  * registers every route from another file would go to "no auth check found" on all of
  * them, and a reader who sees every door red discounts the column entirely. Under-claiming
- * one door is recoverable; under-claiming a whole application is not. #206 is the import
- * direction that would settle it honestly.
+ * one door is recoverable; under-claiming a whole application is not.
+ *
+ * #206 asked for the *direction of the import* to settle it, and that turned out not to
+ * be the mechanism. In ESM there are only two directions and neither poses the question:
+ * this fixture's — `reports.ts` importing `app.ts` — runs `app.ts` to completion first,
+ * so the guard it keeps is the right answer; and the other, `app.ts` importing
+ * `reports.ts` which imports `app` back, is a ReferenceError on the `const app` binding,
+ * so the program never starts. The answer lives in CommonJS instead, where the position
+ * of the `require()` call is a fact on the page — see `cjsorder`.
  */
 import assert from 'node:assert/strict';
 import { fileURLToPath } from 'node:url';

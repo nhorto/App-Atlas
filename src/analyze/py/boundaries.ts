@@ -42,67 +42,6 @@ const GUARD_DECORATORS: Record<string, string> = {
 };
 
 /**
- * Base classes that lock a Django class-based view, and the name to show.
- *
- * A mixin in the bases is how a class-based view spells the decorator it cannot wear:
- * `class ProjectList(LoginRequiredMixin, ListView)` is `@login_required` written for a
- * class, and it is written on the same line as the class the URLconf names — so it is
- * read with the same certainty.
- *
- * `AccessMixin` is deliberately absent. It is the plumbing the four below are built out
- * of — `handle_no_permission` and nothing else — and a class that inherits it directly
- * has said only that it intends to have an opinion, not what the opinion is.
- */
-const GUARD_MIXINS: Record<string, string> = {
-  LoginRequiredMixin: 'Django LoginRequiredMixin',
-  PermissionRequiredMixin: 'Django PermissionRequiredMixin',
-  UserPassesTestMixin: 'Django UserPassesTestMixin',
-  // django-braces, which predates Django's own and is still widely installed.
-  SuperuserRequiredMixin: 'braces SuperuserRequiredMixin',
-  StaffuserRequiredMixin: 'braces StaffuserRequiredMixin',
-};
-
-/**
- * DRF permission classes that turn a stranger away, as `permission_classes = [...]`.
- *
- * `AllowAny` is the opposite claim and is deliberately absent — a view that names it
- * has said it is open, and it is reported as open.
- */
-const DRF_PERMISSIONS: Record<string, string> = {
-  IsAuthenticated: 'DRF IsAuthenticated',
-  IsAdminUser: 'DRF IsAdminUser',
-  DjangoModelPermissions: 'DRF DjangoModelPermissions',
-  DjangoObjectPermissions: 'DRF DjangoObjectPermissions',
-};
-
-/**
- * Permission classes that lock the writes and leave every read open.
- *
- * Neither answer fits a door whose method is not declared — and DRF's router declares
- * none of them. Calling it guarded claims a lock on the GET that has none; calling it
- * unguarded claims no lock at all on a POST that has one. So the door says which of the
- * two it is and lets the reader finish the sentence, which is the only thing here that
- * is true.
- */
-const DRF_PARTIAL_PERMISSIONS = new Set([
-  'IsAuthenticatedOrReadOnly',
-  'DjangoModelPermissionsOrAnonReadOnly',
-  'AllowAnyReadOnly',
-]);
-
-/**
- * Base classes that make a class a Django REST Framework view.
- *
- * Worth naming because DRF's permissions have a *project-wide* default:
- * `REST_FRAMEWORK = {"DEFAULT_PERMISSION_CLASSES": [...]}` in settings decides every
- * view that does not override it. A DRF view with no `permission_classes` of its own is
- * therefore not an open door — it is a door whose lock is written somewhere this reader
- * has not looked, which is a different sentence and the only honest one.
- */
-const DRF_VIEW_BASES =
-  /^(APIView|GenericAPIView|(ReadOnly)?ModelViewSet|GenericViewSet|ViewSet|ViewSetMixin|(List|Create|Retrieve|Update|Destroy|ListCreate|RetrieveUpdate|RetrieveDestroy|RetrieveUpdateDestroy)APIView)$/;
-
-/**
  * Function names that, when a route depends on one, are checking the caller rather
  * than fetching it a resource. `get_db` and `get_session` are deliberately outside
  * this: a database handle is not a lock, and calling one would be the sort of
@@ -169,6 +108,7 @@ export function detectPythonBoundaries(input: PythonBoundaryInput): BoundaryFind
   if (has('django')) {
     detectDjangoRoutes(input, findings, site);
     detectHandlerDecorators(input, findings);
+    detectViewClassGuards(input, findings);
   }
   if (modules.has('rest_framework')) detectDrfRouters(input, findings, site);
   detectTasks(input, has, findings, site);
@@ -400,14 +340,6 @@ function detectDjangoRoutes(
     for (const entry of list.entries) {
       structured.add(entry.line);
       if (entry.isInclude) {
-        // `re_path(r"^api/", include(...))` mounts at `/api/`. The caret is regex
-        // punctuation and a segment is not a whole pattern, so leaving it in puts a
-        // `^` in the middle of every address underneath — paperless-ngx mounts four
-        // levels that way and would have read `/^api/^documents/bulk_edit/`.
-        const prefix =
-          entry.route === null || entry.call === 'path'
-            ? entry.route
-            : entry.route.replace(/^\^/, '').replace(/\$$/, '');
         findings.push({
           type: 'router-mount',
           path: input.file.path,
@@ -416,8 +348,13 @@ function detectDjangoRoutes(
           // `urlpatterns`; `include(api_urls)` names a list in this same file.
           childModule: entry.includeModule ? entry.includeModule.replace(/\./g, '/') : null,
           childVar: entry.includeModule ? 'urlpatterns' : entry.includeList,
-          hasPrefix: prefix !== '',
-          prefix,
+          hasPrefix: entry.route !== '',
+          // The same anchors `pushDjangoRoute` takes off a leaf, taken off a segment.
+          // `re_path(r"^api/", include([…]))` contributes `api/` to everything under it,
+          // and carrying the `^` through composed `/^api/^documents/post_document/` —
+          // an address that is wrong in a way that looks like a bug in the tool rather
+          // than a fact about the app, which is at least the recoverable direction.
+          prefix: entry.route === null ? null : djangoSegment(entry.call, entry.route),
           prefixName: entry.routeName,
           // `path(prefix, include("hc.accounts.urls"))` is how a Django app offers to be
           // served under a configured sub-path, and `prefix` is `""` in every deployment
@@ -430,17 +367,7 @@ function detectDjangoRoutes(
         });
         continue;
       }
-      pushDjangoRoute(
-        input,
-        findings,
-        site,
-        entry.line,
-        entry.call,
-        entry.route,
-        list.var,
-        entry.view,
-        entry.viewIsClass,
-      );
+      pushDjangoRoute(input, findings, site, entry.line, entry.call, entry.route, list.var, entry.view, entry.viewIsClass);
     }
   }
 
@@ -452,16 +379,13 @@ function detectDjangoRoutes(
     if (structured.has(call.line)) continue;
     const route = strArg(call.args[0]);
     if (route === null) continue;
-    const written = nameArg(call.args[1]);
+    const view = nameArg(call.args[1]);
     // `path('providers/', include(...))` mounts another URLconf: a prefix, not an
     // endpoint. netbox writes 290 of its 377 `path()` calls this way, so counting them
     // would trade an undercount for an overcount — and every one of those prefixes
     // would be a door with no handler and therefore no visible auth.
-    if (written !== null && /^include\(/.test(written)) continue;
-    // A call written as an argument arrives with its parentheses: `WidgetList.as_view()`.
-    const asView = written === null ? null : /^(.+)\.as_view\(\)$/.exec(written);
-    const view = asView ? asView[1] : written;
-    pushDjangoRoute(input, findings, site, call.line, call.callee, route, null, view, asView !== null);
+    if (view !== null && /^include\(/.test(view)) continue;
+    pushDjangoRoute(input, findings, site, call.line, call.callee, route, null, view);
   }
 }
 
@@ -533,174 +457,6 @@ function detectHandlerDecorators(input: PythonBoundaryInput, findings: BoundaryF
       });
     }
   }
-
-  detectViewClassGuards(input, findings);
-}
-
-/**
- * The lock on a class-based view, which is never a decorator on a `def`.
- *
- * `path("widgets/", WidgetList.as_view())` hands the door to a class, and Django gives
- * a class four ways to say who may come in — a mixin in the bases, a
- * `@method_decorator` on the class, a decorator on `dispatch`, or `dispatch` turning
- * the caller away itself. All four are written on or inside the class statement the
- * URLconf named, so all four are direct hits rather than guesses.
- *
- * DRF's `permission_classes` is the fifth, and the only one with a project-wide default
- * behind it — see `DRF_VIEW_BASES` and the blank this leaves when a DRF view declares
- * nothing of its own.
- */
-function detectViewClassGuards(input: PythonBoundaryInput, findings: BoundaryFinding[]): void {
-  for (const def of input.file.defs ?? []) {
-    if (def.kind !== 'class') continue;
-    const nodeId = makeTypeId(input.file.path, def.name);
-    const push = (guard: GuardInfo | null, name: string): void => {
-      findings.push({ type: 'handler-decorator', nodeId, name, guard });
-    };
-    let said = false;
-
-    for (const written of def.bases ?? []) {
-      const base = baseName(written);
-      const label = GUARD_MIXINS[base];
-      if (!label) continue;
-      said = true;
-      push(
-        {
-          name: base,
-          how: 'decorator',
-          provider: label,
-          path: input.file.path,
-          line: def.line,
-          confidence: 'certain',
-        },
-        base,
-      );
-    }
-
-    // `permission_classes = [IsAuthenticated]`, and its `authentication_classes`
-    // sibling, which says *how* to identify a caller rather than whether one is
-    // required — so it is read for the first only.
-    let partial: string | null = null;
-    for (const field of def.fields ?? []) {
-      if (field.name !== 'permission_classes') continue;
-      said = true;
-      for (const permission of DRF_PARTIAL_PERMISSIONS) {
-        if (new RegExp(`\\b${permission}\\b`).test(field.type)) partial = permission;
-      }
-      for (const [permission, label] of Object.entries(DRF_PERMISSIONS)) {
-        if (!new RegExp(`\\b${permission}\\b`).test(field.type)) continue;
-        push(
-          {
-            name: permission,
-            how: 'config',
-            provider: label,
-            path: input.file.path,
-            line: def.line,
-            confidence: 'certain',
-          },
-          permission,
-        );
-      }
-    }
-
-    // `@method_decorator(login_required, name="dispatch")` — the only way to put a
-    // plain view decorator on a class. The name inside the parentheses is the lock;
-    // `method_decorator` itself is just the adapter.
-    for (const decorator of [...def.decorators, ...(def.methods ?? []).flatMap((m) => m.decorators)]) {
-      const called = decorator.callee.split('.').pop() ?? '';
-      const names =
-        called === 'method_decorator'
-          ? decorator.args.flatMap((arg) => (arg && arg.t === 'name' ? [arg.v.replace(/\(.*$/, '')] : []))
-          : [called];
-      for (const written of names) {
-        const name = written.split('.').pop() ?? '';
-        const label = GUARD_DECORATORS[name];
-        if (!label) continue;
-        said = true;
-        push(
-          {
-            name,
-            how: 'decorator',
-            provider: label,
-            path: input.file.path,
-            line: decorator.line,
-            confidence: 'certain',
-          },
-          name,
-        );
-      }
-    }
-
-    // The class turning callers away in its own `dispatch`. Same rule and same reason
-    // as a function that does it: never better than `likely`, because a method that
-    // answers a bad request with a 403 is doing its job rather than guarding a door.
-    const dispatch = (def.methods ?? []).find((m) => m.name === 'dispatch' && typeof m.rejects === 'number');
-    if (dispatch) {
-      said = true;
-      push(
-        {
-          name: def.name,
-          how: 'call',
-          provider: 'custom',
-          path: input.file.path,
-          line: dispatch.rejects as number,
-          confidence: 'likely',
-        },
-        def.name,
-      );
-    }
-
-    const isDrf = (def.bases ?? []).some((base) => DRF_VIEW_BASES.test(baseName(base)));
-    // A DRF view that named no permission of its own is answering to
-    // `DEFAULT_PERMISSION_CLASSES` in settings, which this reader has not read. Saying
-    // "no check we can see" about it would report our blind spot as the application's.
-    if (isDrf && !said) {
-      findings.push({
-        type: 'handler-blind',
-        nodeId,
-        why: `\`${def.name}\` declares no permission_classes — a DRF view without one answers to DEFAULT_PERMISSION_CLASSES in your settings, which App Atlas has not read`,
-      });
-    } else if (partial) {
-      findings.push({
-        type: 'handler-blind',
-        nodeId,
-        why: `\`${def.name}\` is guarded by ${partial}: writes need a signed-in caller and reads are open to anyone — and DRF declares no method here to say which this door is`,
-      });
-    }
-  }
-}
-
-/**
- * A base class reduced to the name it is known by: `rest_framework.GenericAPIView[Any]`
- * is `GenericAPIView`.
- *
- * The subscript is the part that bites. paperless-ngx types every DRF base it inherits
- * — `GenericViewSet[Document]`, `ModelViewSet[ApplicationConfiguration]`,
- * `GenericAPIView[Any]` — and with the brackets left on, none of them matched anything,
- * so `RemoteVersionView` was read as a plain class with no check rather than as a DRF
- * view whose permissions live in settings. Reported open, and it is not.
- */
-function baseName(base: string): string {
-  return (base.split('.').pop() ?? base).replace(/\[.*$/, '').trim();
-}
-
-/**
- * What a class says, in its own body, about who may call it — or null if it says
- * nothing. The one representative statement, for a subclass to inherit by name.
- *
- * `detectViewClassGuards` reports every lock a class writes, because a door wants all
- * of them. A chain wants only the fact that this link holds, so the first is enough.
- */
-function classLock(def: PyDef, bases: string[]): { name: string; provider: string } | null {
-  const mixin = bases.find((base) => GUARD_MIXINS[base]);
-  if (mixin) return { name: mixin, provider: GUARD_MIXINS[mixin] };
-  for (const field of def.fields ?? []) {
-    if (field.name !== 'permission_classes') continue;
-    for (const [permission, provider] of Object.entries(DRF_PERMISSIONS)) {
-      if (new RegExp(`\\b${permission}\\b`).test(field.type)) return { name: permission, provider };
-    }
-  }
-  return null;
 }
 
 /**
@@ -716,57 +472,285 @@ function classLock(def: PyDef, bases: string[]): { name: string; provider: strin
  * Only an import this project answers for. A view that resolves to no file in the repo
  * stays unlinked, because a handler we cannot open is a handler whose checks we have
  * not read.
- *
- * `isClass` picks which kind of node the answer is. `path("widgets/",
- * WidgetList.as_view())` answers with a *type*, and pointing a door at the function id
- * of a class would link it to nothing at all — which is how every class-based view in
- * Django read as "not examined" while its `LoginRequiredMixin` sat one line below the
- * class statement.
  */
 function djangoHandlerId(input: PythonBoundaryInput, view: string | null, isClass = false): string | null {
   if (!view || !input.resolveImport) return null;
   const parts = view.split('.');
   const name = parts.pop() as string;
   if (!name || !/^[A-Za-z_]\w*$/.test(name)) return null;
-  const idFor = (path: string): string => (isClass ? makeTypeId(path, name) : makeFunctionId(path, name));
-  const kind = isClass ? 'class' : 'function';
-  // `views.checks` — the module is however `views` got into this file. A bare `checks`
-  // is either defined here, or imported by name: `from hc.front.views import checks`
-  // and `from documents.views import DocumentViewSet` are both ordinary, and the
-  // second is the only spelling DRF's `router.register` accepts.
+  // A class-based view is a type node, not a function node — `MyView.as_view()` and
+  // `views.checks` land in different halves of the atlas, and asking for the wrong one
+  // returns an id nothing answers to, which reads exactly like an unlinked handler.
+  const idFor = isClass ? makeTypeId : makeFunctionId;
+  const wanted = isClass ? 'class' : 'function';
+  // `views.checks` — the module is however `views` got into this file. A bare
+  // `checks` is defined here, and needs no import to find.
   if (parts.length === 0) {
-    if (input.file.defs?.some((def) => def.kind === kind && def.name === name)) {
-      return idFor(input.file.path);
+    if (input.file.defs?.some((def) => def.kind === wanted && def.name === name)) {
+      return idFor(input.file.path, name);
     }
-    const home = resolveImportedName(input, name);
-    return home ? idFor(home) : null;
+    // `from documents.views import PostDocumentView` — the name is bound to a *symbol*,
+    // not to a module, so the module resolver above asks for a module called
+    // `documents.views.PostDocumentView` and is told there is none. healthchecks writes
+    // `from hc.front import views` and never needed this; paperless-ngx imports all 32
+    // of its view classes by name and so resolved none of them.
+    const owner = resolveSymbolModule(input, name);
+    return owner ? idFor(owner, name) : null;
   }
   const target = resolveBoundModule(input, parts[parts.length - 1]);
-  return target ? idFor(target) : null;
+  return target ? idFor(target, name) : null;
 }
 
-/**
- * The file that defines a name this file imported bare: `from hc.front.views import
- * checks` binds `checks`, and the file to open is `hc/front/views.py`.
- *
- * The mirror of `resolveBoundModule`, which answers the same question about a name
- * bound to a *module*. Both are needed because Django accepts either spelling in a
- * URLconf, and DRF's `register(r"documents", DocumentViewSet)` only accepts this one.
- */
-function resolveImportedName(input: PythonBoundaryInput, name: string): string | null {
+/** The file that exported a name this one imported directly: `from x.y import Thing`. */
+function resolveSymbolModule(input: PythonBoundaryInput, name: string): string | null {
   if (!input.resolveImport) return null;
   for (const entry of input.file.imports ?? []) {
-    // The *local* half here, not the exported one: `from x import Widget as W` puts
-    // `W` in this file, and `W` is what the URLconf writes.
     if (!(entry.names ?? []).some(([, local]) => local === name)) continue;
-    // `from . import views` binds a module, not a member — that is
-    // `resolveBoundModule`'s case, and it is reached only when the entry actually
-    // resolves to a file.
-    const target = entry.module ? input.resolveImport(entry.module, entry.level) : null;
+    const target = input.resolveImport(entry.module, entry.level);
     if (target) return target;
   }
   return null;
 }
+
+/**
+ * A check a class-based view declares on itself (item 44, second half).
+ *
+ * Django and DRF put the check in a class attribute or a base class rather than in a
+ * decorator, so `detectHandlerDecorators` — which walks functions — sees nothing:
+ *
+ *   class DocumentViewSet(ModelViewSet):
+ *       permission_classes = (IsAuthenticated, PaperlessObjectPermissions)
+ *
+ *   class SettingsView(LoginRequiredMixin, TemplateView):
+ *
+ * `paperless-ngx` reached an auth verdict on **none** of its 74 routes for this reason,
+ * against 178 of 179 on healthchecks, which uses function views throughout — which is
+ * exactly why all five of the healthchecks fixes looked complete on it.
+ *
+ * The two are not equally strong evidence and are not reported as such. A mixin in the
+ * base list is `certain`: it is the documented way to say "signed in only", and it has
+ * no other meaning. `permission_classes` is read by name against the same table, so
+ * `IsAuthenticated` is a lock and DRF's own `AllowAny` is a door held open on purpose —
+ * and a name in neither list is carried without a verdict, for `build.ts` to settle the
+ * way it settles a FastAPI dependency.
+ */
+function detectViewClassGuards(input: PythonBoundaryInput, findings: BoundaryFinding[]): void {
+  const classes = new Map<string, PyDef>();
+  for (const def of input.file.defs ?? []) if (def.kind === 'class') classes.set(def.name, def);
+
+  for (const def of classes.values()) {
+    const nodeId = makeTypeId(input.file.path, def.name);
+    const family = inheritanceChain(def, classes);
+    // Whether this class said anything at all about who may call it, which decides
+    // only whether the DRF blank below applies.
+    let speaks = false;
+
+    for (const relative of family) {
+      for (const base of relative.bases ?? []) {
+        const name = baseName(base);
+        const label = GUARD_MIXINS[name];
+        if (!label) continue;
+        const guard: GuardInfo = {
+          // Named with the class it came from when that is not this one, because the
+          // reader's next question about an inherited check is always *inherited from
+          // where*, and the chain is the answer. Written here rather than left to the
+          // reference walk to discover, which is where #147 keeps coming from: a
+          // reference edge between two classes means "mentions", and an open login page
+          // mentioning a locked view is the commonest shape in a Django app.
+          name: relative === def ? name : `${relative.name} → ${name}`,
+          how: 'decorator',
+          provider: label,
+          path: input.file.path,
+          line: relative.line,
+          confidence: 'certain',
+        };
+        findings.push({ type: 'handler-decorator', nodeId, name, guard });
+        speaks = true;
+      }
+    }
+
+    // `@method_decorator(login_required, name="dispatch")` — the only way to put a
+    // plain view decorator on a class, and Django's documented one. `method_decorator`
+    // is the adapter; the lock is the name inside the parentheses. Read off the methods
+    // too, because the same decorator is as often written on `dispatch` directly.
+    for (const relative of family) {
+      const written = [...relative.decorators, ...(relative.methods ?? []).flatMap((m) => m.decorators)];
+      for (const decorator of written) {
+        const called = decorator.callee.split('.').pop() ?? '';
+        const names =
+          called === 'method_decorator'
+            ? decorator.args.flatMap((arg) => (arg && arg.t === 'name' ? [arg.v.replace(/\(.*$/, '')] : []))
+            : [called];
+        for (const each of names) {
+          const name = each.split('.').pop() ?? '';
+          const label = GUARD_DECORATORS[name];
+          if (!label) continue;
+          const guard: GuardInfo = {
+            name: relative === def ? name : `${relative.name} → ${name}`,
+            how: 'decorator',
+            provider: label,
+            path: input.file.path,
+            line: decorator.line,
+            confidence: 'certain',
+          };
+          findings.push({ type: 'handler-decorator', nodeId, name, guard });
+          speaks = true;
+        }
+      }
+    }
+
+    // The class turning callers away in its own `dispatch`, which is where a view that
+    // wants a condition no mixin covers puts it. Same rule and same reason as a function
+    // that does it: never better than `likely`, because a method answering a bad request
+    // with a 403 is doing its job rather than guarding a door (#147).
+    const gate = (def.methods ?? []).find((m) => m.name === 'dispatch' && typeof m.rejects === 'number');
+    if (gate) {
+      const guard: GuardInfo = {
+        name: def.name,
+        how: 'call',
+        provider: 'custom',
+        path: input.file.path,
+        line: gate.rejects as number,
+        confidence: 'likely',
+      };
+      findings.push({ type: 'handler-decorator', nodeId, name: def.name, guard });
+      speaks = true;
+    }
+
+    // The nearest declaration wins, which is what Python does: a subclass setting
+    // `permission_classes` replaces its parent's rather than adding to it.
+    const owner = family.find((relative) => permissionNames(relative).length > 0);
+    // A DRF view that named no permission of its own has not said it is open. DRF falls
+    // back to `DEFAULT_PERMISSION_CLASSES` in settings, which this reader has not read,
+    // so "no auth check App Atlas can see" would report our blind spot as the
+    // application's. paperless-ngx's `/api/remote_version/` is the case.
+    if (!owner && !speaks && (def.bases ?? []).some((base) => DRF_VIEW_BASES.test(baseName(base)))) {
+      findings.push({
+        type: 'handler-blind',
+        nodeId,
+        why: `\`${def.name}\` declares no permission_classes — a DRF view without one answers to DEFAULT_PERMISSION_CLASSES in your settings, which App Atlas has not read`,
+      });
+    }
+    for (const name of owner ? permissionNames(owner) : []) {
+      // `AllowAny` is somebody writing down that this door is open, which is a fact and
+      // not a lock — the same distinction #152 draws for a NestJS guard that permits
+      // everything. Recorded as a non-guard so the door reads examined-and-open rather
+      // than never-examined.
+      if (OPEN_PERMISSIONS.has(name)) {
+        findings.push({ type: 'handler-decorator', nodeId, name, guard: null });
+        continue;
+      }
+      const label = GUARD_PERMISSIONS[name];
+      const guard = label
+        ? ({
+            name: owner === def ? name : `${(owner as PyDef).name} → ${name}`,
+            how: 'config',
+            provider: label,
+            path: input.file.path,
+            line: (owner as PyDef).line,
+            confidence: 'certain',
+          } as GuardInfo)
+        : null;
+      findings.push({ type: 'handler-decorator', nodeId, name, guard });
+      // Also registered as a check in its own right, so the *name* resolves wherever the
+      // merge meets it. A DRF registration hands its door the class rather than the
+      // handler — `api_router.register(r"documents", DocumentViewSet)` — and the owner
+      // chain that resolves it looks names up in the checker table, not in the node ids
+      // these findings are keyed on (#241).
+      if (guard) findings.push({ type: 'auth-checker', name, guard });
+    }
+
+  }
+}
+
+/**
+ * A base class reduced to the name it is known by: `rest_framework.GenericAPIView[Any]`
+ * is `GenericAPIView`.
+ *
+ * The subscript is the part that bites. paperless-ngx types every DRF base it inherits
+ * — `GenericViewSet[Document]`, `ModelViewSet[ApplicationConfiguration]`,
+ * `GenericAPIView[Any]` — and with the brackets left on, none of them matched anything,
+ * so `RemoteVersionView` was read as a plain class with no check rather than as a DRF
+ * view whose permissions live in settings. Reported open, and it is not.
+ */
+function baseName(base: string): string {
+  return (base.split('.').pop() ?? base).replace(/[[(].*$/, '').trim();
+}
+
+/**
+ * Base classes that make a class a Django REST Framework view.
+ *
+ * Worth naming because DRF's permissions have a *project-wide* default, so silence on
+ * one of these classes is a question this reader has not answered rather than an open
+ * door — see the `handler-blind` finding above.
+ */
+const DRF_VIEW_BASES =
+  /^(APIView|GenericAPIView|(ReadOnly)?ModelViewSet|GenericViewSet|ViewSet|ViewSetMixin|(List|Create|Retrieve|Update|Destroy|ListCreate|RetrieveUpdate|RetrieveDestroy|RetrieveUpdateDestroy)APIView)$/;
+
+/**
+ * The permission classes a view declares, as bare names.
+ *
+ * `permission_classes = (IsAuthenticated, PaperlessObjectPermissions)` arrives as the
+ * unparsed right-hand side, so the brackets and the module prefixes come off here.
+ */
+function permissionNames(def: PyDef): string[] {
+  const declared = (def.fields ?? []).find((field) => field.name === 'permission_classes');
+  if (!declared) return [];
+  return declared.type
+    .split(',')
+    .map((raw) => raw.replace(/[()[\]\s]/g, '').split('.').pop() ?? '')
+    .filter(Boolean);
+}
+
+/**
+ * A class and everything it inherits from *in this file*, nearest first.
+ *
+ * `class BulkEditView(DocumentOperationPermissionMixin)` declares no policy of its own —
+ * the mixin one level up holds `permission_classes = (IsAuthenticated,)`, and eleven of
+ * paperless-ngx's doors get their only real check that way. Reading a class's own fields
+ * and stopping there left those doors looking unexamined.
+ *
+ * Same file only, which is honest rather than complete: a base imported from elsewhere is
+ * a fact in another file, and this reader sees one file at a time. In practice a project
+ * keeps a view and its view mixins together, and paperless does.
+ */
+function inheritanceChain(def: PyDef, classes: Map<string, PyDef>): PyDef[] {
+  const chain: PyDef[] = [];
+  const seen = new Set<string>();
+  const queue = [def];
+  while (queue.length > 0) {
+    const current = queue.shift() as PyDef;
+    if (seen.has(current.name)) continue;
+    seen.add(current.name);
+    chain.push(current);
+    for (const base of current.bases ?? []) {
+      const parent = classes.get(baseName(base));
+      if (parent) queue.push(parent);
+    }
+  }
+  return chain;
+}
+
+/** Base classes whose whole purpose is to refuse a caller who is not signed in. */
+const GUARD_MIXINS: Record<string, string> = {
+  LoginRequiredMixin: 'Django LoginRequiredMixin',
+  PermissionRequiredMixin: 'Django PermissionRequiredMixin',
+  UserPassesTestMixin: 'Django UserPassesTestMixin',
+  AccessMixin: 'Django AccessMixin',
+};
+
+/** DRF permission classes that refuse somebody, by the names DRF ships. */
+const GUARD_PERMISSIONS: Record<string, string> = {
+  IsAuthenticated: 'DRF IsAuthenticated',
+  IsAdminUser: 'DRF IsAdminUser',
+  IsAuthenticatedOrReadOnly: 'DRF IsAuthenticatedOrReadOnly',
+  DjangoModelPermissions: 'DRF DjangoModelPermissions',
+  DjangoObjectPermissions: 'DRF DjangoObjectPermissions',
+  DjangoModelPermissionsOrAnonReadOnly: 'DRF DjangoModelPermissions',
+};
+
+/** DRF's way of writing down that a door is open on purpose. */
+const OPEN_PERMISSIONS = new Set(['AllowAny']);
 
 /**
  * The file behind a name an import bound to a module: `views`, `curl`, `client`.
@@ -798,6 +782,19 @@ function resolveBoundModule(input: PythonBoundaryInput, bound: string): string |
   return null;
 }
 
+/**
+ * One segment of a Django address, with the regex punctuation taken off.
+ *
+ * `re_path(r'^legacy/widgets/$', …)` serves `/legacy/widgets/`. The anchors are regex
+ * syntax, not part of the address, and leaving them in prints a URL nobody can visit.
+ * Only the anchors come off: the rest of the pattern is left exactly as written, because
+ * a capture group is a real part of the route and rewriting it into something prettier
+ * would be inventing an address. `path()` is not a regex at all, so it is untouched.
+ */
+function djangoSegment(callee: string, route: string): string {
+  return callee === 'path' ? route : route.replace(/^\^/, '').replace(/\$$/, '');
+}
+
 function pushDjangoRoute(
   input: PythonBoundaryInput,
   findings: BoundaryFinding[],
@@ -818,8 +815,7 @@ function pushDjangoRoute(
   // nobody can visit. Only the anchors come off: the rest of the pattern is left
   // exactly as written, because a capture group is a real part of the route and
   // rewriting it into something prettier would be inventing an address.
-  const pattern = callee === 'path' ? route : route.replace(/^\^/, '').replace(/\$$/, '');
-  const shown = `/${pattern}`.replace(/\/+/g, '/');
+  const shown = `/${djangoSegment(callee, route)}`.replace(/\/+/g, '/');
   findings.push({
     type: 'endpoint',
     endpointKind: 'http-route',
@@ -832,14 +828,9 @@ function pushDjangoRoute(
     framework: 'Django',
     writes: false,
     guards: [],
-    site: site(line, view ? `${callee}("${route}", ${view}${viewIsClass ? '.as_view()' : ''})` : undefined),
+    site: site(line, view ? `${callee}("${route}", ${view})` : undefined),
     handlerId,
     routerVar,
-    // The class a class-based view is written on, so the owner chain can walk its
-    // bases: `class ProjectView(SignedIn)` says nothing itself and inherits
-    // everything, and the base is usually in a third file neither this one nor the
-    // view's own mentions.
-    ...(viewIsClass && view ? { handlerOwner: view.split('.').pop() as string } : {}),
     // Only when the view could not be found. A door whose handler we located is a door
     // whose checks we have read — see EndpointMeta.handlerUnlinked.
     ...(handlerId === null ? { handlerUnlinked: true as const } : {}),
@@ -866,12 +857,6 @@ function pushDjangoRoute(
  * and travels as handlerOwner, so a class-level check the owner chain can read
  * still reaches the door.
  *
- * The class itself is opened where the import can be resolved (#178), because
- * `permission_classes = [IsAuthenticated]` in its body is the one place a DRF API
- * writes its lock down. Silence there is not an open door: DRF falls back to
- * `DEFAULT_PERMISSION_CLASSES` in settings, so a ViewSet that declares nothing keeps
- * the honest blank — see the `handler-blind` finding.
- *
  * Gated on the file importing rest_framework, so somebody's own `.register(...)`
  * in an unrelated codebase proves nothing. The first argument must be a string:
  * `admin.site.register(Document)` registers a model, not a route, and has no
@@ -889,7 +874,6 @@ function detectDrfRouters(
     const view = nameArg(call.args[1]);
     if (view === null) continue;
     const shown = `/${prefix}`.replace(/\/+/g, '/');
-    const handlerId = djangoHandlerId(input, view, true);
     findings.push({
       type: 'endpoint',
       endpointKind: 'http-route',
@@ -902,13 +886,9 @@ function detectDrfRouters(
       writes: false,
       guards: [],
       site: site(call.line, `${call.callee}("${prefix}", ${view})`),
-      // The ViewSet is an ordinary class in an ordinary module, so it can be opened and
-      // read like any other handler — its `permission_classes` is where a DRF API says
-      // who may come in. A ViewSet that names none stays unlinked all the same, because
-      // DRF's default lives in settings: see `handler-blind`.
-      handlerId,
+      handlerId: null,
       handlerOwner: view.split('.').pop() ?? view,
-      ...(handlerId === null ? { handlerUnlinked: true as const } : {}),
+      handlerUnlinked: true,
     });
   }
 }
@@ -1079,27 +1059,24 @@ function detectAuthAliases(input: PythonBoundaryInput, findings: BoundaryFinding
   for (const def of input.file.defs ?? []) {
     if (def.kind !== 'class') continue;
     const bases = (def.bases ?? []).map(baseName).filter(Boolean);
-    const depends = (def.depends ?? []).map((name) => name.split('.').pop() ?? name);
-    findings.push({ type: 'auth-alias', name: def.name, depends, bases, path: input.file.path, line: def.line });
-
-    // The class that wrote the lock down is where the chain starts, and it is offered
-    // under *its own* name so that `class BillingView(SecureView)` three files away can
-    // find it by walking bases — the one relation that actually carries a Django check
-    // from one class to another. Naming it after the class rather than after the mixin
-    // keeps the evidence line exact: two apps both using `LoginRequiredMixin` would
-    // otherwise take turns owning the one entry.
-    //
-    // paperless-ngx is why this reads `permission_classes` and not just the bases. Six
-    // of its document operations — delete, merge, rotate, reprocess, bulk edit, edit
-    // pdf — are classes with an empty body inheriting one `DocumentOperationPermissionMixin`,
-    // and that mixin's `permission_classes = (IsAuthenticated,)` is the only statement
-    // of who may call any of them.
-    const lock = classLock(def, bases);
-    if (!lock) continue;
+    // `permission_classes` is the same statement as a `Depends(…)` in a class body —
+    // "nobody reaches these handlers without passing this" — so it travels the same way.
+    // Routing it through the alias rather than only onto the class's node id is what
+    // lets a DRF registration find it, and it inherits **across files** for free: the
+    // merge already joins a class to its parents by name, which this reader cannot do
+    // because it sees one file at a time (#241).
+    const own = (def.depends ?? []).map((name) => name.split('.').pop() ?? name);
+    const permissions = permissionNames(def).filter((name) => !OPEN_PERMISSIONS.has(name));
     findings.push({
-      type: 'auth-checker',
+      type: 'auth-alias',
       name: def.name,
-      guard: { ...lock, how: 'config', path: input.file.path, line: def.line, confidence: 'certain' },
+      depends: [...own, ...permissions],
+      // Named after the statement the reader will actually find in the file. `Depends` is
+      // FastAPI's word and would send somebody looking for the wrong line.
+      ...(own.length === 0 && permissions.length > 0 ? { binds: 'permission_classes' } : {}),
+      bases,
+      path: input.file.path,
+      line: def.line,
     });
   }
 

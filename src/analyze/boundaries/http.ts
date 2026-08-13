@@ -11,7 +11,16 @@
  * honest list of every way in.
  */
 import { Node, SyntaxKind } from 'ts-morph';
-import type { BinaryExpression, CallExpression, ClassDeclaration, SourceFile, VariableDeclaration } from 'ts-morph';
+import type {
+  ArrowFunction,
+  BinaryExpression,
+  CallExpression,
+  ClassDeclaration,
+  FunctionDeclaration,
+  FunctionExpression,
+  SourceFile,
+  VariableDeclaration,
+} from 'ts-morph';
 import type { GuardInfo } from '../../model/types.js';
 import {
   argAt,
@@ -24,8 +33,18 @@ import {
   objectProp,
   permitsEverything,
 } from './ast.js';
+import { unreadHead } from './address.js';
 import { guardFromName } from './auth.js';
-import type { BoundaryDetector, DetectorContext } from './types.js';
+import type {
+  ArgPosition,
+  BoundaryDetector,
+  DetectorContext,
+  EndpointFinding,
+  RouteHelperFinding,
+} from './types.js';
+
+/** The three ways a route helper gets written down. */
+type FunctionLike = FunctionDeclaration | FunctionExpression | ArrowFunction;
 
 const HTTP_METHODS = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS'];
 const WRITE_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
@@ -284,6 +303,7 @@ export const nodeRoutesDetector: BoundaryDetector = {
       routeCall(node, ctx);
       fastifyRouteObject(node, ctx);
       routerMount(node, ctx);
+      routerHandoff(node, ctx);
       globalPrefix(node, ctx);
     } else if (Node.isClassDeclaration(node)) {
       nestController(node, ctx);
@@ -291,6 +311,57 @@ export const nodeRoutesDetector: BoundaryDetector = {
       mountMethod(node, ctx);
     } else if (Node.isVariableDeclaration(node)) {
       pathConstant(node, ctx);
+    }
+  },
+};
+
+/**
+ * Route helpers, and the calls that might be to one (#229).
+ *
+ * Separate from `nodeRoutesDetector`, and ungated, because **the file that defines a
+ * route helper is the file least likely to import the framework**. It takes the router
+ * as a parameter — that is the entire point of the pattern — so it has no reason to
+ * mention Express at all. NodeBB's `src/routes/helpers.js` carries 334 doors and its
+ * imports are `winston`, `../middleware` and `../controllers/helpers`.
+ *
+ * Gating this on the framework import would therefore switch it off in exactly the case
+ * it exists for, which is #230's lesson arriving from the other direction: the evidence
+ * that a file registers routes is what the file *does*, not what it declares.
+ *
+ * The shape rule is strict enough to stand without the gate — see `routeHelper` — and
+ * the merge throws away every call whose callee no file declared as a helper.
+ */
+export const routeHelperDetector: BoundaryDetector = {
+  id: 'route-helpers',
+  enabled: () => true,
+  visit(node, ctx) {
+    if (Node.isCallExpression(node)) {
+      helperRouteCall(node, ctx);
+    } else if (Node.isBinaryExpression(node)) {
+      // `helpers.setupPageRoute = function (…) {…}`, which is how a CommonJS module
+      // hangs a helper off its exports — NodeBB's three are all written this way.
+      const assigned = node.getRight();
+      const target = node.getLeft();
+      if (
+        node.getOperatorToken().getKind() === SyntaxKind.EqualsToken &&
+        (Node.isFunctionExpression(assigned) || Node.isArrowFunction(assigned)) &&
+        Node.isPropertyAccessExpression(target)
+      ) {
+        routeHelper(assigned, target.getName(), ctx);
+      }
+    } else if (Node.isFunctionDeclaration(node)) {
+      const name = node.getName();
+      if (name) routeHelper(node, name, ctx);
+    } else if (Node.isVariableDeclaration(node)) {
+      const initializer = node.getInitializer();
+      const nameNode = node.getNameNode();
+      if (
+        Node.isIdentifier(nameNode) &&
+        initializer &&
+        (Node.isFunctionExpression(initializer) || Node.isArrowFunction(initializer))
+      ) {
+        routeHelper(initializer, nameNode.getText(), ctx);
+      }
     }
   },
 };
@@ -334,6 +405,296 @@ function mountMethod(node: BinaryExpression, ctx: DetectorContext): void {
   ctx.emit({ type: 'mount-method', name: target.getName(), path: ctx.ref.relPath, line: node.getStartLineNumber() });
 }
 
+// ---------------------------------------------------------------------------
+// Route helpers — route registration wearing the app's own name (#229)
+// ---------------------------------------------------------------------------
+
+/**
+ * Where each of a function's own parameters lands in the argument list callers write.
+ *
+ * Three spellings, because a rest parameter is what you are left with once one of the
+ * arguments in the middle is optional, and then the ones after it can only be reached
+ * from the end:
+ *
+ *   function (router, name, controller)          — plain, counted from the front
+ *   const [router, name] = args                  — destructured off a rest parameter
+ *   const controller = args[args.length - 1]     — counted from the back
+ *
+ * NodeBB's three helpers need all three at once. A conditional (`args.length > 3 ? … : []`)
+ * is deliberately not read: it resolves to a different argument depending on how the
+ * caller wrote the call, and a position that is only sometimes right is not a position.
+ */
+function paramPositions(fn: FunctionLike): Map<string, ArgPosition> {
+  const positions = new Map<string, ArgPosition>();
+  const params = fn.getParameters();
+  let restName: string | null = null;
+
+  params.forEach((param, index) => {
+    const nameNode = param.getNameNode();
+    if (!Node.isIdentifier(nameNode)) return;
+    if (param.isRestParameter()) restName = nameNode.getText();
+    else positions.set(nameNode.getText(), { from: 'start', index });
+  });
+
+  if (!restName) return positions;
+
+  const body = fn.getBody();
+  if (!body) return positions;
+
+  for (const declaration of body.getDescendantsOfKind(SyntaxKind.VariableDeclaration)) {
+    const initializer = declaration.getInitializer();
+    if (!initializer) continue;
+    const nameNode = declaration.getNameNode();
+
+    // `const [router, name] = args` — the front of the list, by position in the pattern.
+    if (Node.isArrayBindingPattern(nameNode) && initializer.getText() === restName) {
+      nameNode.getElements().forEach((element, index) => {
+        if (!Node.isBindingElement(element)) return;
+        const local = element.getNameNode();
+        if (Node.isIdentifier(local)) positions.set(local.getText(), { from: 'start', index });
+      });
+      continue;
+    }
+
+    if (!Node.isIdentifier(nameNode) || !Node.isElementAccessExpression(initializer)) continue;
+    if (initializer.getExpression().getText() !== restName) continue;
+    const position = indexFromAccess(initializer.getArgumentExpression(), restName);
+    if (position) positions.set(nameNode.getText(), position);
+  }
+
+  return positions;
+}
+
+/** `args[2]` and `args[args.length - 1]` — a position from either end of the list. */
+function indexFromAccess(index: Node | undefined, restName: string): ArgPosition | null {
+  if (!index) return null;
+  if (Node.isNumericLiteral(index)) return { from: 'start', index: index.getLiteralValue() };
+  if (!Node.isBinaryExpression(index)) return null;
+  if (index.getOperatorToken().getKind() !== SyntaxKind.MinusToken) return null;
+  if (index.getLeft().getText() !== `${restName}.length`) return null;
+  const right = index.getRight();
+  if (!Node.isNumericLiteral(right)) return null;
+  // `args.length - 1` is the last argument, which is index 0 counted from the back.
+  return { from: 'end', index: right.getLiteralValue() - 1 };
+}
+
+/**
+ * `setupPageRoute(router, '/login', controller)` — a route registered on the caller's
+ * behalf by a function this repo wrote itself (#229).
+ *
+ * The evidence is the body and never the name, exactly as for `mountMethod` above: the
+ * function hands one of its own parameters to a route method as the path. NodeBB's three
+ * helpers carry 334 doors against 41 written the plain way, so on that repo this rule is
+ * the difference between a map of the application and a map of its leftovers.
+ *
+ * Two guards against reading an ordinary function as a route helper. The route call has
+ * to take **at least two arguments** — a path and something to answer it — which is what
+ * separates `router.get(name, controller)` from `cache.get(key)`, the shape that
+ * otherwise matches word for word. And the whole detector only runs on a file where a
+ * server framework is in play.
+ */
+function routeHelper(fn: FunctionLike, name: string, ctx: DetectorContext): void {
+  const body = fn.getBody();
+  if (!body) return;
+  // A router and a path at the very least. Also the cheap way out of walking the body of
+  // every function in the repo, now that this runs ungated.
+  const positions = paramPositions(fn);
+  if (positions.size < 2) return;
+
+  let router: ArgPosition | null = null;
+  let pathArg: ArgPosition | null = null;
+  let verb: RouteHelperFinding['verb'] | null = null;
+  let handler: ArgPosition | null = null;
+  const templates: string[] = [];
+
+  for (const call of body.getDescendantsOfKind(SyntaxKind.CallExpression)) {
+    const callee = call.getExpression();
+    let receiver: Node;
+    let thisVerb: RouteHelperFinding['verb'];
+
+    if (Node.isPropertyAccessExpression(callee)) {
+      const method = callee.getName();
+      if (!ROUTER_METHODS.has(method)) continue;
+      receiver = callee.getExpression();
+      thisVerb = { literal: method };
+    } else if (Node.isElementAccessExpression(callee)) {
+      // `router[verb](name, …)` — the method itself comes from an argument, which is how
+      // one helper covers every verb. NodeBB's `setupApiRoute` is 204 of the 334.
+      const argument = callee.getArgumentExpression();
+      if (!argument || !Node.isIdentifier(argument)) continue;
+      const at = positions.get(argument.getText());
+      if (!at) continue;
+      receiver = callee.getExpression();
+      thisVerb = { at };
+    } else continue;
+
+    if (!Node.isIdentifier(receiver)) continue;
+    const routerAt = positions.get(receiver.getText());
+    if (!routerAt) continue;
+
+    const args = call.getArguments();
+    // A path and something to answer it. `cache.get(key)` stops here.
+    if (args.length < 2) continue;
+
+    const template = pathTemplate(args[0], positions);
+    if (!template) continue;
+
+    router = routerAt;
+    pathArg = template.at;
+    verb = thisVerb;
+    templates.push(template.shape);
+    handler ??= handlerPosition(args[args.length - 1], positions);
+  }
+
+  if (!router || !pathArg || !verb || templates.length === 0) return;
+
+  ctx.emit({
+    type: 'route-helper',
+    name,
+    router,
+    pathArg,
+    verb,
+    handler,
+    templates,
+    path: ctx.ref.relPath,
+    line: fn.getStartLineNumber(),
+  });
+}
+
+/**
+ * The path a route call is given, when it is built out of one of the enclosing
+ * function's parameters.
+ *
+ * `name` is the plain case. `` `/api${name}` `` is the other one, and it matters: NodeBB
+ * registers every page twice, once for the browser and once for the JSON the browser
+ * fetches, so half of that application's addresses exist nowhere in the calling file.
+ */
+function pathTemplate(arg: Node | undefined, positions: Map<string, ArgPosition>): { at: ArgPosition; shape: string } | null {
+  if (!arg) return null;
+  if (Node.isIdentifier(arg)) {
+    const at = positions.get(arg.getText());
+    return at ? { at, shape: '{}' } : null;
+  }
+  if (!Node.isTemplateExpression(arg)) return null;
+  const spans = arg.getTemplateSpans();
+  if (spans.length !== 1) return null;
+  const expression = spans[0].getExpression();
+  if (!Node.isIdentifier(expression)) return null;
+  const at = positions.get(expression.getText());
+  if (!at) return null;
+  // Anything after the interpolation would be a suffix on the address; none of the real
+  // ones have that, and inventing it is how a door gets an address nobody serves it at.
+  if (spans[0].getLiteral().getLiteralText() !== '') return null;
+  return { at, shape: `${arg.getHead().getLiteralText()}{}` };
+}
+
+/** The handler, through the one wrapper a helper usually puts round it. */
+function handlerPosition(arg: Node | undefined, positions: Map<string, ArgPosition>): ArgPosition | null {
+  if (!arg) return null;
+  if (Node.isIdentifier(arg)) return positions.get(arg.getText()) ?? null;
+  // `helpers.tryRoute(controller)` — the real handler is inside the wrapper.
+  if (Node.isCallExpression(arg)) {
+    const inner = arg.getArguments()[0];
+    if (inner && Node.isIdentifier(inner)) return positions.get(inner.getText()) ?? null;
+  }
+  return null;
+}
+
+/**
+ * Any call carrying a `/…` string literal, kept in case the merge turns out to know the
+ * callee as a route helper (#229).
+ *
+ * The same division of labour as `mount-method`: whether `setupPageRoute` registers
+ * routes is a fact from another file, so the call travels and the merge decides. The
+ * literal is a filter on noise rather than the check — a helper call with no readable
+ * path would be an address nobody could print anyway.
+ */
+/**
+ * The checks a *caller* hands a route helper, which are not the helper's own (#229).
+ *
+ * `helperRoutes` deliberately refuses to read the middleware a helper injects into every
+ * door it opens, because NodeBB's is `authenticateRequest` and it lets anonymous callers
+ * straight through. This is the other list, and it is ordinary evidence:
+ *
+ *   const middlewares = [middleware.ensureLoggedIn, middleware.admin.checkPrivileges];
+ *   setupApiRoute(router, 'get', '/analytics', [...middlewares], controllers…);
+ *
+ * `checkPrivileges` refuses a guest outright. Written beside the door by the person
+ * declaring it, it is the same evidence as `router.get('/x', requireAuth, handler)` — and
+ * withholding it left 21 of NodeBB's `/api/v3/admin/*` doors reading as unchecked.
+ *
+ * Three shapes, because the list is usually assembled rather than written out: the name
+ * on its own, inside an array literal, and spread from a local the file built earlier.
+ * The spread is resolved through the identifier's symbol rather than by scanning the
+ * file, so a `middlewares` declared inside a factory is still found — the scope trap
+ * that hid every one of Ghost's routers in #204.
+ */
+function helperGuards(call: CallExpression, ctx: DetectorContext): GuardInfo[] {
+  const guards: GuardInfo[] = [];
+  const seen = new Set<string>();
+
+  const consider = (node: Node): void => {
+    const name = dottedName(Node.isCallExpression(node) ? node.getExpression() : node);
+    if (!name || seen.has(name)) return;
+    seen.add(name);
+    const guard = guardFromName(name, ctx);
+    if (guard) guards.push({ ...guard, how: 'middleware', line: call.getStartLineNumber() });
+  };
+
+  const expand = (node: Node, depth: number): void => {
+    if (depth > 2) return;
+    if (Node.isArrayLiteralExpression(node)) {
+      for (const element of node.getElements()) expand(element, depth + 1);
+      return;
+    }
+    if (Node.isSpreadElement(node)) {
+      const inner = node.getExpression();
+      for (const declared of arrayBehind(inner)) expand(declared, depth + 1);
+      return;
+    }
+    consider(node);
+  };
+
+  for (const arg of call.getArguments()) expand(arg, 0);
+  return guards;
+}
+
+/** The elements of `const x = [a, b]`, given the `x` in `...x`. */
+function arrayBehind(node: Node): Node[] {
+  if (!Node.isIdentifier(node)) return [];
+  const declarations = node.getSymbol()?.getDeclarations() ?? [];
+  for (const declaration of declarations) {
+    if (!Node.isVariableDeclaration(declaration)) continue;
+    const initializer = declaration.getInitializer();
+    if (initializer && Node.isArrayLiteralExpression(initializer)) return initializer.getElements();
+  }
+  return [];
+}
+
+function helperRouteCall(call: CallExpression, ctx: DetectorContext): void {
+  const callee = dottedName(call.getExpression());
+  if (!callee) return;
+
+  const args = call.getArguments();
+  if (args.length < 2) return;
+
+  const literals = args.map((arg) => literalString(arg));
+  if (!literals.some((value) => value !== null && value.startsWith('/'))) return;
+
+  ctx.emit({
+    type: 'helper-route-call',
+    callee,
+    args: literals,
+    names: args.map((arg) => (Node.isIdentifier(arg) ? arg.getText() : dottedName(arg))),
+    guards: helperGuards(call, ctx),
+    framework: serverFrameworks(ctx)[0] ?? 'HTTP',
+    path: ctx.ref.relPath,
+    line: call.getStartLineNumber(),
+    nodeId: ctx.enclosing(call),
+    snippet: `${callee}(…)`,
+  });
+}
+
 /**
  * `const BASE_API_PATH = '/ghost/api'` — a name a mount elsewhere may be written with.
  *
@@ -375,7 +736,16 @@ function routerMount(call: CallExpression, ctx: DetectorContext): void {
   // merge layer, which has seen every file, decides. See `MountMethodFinding`.
   if (!COULD_MOUNT.test(method)) return;
   const hostVar = parts[parts.length - 2];
-  if (!looksLikeRouter(hostVar, ctx)) return;
+  // A router this file was *handed* is not built here and cannot be recognised by what
+  // it was constructed from, so the only other thing it can be recognised by is the
+  // name — and a name is a convention (#234). NodeBB carries 204 of its addresses on a
+  // parameter that happens to be spelled `router`; rename it and they collapse to 2.
+  //
+  // The evidence that settles it is the argument: you cannot mount a sub-router onto
+  // something that is not a router. So a parameter used as a `use` receiver is allowed
+  // through here, and the *merge* decides — the finding is dropped unless the module
+  // named in the argument really does build a router (`Builds.childOf`).
+  if (!looksLikeRouter(hostVar, ctx) && !handedOver(call.getExpression())) return;
 
   const args = call.getArguments();
   const prefix = literalString(args[0]);
@@ -405,6 +775,149 @@ function routerMount(call: CallExpression, ctx: DetectorContext): void {
       line: call.getStartLineNumber(),
     });
   }
+}
+
+/**
+ * `require('./routes')(app)` and `registerRoutes(app)` — the app handed to another file
+ * as an argument, on a line the reader can see (#206).
+ *
+ * This is the CommonJS half of "where was the route registered". A mount says *this
+ * router hangs under that one*; a handoff says *this module was given the router itself*,
+ * and everything it writes on the parameter it received is registered at the call's own
+ * line. `const app = express(); require('./public')(app); app.use(requireAuth)` puts
+ * `/health` above the gate from a file that never mentions the gate — and today the map
+ * says the gate covers it.
+ *
+ * The argument has to be a bare identifier this file thinks is a router, and the callee
+ * has to resolve to code in this repo. Both halves matter: `http.createServer(app)` hands
+ * the app to a package, and a package's internals are not where routes are declared; and
+ * a property access as the argument (`app.locals`, `config.app`) is not the router.
+ *
+ * Mounts are skipped rather than double-read. `app.use('/api', users)` is already a
+ * `router-mount` and already ordered by {@link registeredAboveTheGate}; reading it a
+ * second time here would say the same thing in a weaker way, since a handoff cannot see
+ * which of several arguments was the router.
+ */
+function routerHandoff(call: CallExpression, ctx: DetectorContext): void {
+  const callee = call.getExpression();
+
+  // `app.use(...)`, `app.get(...)`, `router.route(...)`: the router is the *receiver*
+  // here, not a passenger. Its ordering is the mount rule's to answer.
+  const dotted = dottedName(callee);
+  if (dotted?.includes('.')) {
+    const parts = dotted.split('.');
+    const receiver = parts[parts.length - 2];
+    if (receiver && isRouter(receiver, ctx.locals)) return;
+  }
+
+  const target = handoffTarget(callee, ctx);
+  if (!target) return;
+
+  for (const arg of call.getArguments()) {
+    if (!Node.isIdentifier(arg)) continue;
+    const hostVar = arg.getText();
+    if (!isRouter(hostVar, ctx.locals)) continue;
+    ctx.emit({
+      type: 'router-handoff',
+      path: ctx.ref.relPath,
+      hostVar,
+      targetModule: target,
+      line: call.getStartLineNumber(),
+      scope: sequenceOf(call, ctx.sf),
+    });
+    return;
+  }
+}
+
+/**
+ * The module a call hands its arguments to, or null when that is not this repo's code.
+ *
+ * Three spellings, and they are the three CommonJS actually writes:
+ *
+ *   require('./routes')(app)   — the module invoked where it is loaded
+ *   routes(app)                — a name bound by an import or an earlier `require`
+ *   routes.setup(app)          — a method on one
+ *
+ * External packages are refused outright. Whatever `express.static(app)` or
+ * `winston.info(app)` does with the argument, it does not declare routes in a file this
+ * analysis can read, and a finding pointing into `node_modules` can only ever match
+ * nothing or match by accident.
+ */
+function handoffTarget(callee: Node, ctx: DetectorContext): string | null {
+  // `require('./routes')(app)` — the specifier is right there in the callee.
+  if (Node.isCallExpression(callee)) {
+    const specifier = requireSpecifier(callee);
+    return specifier ? importedModule(ctx.ref.relPath, specifier) : null;
+  }
+
+  const root = Node.isIdentifier(callee) ? callee.getText() : dottedName(callee)?.split('.')[0];
+  if (!root) return null;
+  const imported = ctx.imports.get(root);
+  if (!imported || imported.external) return null;
+  return importedModule(ctx.ref.relPath, imported.module);
+}
+
+/**
+ * The run of statements a call belongs to: its innermost enclosing function, or the
+ * whole file when it has none.
+ *
+ * Line numbers are only an ordering while both statements are in one sequence. A
+ * `function wire(app) { require('./x')(app) }` at the top of a file has a smaller line
+ * number than the `app.use(auth)` at the bottom and runs *after* it, so the merge checks
+ * that the gate falls in this span before it compares — see {@link RouterHandoffFinding}.
+ */
+function sequenceOf(call: CallExpression, sf: SourceFile): { from: number; to: number } {
+  const fn = call.getFirstAncestor(
+    (node) =>
+      Node.isFunctionDeclaration(node) ||
+      Node.isFunctionExpression(node) ||
+      Node.isArrowFunction(node) ||
+      Node.isMethodDeclaration(node) ||
+      Node.isConstructorDeclaration(node),
+  );
+  if (fn) return { from: fn.getStartLineNumber(), to: fn.getEndLineNumber() };
+  return { from: 1, to: sf.getEndLineNumber() };
+}
+
+/**
+ * Whether a `use` receiver is something this function was given rather than built (#234).
+ *
+ * ```js
+ * Write.reload = async (params) => {
+ *     const { router } = params;
+ *     router.use('/api/v3/users', require('./users')());
+ * ```
+ *
+ * `router` is destructured from a parameter. Nothing in this file says what it is, and
+ * `looksLikeRouter` only lets it through because `ROUTER_NAMES` matches the word — which
+ * is a coincidence of spelling standing under 204 of NodeBB's addresses.
+ *
+ * Two shapes: the parameter used directly, and one property pulled off it, which is how
+ * an options object is unpacked. Resolved through the identifier's symbol, so a shadowed
+ * name cannot be mistaken for the outer one.
+ *
+ * Deliberately not "any identifier this file did not build". The point is to recognise a
+ * *handover* — a value that arrived from a caller — because that is the case where the
+ * evidence genuinely lives in another file. A local built from something unrecognised is
+ * a different question and is still declined.
+ */
+function handedOver(callee: Node): boolean {
+  if (!Node.isPropertyAccessExpression(callee)) return false;
+  const receiver = callee.getExpression();
+  if (!Node.isIdentifier(receiver)) return false;
+
+  for (const declaration of receiver.getSymbol()?.getDeclarations() ?? []) {
+    if (Node.isParameterDeclaration(declaration)) return true;
+    if (!Node.isBindingElement(declaration)) continue;
+    // `const { router } = params` — the binding sits in a pattern whose declaration is
+    // initialised from something, and that something has to be a parameter too.
+    const variable = declaration.getFirstAncestorByKind(SyntaxKind.VariableDeclaration);
+    const initializer = variable?.getInitializer();
+    if (!initializer || !Node.isIdentifier(initializer)) continue;
+    const source = initializer.getSymbol()?.getDeclarations() ?? [];
+    if (source.some((node) => Node.isParameterDeclaration(node))) return true;
+  }
+  return false;
 }
 
 /**
@@ -551,8 +1064,26 @@ function globalPrefix(call: CallExpression, ctx: DetectorContext): void {
   });
 }
 
+/**
+ * Which server framework is in play — asked of the manifest *and* of the file itself.
+ *
+ * The manifest alone is not evidence enough, and a repo with no manifest at all is not
+ * a repo with no doors. `NodeBB/NodeBB` keeps its `package.json` in `install/` and
+ * copies it into place during setup, so a checked-out clone has none — and 927 files
+ * and 150,000 lines of Express came out as two ways in, no framework, and the archetype
+ * "a service other things call, no interface files". For a forum with a full web UI.
+ *
+ * Nothing was unreadable and nothing warned: the whole route detector is gated on this
+ * answer, so the map was confident and empty, which is the shape of wrong this project
+ * is built to avoid.
+ *
+ * `require('express')` in the file doing the routing is the better evidence anyway. A
+ * manifest says what somebody declared; the import says what this code uses.
+ */
 function serverFrameworks(ctx: DetectorContext): string[] {
-  return SERVER_PACKAGES.filter(({ pkg }) => ctx.signals.packages.has(pkg)).map(({ name }) => name);
+  return SERVER_PACKAGES.filter(({ pkg }) => ctx.signals.packages.has(pkg) || ctx.packages.has(pkg)).map(
+    ({ name }) => name,
+  );
 }
 
 /** `app.post('/users', requireAuth, createUser)` */
@@ -693,24 +1224,22 @@ function nestController(cls: ClassDeclaration, ctx: DetectorContext): void {
       const sub = normalizeSegment(literalString(decorator.getArguments()[0]) ?? '');
       const path = `/${[base, sub].filter(Boolean).join('/')}`;
       const owner = cls.getName() ?? null;
-      // An unread prefix makes the whole address unknown, and two unknown addresses are
-      // not the same door. Keyed on the *file*, not the class name: a v1/v2 split puts
-      // a `UsersController` in two files, and keying on the name merged them back into
-      // one entry wearing one of their guards — #153's false green through a smaller
-      // hole (#159). A file holds one class of a given name, so file-plus-tail is the
-      // identity the class name only approximates. The tail is real and is shown; the
-      // ellipsis is where the prefix would be.
-      const route = prefixUnread ? null : path;
-      const shown = prefixUnread ? `${name} …${path}${owner ? ` (${owner})` : ''}` : `${name} ${path}`;
-      const key = prefixUnread ? `${name} ${ctx.ref.relPath}#${owner ?? ''}${path}` : `${name} ${path}`;
       const methodUseGuards = method.getDecorator('UseGuards');
-      ctx.emit({
+      // An unread prefix makes the whole address unknown, and two unknown addresses are
+      // not the same door. Discriminated by the *file* plus the class, not the class
+      // name alone: a v1/v2 split puts a `UsersController` in two files, and keying on
+      // the name merged them back into one entry wearing one of their guards — #153's
+      // false green through a smaller hole (#159). A file holds one class of a given
+      // name, so file-plus-class-plus-tail is the identity the class name only
+      // approximates. The tail is real and is shown; the ellipsis is where the prefix
+      // would be, and `unreadHead` is where that sentence is written down once (#245).
+      const door: EndpointFinding = {
         type: 'endpoint',
         endpointKind: 'http-route',
-        key,
-        name: shown,
+        key: `${name} ${path}`,
+        name: `${name} ${path}`,
         method: name,
-        route,
+        route: path,
         framework: 'NestJS',
         writes: WRITE_METHODS.has(name),
         // A guard that permits everything is not a lock and not silence either: it is
@@ -722,9 +1251,165 @@ function nestController(cls: ClassDeclaration, ctx: DetectorContext): void {
         // The class this route was declared on, so a check written further up the chain
         // than this file goes can still be found.
         handlerOwner: owner,
-      });
+      };
+      ctx.emit(prefixUnread ? unreadHead(door, [owner], owner) : door);
     }
   }
+}
+
+// ---------------------------------------------------------------------------
+// Strapi — the route is a data structure, not a call (#246)
+// ---------------------------------------------------------------------------
+
+/**
+ * `{ method: 'GET', path: '/settings', handler: 'admin-settings.getSettings' }` — a door
+ * declared as an object literal in a file nothing calls.
+ *
+ * Strapi's route helper has exactly **one** call site, so #229's rule finds nothing here:
+ * there is no call to read. The doors are 272 object literals across 112 files, and
+ * `packages/core/core` reported **2** ways in before this existed. That is the shape of
+ * wrong this project is built against — confident and empty, for a CMS whose entire admin
+ * API lives in those files.
+ *
+ * ## Why this is not "any object with a path and a method"
+ *
+ * That reading is the danger #235 warns about, and Strapi is where it would bite: the
+ * React admin declares its *outbound* requests the same way —
+ *
+ *   query: (args) => ({ url: `/admin/webhooks/${args?.id ?? ''}`, method: 'GET' })
+ *
+ * Dozens of those, and read as doors they would invent routes the server never serves.
+ * What actually keeps them out is that they key the address as **`url`**, not `path` —
+ * measured, by deleting the other rule and watching nothing change.
+ *
+ * The `handler` requirement is therefore a narrowing guard the corpus does not exercise,
+ * and it is kept deliberately rather than by oversight: without it the shape being
+ * matched is `{ method, path }`, which is the general form #235 says must not be read,
+ * and the `url` spelling is one client library's habit rather than a rule. An object
+ * naming what answers the request is declaring a door; one saying where to send a fetch
+ * is not. It narrows, so it can only ever lose a door, never invent one — and it did lose
+ * one until `handler(ctx) { … }` was handled, which is the cost of a rule like this and
+ * the reason it is written down.
+ *
+ * ## The address is deliberately a fragment
+ *
+ * `/settings` in the upload plugin is served at `/upload/settings`, and nothing in the
+ * route file says so — `register-routes.ts` does `router.prefix ?? \`/${pluginName}\``,
+ * with the name coming from a registry keyed by the directory the plugin loaded from.
+ * The content API adds `strapi.config.get('api.rest.prefix', '/api')` on top, which is a
+ * deployment setting. So the head is unread and says so (#245), rather than printing
+ * `/settings` as though that were an address somebody could call.
+ */
+function strapiRoute(node: Node, ctx: DetectorContext): void {
+  if (!Node.isObjectLiteralExpression(node)) return;
+
+  const method = literalString(objectProp(node, 'method'))?.toUpperCase();
+  if (!method || !STRAPI_METHODS.has(method)) return;
+  const route = literalString(objectProp(node, 'path'));
+  if (!route?.startsWith('/')) return;
+  // Present, whatever it is: a string naming a controller action, an identifier, an
+  // array, an inline function, or a method shorthand. `objectProp` is not enough here —
+  // it resolves a property to its *initializer*, and `handler(ctx) { … }` has none, which
+  // silently dropped the public redirect at the root of every Strapi site.
+  if (!node.getProperty('handler')) return;
+
+  const config = objectProp(node, 'config');
+  const httpMethod = method === 'ALL' ? 'ANY' : method;
+  ctx.emit({
+    type: 'endpoint',
+    endpointKind: 'http-route',
+    key: `${httpMethod} ${route}`,
+    name: `${httpMethod} ${route}`,
+    method: httpMethod,
+    route,
+    framework: 'Strapi',
+    writes: WRITE_METHODS.has(httpMethod),
+    // `auth: false` is somebody writing down that this door is open on purpose — the
+    // same statement `permitsEverything` reads off a Nest guard (#152).
+    ...(objectProp(config, 'auth')?.getText() === 'false' ? { declaredPublic: true } : {}),
+    guards: strapiPolicies(config, ctx),
+    site: ctx.site(node, `${httpMethod} ${route}`),
+    // The handler is `'admin-settings.getSettings'`, a name in a registry this layer
+    // does not resolve. Saying so is better than attributing the door to the route file,
+    // which would make an unread controller look like a handler with no checks in it.
+    handlerId: null,
+    handlerUnlinked: true,
+    prefixUnread: true,
+  });
+}
+
+const STRAPI_METHODS = new Set([...HTTP_METHODS, 'ALL']);
+
+/**
+ * The checks on a Strapi route, which are the `policies` and never the `middlewares`.
+ *
+ * Both keys sit in the same `config` object and the difference is the whole rule. A
+ * policy has a refusal contract, written into `services/server/policy.ts`:
+ *
+ *   const result = await handler(context, config, { strapi });
+ *   if (![true, undefined].includes(result)) throw new errors.PolicyError();
+ *
+ * — the framework saying, in as many words, that this decides whether the request
+ * proceeds, which is the same evidence `@UseGuards` carries in Nest. A middleware is
+ * `koa-compose`d and promises nothing.
+ *
+ * Measured across every route file in the repo, the split is not close. All 350-odd
+ * policy entries are authorization: `isAuthenticatedAdmin`, `hasPermissions`, `.read`,
+ * `.update`, `.publish`. The middleware list is `sso`, `audit-logs`, `review-workflows`
+ * — and `rateLimit`, ten times, standing on `/auth/local`, `/auth/local/register`,
+ * `/auth/forgot-password` and `/auth/reset-password`. Reading that list would put a lock
+ * on the door that hands out sessions, which is exactly what NodeBB's
+ * `authenticateRequest` would have done in #229. Same trap, different framework, and the
+ * framework itself has already separated the two keys for us.
+ *
+ * Two spellings, because the schema allows both: the name on its own, and
+ * `{ name: 'admin::hasPermissions', config: { actions: [...] } }`.
+ */
+function strapiPolicies(config: Node | undefined, ctx: DetectorContext): GuardInfo[] {
+  const list = objectProp(config, 'policies');
+  if (!list || !Node.isArrayLiteralExpression(list)) return [];
+  const guards: GuardInfo[] = [];
+  for (const element of list.getElements()) {
+    const name = literalString(element) ?? literalString(objectProp(element, 'name'));
+    if (!name) continue;
+    guards.push({
+      name,
+      how: 'config',
+      provider: 'Strapi',
+      path: ctx.ref.relPath,
+      line: element.getStartLineNumber(),
+      confidence: 'certain',
+    });
+  }
+  return guards;
+}
+
+/**
+ * Gated on the package rather than the file, and that is deliberate.
+ *
+ * `packages/core/upload/server/src/routes/admin.ts` opens with `export const routes = {`
+ * and imports nothing at all — seven doors and not one line saying which framework they
+ * belong to. #230's lesson twice over: the file that declares routes is the file least
+ * likely to name the framework, so asking the file would switch this off in exactly the
+ * case it exists for. The manifest is asked as well as the imports because a plugin
+ * depends on `@strapi/utils` without ever depending on `strapi` itself.
+ */
+export const strapiRoutesDetector: BoundaryDetector = {
+  id: 'strapi-routes',
+  enabled: (ctx) => strapiInPlay(ctx),
+  visit(node, ctx) {
+    strapiRoute(node, ctx);
+  },
+};
+
+function strapiInPlay(ctx: DetectorContext): boolean {
+  for (const name of ctx.signals.packages) {
+    if (name === 'strapi' || name.startsWith('@strapi/')) return true;
+  }
+  for (const name of ctx.packages) {
+    if (name === 'strapi' || name.startsWith('@strapi/')) return true;
+  }
+  return false;
 }
 
 // ---------------------------------------------------------------------------

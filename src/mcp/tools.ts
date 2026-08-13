@@ -30,6 +30,7 @@ import { bundleMaps } from '../model/sourcemap.js';
 import { grammarTier } from '../model/tiers.js';
 import { findPersonalData } from '../model/personal.js';
 import type { AtlasEdge, AtlasNode, CodeSite, EndpointMeta, GuardInfo } from '../model/types.js';
+import { headCommit, shortCommit } from '../util/head.js';
 import type { AtlasApp, AtlasSource } from './atlas.js';
 
 /** What one tool call sends back. Mirrors the protocol's `CallToolResult`. */
@@ -54,6 +55,18 @@ export interface ToolDefinition {
 /** Enough rows to act on. Past this an agent is paying for a list it will not read. */
 const DEFAULT_LIMIT = 60;
 const MAX_LIMIT = 500;
+
+/**
+ * How many things one call may ask about.
+ *
+ * An agent about to change five files has one question, not five, and making it spend
+ * five round trips on that is the cost this ceiling exists to avoid. It is a ceiling
+ * rather than a limit anybody should reach: past twenty the answer stops being a thing
+ * a model can hold and starts being a document it skims, and the per-target `limit`
+ * multiplies against this. Anything beyond it is dropped and reported, never trimmed
+ * quietly.
+ */
+const MAX_TARGETS = 20;
 
 /** The env inventory rides on a pseudo-door; it has its own tool and is not a way in. */
 const NOT_A_DOOR = new Set(['env']);
@@ -150,22 +163,32 @@ export const MCP_TOOLS: ToolDefinition[] = [
     name: 'what_calls',
     description:
       'Who reaches a function, type, file or door — the callers, the importers and the routes that expose it. Use it ' +
-      'before changing or deleting something. Every row carries a confidence, because these edges are resolved by a ' +
-      'type checker in some languages and matched by name in others. This is not a sound call graph: a call made ' +
-      'through a dynamic lookup or a string is not in it, so an empty answer means "none found", never "none exist".',
+      'before changing or deleting something. Pass every name you are about to touch in one call: `targets` takes a ' +
+      'list, and asking about five things at once is one round trip instead of five. Every row carries a confidence, ' +
+      'because these edges are resolved by a type checker in some languages and matched by name in others. This is ' +
+      'not a sound call graph: a call made through a dynamic lookup or a string is not in it, so an empty answer ' +
+      'means "none found", never "none exist".',
     inputSchema: {
       type: 'object',
       properties: {
+        targets: {
+          type: 'array',
+          items: { type: 'string' },
+          description:
+            'The things to ask about, each an atlas node id (`func:src/lib/db.ts#connect`) or a plain name ' +
+            `(\`connect\`). Prefer this over "target" whenever you have more than one. Up to ${MAX_TARGETS} per ` +
+            'call; any beyond that are left unanswered and counted in the reply.',
+        },
         target: {
           type: 'string',
-          description:
-            'An atlas node id (`func:src/lib/db.ts#connect`) or a plain name (`connect`). A name that matches more ' +
-            'than one thing returns the candidates rather than picking one.',
+          description: 'One thing to ask about, when there is only one. Same spellings as "targets".',
         },
         ...SCOPE_PROPERTY,
-        limit: { type: 'number', description: `How many callers to return. Default ${DEFAULT_LIMIT}, maximum ${MAX_LIMIT}.` },
+        limit: {
+          type: 'number',
+          description: `How many callers to return per target. Default ${DEFAULT_LIMIT}, maximum ${MAX_LIMIT}.`,
+        },
       },
-      required: ['target'],
     },
   },
   {
@@ -173,15 +196,26 @@ export const MCP_TOOLS: ToolDefinition[] = [
     description:
       'Find something by name and get its file, its lines, what contains it, and its description. Descriptions read ' +
       'out of the code\'s own docstrings are marked `docs`; ones a model wrote are marked `ai` and may be wrong. Use ' +
-      'this to turn a name a user said into a place in the repo.',
+      'this to turn a name a user said into a place in the repo — and when they said several, pass them all in ' +
+      '`queries` rather than calling this once per name.',
     inputSchema: {
       type: 'object',
       properties: {
-        query: { type: 'string', description: 'A name, part of a name, or part of a path.' },
+        queries: {
+          type: 'array',
+          items: { type: 'string' },
+          description:
+            'The names to look for, each a name, part of a name, or part of a path. Prefer this over "query" ' +
+            `whenever you have more than one. Up to ${MAX_TARGETS} per call; any beyond that are left unanswered ` +
+            'and counted in the reply.',
+        },
+        query: { type: 'string', description: 'One name to look for, when there is only one.' },
         ...SCOPE_PROPERTY,
-        limit: { type: 'number', description: `How many matches to return. Default 20, maximum ${MAX_LIMIT}.` },
+        limit: {
+          type: 'number',
+          description: `How many matches to return per query. Default 20, maximum ${MAX_LIMIT}.`,
+        },
       },
-      required: ['query'],
     },
   },
   {
@@ -253,10 +287,14 @@ export function callMcpTool(source: AtlasSource, name: string, args: Record<stri
       return listDoors(graph, app, apps, readString(args, 'kind'), readLimit(args, DEFAULT_LIMIT));
     case 'trace_error':
       return traceErrorTool(graph, app, apps, readString(args, 'trace') ?? '', readLimit(args, DEFAULT_LIMIT));
-    case 'what_calls':
-      return whatCalls(graph, app, apps, readString(args, 'target') ?? '', readLimit(args, DEFAULT_LIMIT));
-    case 'where_is':
-      return whereIs(graph, app, apps, readString(args, 'query') ?? '', readLimit(args, 20));
+    case 'what_calls': {
+      const asked = readTargets(args, 'target', 'targets');
+      return whatCalls(graph, app, apps, asked.targets, asked.dropped, readLimit(args, DEFAULT_LIMIT));
+    }
+    case 'where_is': {
+      const asked = readTargets(args, 'query', 'queries');
+      return whereIs(graph, app, apps, asked.targets, asked.dropped, readLimit(args, 20));
+    }
     case 'unimported_files':
       return unimportedFiles(graph, app, apps);
     case 'data_stores':
@@ -664,16 +702,83 @@ function whyUnplaced(reason: UnplacedReason | null, candidates: string[]): strin
   }
 }
 
+/** One target's worth of a batched answer: the prose to print and the facts to key. */
+interface Section {
+  target: string;
+  lines: string[];
+  facts: Record<string, unknown>;
+}
+
+/**
+ * Stitches per-target sections into the one result the caller gets back.
+ *
+ * A single target prints exactly what it printed before batching existed — no heading,
+ * no separator, nothing to re-learn — because most calls ask about one thing and a
+ * change in that shape would be a cost paid by everybody to serve the batch case.
+ * Several targets get a heading each, since an unlabelled run of answers to different
+ * questions is worse than no batching at all: an agent reading the second answer as
+ * though it were about the first is the failure mode this heading prevents.
+ *
+ * `results` is always present and always one entry per target, so a reader has one shape
+ * to handle. For a single target the same keys are also spread at the top level, which
+ * is the shape this tool answered with before and which callers may already read.
+ */
+function batched(
+  app: AtlasApp,
+  apps: AtlasApp[],
+  graph: AtlasGraph,
+  sections: Section[],
+  dropped: number,
+  footer: string[] = [],
+): ToolResult {
+  const lines: string[] = [];
+
+  if (dropped > 0) {
+    lines.push(
+      `Answering the first ${MAX_TARGETS}; ${dropped} more ${plural(dropped, 'was', 'were')} not looked at. ` +
+        'Ask about those in another call.',
+      '',
+    );
+  }
+
+  sections.forEach((section, index) => {
+    if (sections.length > 1) {
+      if (index > 0) lines.push('');
+      lines.push(`### ${section.target}`);
+    }
+    lines.push(...section.lines);
+  });
+
+  return answer(lines, [...provenance(app, apps, graph), ...footer], {
+    ...envelope(app, graph),
+    ...(sections.length === 1 ? sections[0].facts : {}),
+    ...(dropped > 0 ? { droppedTargets: dropped } : {}),
+    results: sections.map((section) => ({ target: section.target, ...section.facts })),
+  });
+}
+
 function whatCalls(
   graph: AtlasGraph,
   app: AtlasApp,
   apps: AtlasApp[],
-  target: string,
+  targets: string[],
+  dropped: number,
   limit: number,
 ): ToolResult {
-  if (!target.trim()) return problem('what_calls needs a "target" — a node id or a name.');
+  if (targets.length === 0) {
+    return problem('what_calls needs a "target" — a node id or a name — or several in "targets".');
+  }
 
-  const resolved = resolveTarget(graph, target.trim());
+  const sections = targets.map((target) => whatCallsOne(graph, app, target, limit));
+  return batched(app, apps, graph, sections, dropped, [
+    'A `certain` edge was resolved by the language\'s own checker. A `likely` one was matched by name through the ' +
+      'import that introduced it. Neither is a sound call graph — see the tool description.',
+  ]);
+}
+
+/** Who reaches one thing, as prose and as facts. `limit` is per target, not per call. */
+function whatCallsOne(graph: AtlasGraph, app: AtlasApp, target: string, limit: number): Section {
+  const resolved = resolveTarget(graph, target);
   if ('candidates' in resolved) {
     const lines = [
       resolved.candidates.length === 0
@@ -681,12 +786,11 @@ function whatCalls(
         : `"${target}" matches ${resolved.candidates.length} things here, so this tool will not pick one for you. Call it again with one of these ids:`,
     ];
     for (const node of resolved.candidates) lines.push(`  ${node.id}  ${node.kind}  ${placeOf(node)}`);
-    return answer(lines, provenance(app, apps, graph), {
-      ...envelope(app, graph),
-      resolved: null,
-      candidates: resolved.candidates.map(nodeFact),
-      callers: [],
-    });
+    return {
+      target,
+      lines,
+      facts: { resolved: null, candidates: resolved.candidates.map(nodeFact), callers: [] },
+    };
   }
 
   const node = resolved.node;
@@ -715,15 +819,10 @@ function whatCalls(
     }
   }
 
-  return answer(
+  return {
+    target,
     lines,
-    [
-      ...provenance(app, apps, graph),
-      'A `certain` edge was resolved by the language\'s own checker. A `likely` one was matched by name through the ' +
-        'import that introduced it. Neither is a sound call graph — see the tool description.',
-    ],
-    {
-      ...envelope(app, graph),
+    facts: {
       resolved: nodeFact(node),
       total: incoming.length,
       returned: shown.length,
@@ -731,24 +830,31 @@ function whatCalls(
         .map((edge) => callerFact(edge, graph.getNodeById(edge.fromId)))
         .filter((fact): fact is Record<string, unknown> => fact !== null),
     },
-  );
+  };
 }
 
-/** Turn a name somebody said into a place in the repo. */
+/** Turn the names somebody said into places in the repo. */
 function whereIs(
   graph: AtlasGraph,
   app: AtlasApp,
   apps: AtlasApp[],
-  query: string,
+  queries: string[],
+  dropped: number,
   limit: number,
 ): ToolResult {
-  if (!query.trim()) return problem('where_is needs a "query".');
+  if (queries.length === 0) return problem('where_is needs a "query", or several in "queries".');
 
-  const matches = graph.search(query.trim(), limit);
+  const sections = queries.map((query) => whereIsOne(graph, app, query, limit));
+  return batched(app, apps, graph, sections, dropped);
+}
+
+/** Where one name lives. `limit` is per query, so a batch of five may return five lists. */
+function whereIsOne(graph: AtlasGraph, app: AtlasApp, query: string, limit: number): Section {
+  const matches = graph.search(query, limit);
   const lines: string[] = [];
   if (matches.length === 0) {
     lines.push(`Nothing in ${app.name} matches "${query}".`);
-    return answer(lines, provenance(app, apps, graph), { ...envelope(app, graph), matches: [] });
+    return { target: query, lines, facts: { matches: [] } };
   }
 
   lines.push(`${matches.length} ${plural(matches.length, 'match', 'matches')} for "${query}" in ${app.name}.`);
@@ -758,10 +864,7 @@ function whereIs(
     if (node.summary) lines.push(`      ${oneLine(node.summary)}${node.summarySource === 'ai' ? ' (ai)' : ''}`);
   }
 
-  return answer(lines, provenance(app, apps, graph), {
-    ...envelope(app, graph),
-    matches: matches.map(nodeFact),
-  });
+  return { target: query, lines, facts: { matches: matches.map(nodeFact) } };
 }
 
 /**
@@ -963,6 +1066,9 @@ function provenance(app: AtlasApp, apps: AtlasApp[], graph: AtlasGraph): string[
       'analysis and never runs one.',
   );
 
+  const moved = staleness(app, graph);
+  if (moved) lines.push(moved);
+
   const tier = grammarTier(graph.allNodes());
   if (tier) lines.push(tier.sentence);
 
@@ -976,14 +1082,58 @@ function provenance(app: AtlasApp, apps: AtlasApp[], graph: AtlasGraph): string[
   return lines;
 }
 
+/**
+ * The sentence that says the code has moved on since this atlas was written, or null.
+ *
+ * The timestamp a line above already tells an agent how old these facts are. It does not
+ * tell it whether they are *wrong*, and those are different questions: an atlas from last
+ * week describes this repo perfectly if nobody committed to it, and one from four minutes
+ * ago describes code that no longer exists if an agent has been working since. Comparing
+ * the commit the analyzer read against the one checked out now answers the question that
+ * was actually being asked.
+ *
+ * Silent unless both commits are known *and* they differ. The two absences are the reason
+ * this returns null rather than a reassuring sentence: a repo with no git, and a working
+ * tree this cannot read, are both "nobody can tell", and printing "up to date" for either
+ * would be the tool inventing an all-clear. Saying nothing leaves the timestamp as the
+ * only claim, which is the one it can support.
+ *
+ * The uncommitted edits an agent has made and not committed are invisible here, and the
+ * line says so, because a reader told the atlas matches HEAD would otherwise take that
+ * for a guarantee that it matches the files on disk.
+ */
+function staleness(app: AtlasApp, graph: AtlasGraph): string | null {
+  const analyzed = graph.meta.vcs?.commit;
+  if (!analyzed) return null;
+
+  const current = headCommit(app.dir);
+  if (!current || current === analyzed) return null;
+
+  return (
+    `This code has moved since it was analysed: the atlas describes ${shortCommit(analyzed)} and the working tree ` +
+    `is now on ${shortCommit(current)}. Anything above may describe code that no longer exists — re-run ` +
+    '`app-atlas analyze` before trusting it. (Uncommitted edits are not visible to this check, so a matching ' +
+    'commit is not by itself proof the atlas is current.)'
+  );
+}
+
 /** The keys every structured result carries, so provenance survives the text being skipped. */
 function envelope(app: AtlasApp, graph: AtlasGraph): Record<string, unknown> {
+  const analyzed = graph.meta.vcs?.commit;
+  const current = analyzed ? headCommit(app.dir) : null;
+
   return {
     app: app.name,
     scope: app.id,
     root: app.dir,
     analyzedAt: graph.meta.generatedAt,
     toolVersion: graph.meta.toolVersion,
+    // Omitted rather than sent as null or false when either commit is unknown, so a
+    // consumer reading `stale` gets a verdict only where one was actually reached. A
+    // field that is absent has to be handled; a `false` invites being trusted.
+    ...(analyzed ? { analyzedCommit: analyzed } : {}),
+    ...(current ? { currentCommit: current } : {}),
+    ...(analyzed && current ? { stale: current !== analyzed } : {}),
   };
 }
 
@@ -1133,6 +1283,8 @@ function reasonPhrase(kind: string, count: number): string {
       return `${plural(count, 'route', 'routes')} declared in a routing table App Atlas has not followed to a handler`;
     case 'declared-public':
       return `${plural(count, 'door', 'doors')} the code declares open on purpose`;
+    case 'in-test':
+      return `${plural(count, 'route', 'routes')} the test suite declares — nobody outside a test run can knock on ${count === 1 ? 'it' : 'them'}`;
     default:
       return kind;
   }
@@ -1198,6 +1350,40 @@ function readString(args: Record<string, unknown>, key: string): string | undefi
 
 function readBoolean(args: Record<string, unknown>, key: string): boolean {
   return args[key] === true;
+}
+
+/**
+ * The list of things one call is about, however the caller chose to spell it.
+ *
+ * Both the plural key and the singular one are read, because the singular is what this
+ * tool has always taken and an agent that learned it a version ago is still right. They
+ * are concatenated rather than one winning, so a call that passes both gets an answer
+ * about everything it named — the alternative is silently ignoring half of a question.
+ *
+ * Duplicates collapse. Asking about the same name twice is one question, and every
+ * result is labelled with the target it belongs to, so nothing is lost by answering it
+ * once. Anything past `MAX_TARGETS` is dropped and *counted*, for the caller to be told
+ * about: a cap that trims a list without saying so reads exactly like a complete answer,
+ * which is the failure this whole surface is built to avoid.
+ */
+function readTargets(
+  args: Record<string, unknown>,
+  singular: string,
+  plural: string,
+): { targets: string[]; dropped: number } {
+  const raw: unknown[] = [];
+  if (Array.isArray(args[plural])) raw.push(...(args[plural] as unknown[]));
+  if (typeof args[singular] === 'string') raw.push(args[singular]);
+
+  const seen = new Set<string>();
+  for (const value of raw) {
+    if (typeof value !== 'string') continue;
+    const trimmed = value.trim();
+    if (trimmed.length > 0) seen.add(trimmed);
+  }
+
+  const targets = [...seen];
+  return { targets: targets.slice(0, MAX_TARGETS), dropped: Math.max(0, targets.length - MAX_TARGETS) };
 }
 
 function readLimit(args: Record<string, unknown>, fallback: number): number {

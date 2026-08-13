@@ -1,1 +1,2 @@
 requests>=2.31
+httpx-oauth>=0.13

@@ -41,7 +41,7 @@ import { hashParts } from '../../util/hash.js';
 import { isWorker } from '../wrangler.js';
 import { classifyZone } from '../zones.js';
 import { isCatchAllMatcher, matcherMatches } from './auth.js';
-import { composeRoutePrefixes, moduleOf, mountGraph, routerKey as moduleRouterKey } from './mounts.js';
+import { answersTo, composeRoutePrefixes, moduleOf, mountGraph, routerKey as moduleRouterKey } from './mounts.js';
 import {
   guardThroughHops,
   reachableGuards,
@@ -51,6 +51,7 @@ import {
 } from './reach.js';
 import type { ReachedGuard } from './reach.js';
 import type {
+  ArgPosition,
   AuthAliasFinding,
   AuthCheckerFinding,
   BoundaryFinding,
@@ -58,9 +59,12 @@ import type {
   GuardFinding,
   HandlerBlindFinding,
   HandlerDecoratorFinding,
+  HelperRouteCallFinding,
+  RouteHelperFinding,
   RouterBuildFinding,
   PathGuardFinding,
   RouterGuardFinding,
+  RouterHandoffFinding,
   RouterMountFinding,
   StoreFinding,
 } from './types.js';
@@ -216,6 +220,7 @@ function describesTheApp(): (finding: BoundaryFinding) => boolean {
         return !isTest(finding.site.path);
       case 'router-build':
       case 'router-mount':
+      case 'router-handoff':
       case 'router-guard':
       case 'path-constant':
       case 'global-prefix':
@@ -237,6 +242,45 @@ function describesTheApp(): (finding: BoundaryFinding) => boolean {
   };
 }
 
+/**
+ * Whether the code that declared this door is the app's test suite rather than the app
+ * (#247).
+ *
+ * The rule above exempts doors from its filter, and that exemption was right and
+ * incomplete. Right, because a door must never be dropped for where its file sits —
+ * dub serves `POST /api/stripe/integration/webhook/test`, a live endpoint Stripe posts
+ * to, from `app/(ee)/api/stripe/integration/webhook/test/route.ts`, and "test" there is
+ * Stripe's *test mode*. Incomplete, because the guards and the router wiring around a
+ * test-declared door are filtered while the door itself survives, so sails reported
+ * `GET /res_sending_back_a_boolean/1` beside its real routes, with nothing checking it.
+ * Twenty-nine of its thirty doors were that, and all twenty-nine were the whole of the
+ * screen that exists to find open ones.
+ *
+ * So this decides a *fact written on the door*, never whether the door exists. It is the
+ * same set-aside #132 made for an unreadable file — a check for a production route does
+ * not live in a fixture — arriving at the doors, which were left behind.
+ *
+ * The address is the whole of the difference, and the question is asked of it in exactly
+ * the words it was asked of the path: **would this address, read as a path, be a test
+ * file?** dub's is `/api/stripe/integration/webhook/test`, which reads as one, so the
+ * word that made the file look like a test is a URL somebody types and is evidence about
+ * nothing. Sails' is `/res_redirect/1`, which does not, so `test/` there is a location on
+ * disk. That symmetry is what makes this safe for a framework whose filename *is* its
+ * address — Remix's `routes/api.test.ts` serves `/api/test` and answers the question the
+ * same way, with no knowledge of Remix anywhere in here.
+ *
+ * `classifyZone` is asked both times rather than a word list being restated, for the
+ * reason `compose.ts` gives: a reader should be able to guess why, and there is only one
+ * place to change it. The extension is fixed at `.ts` because the question is about the
+ * directory words, which every language table in `zones.ts` spells the same way.
+ */
+function declaredInTest(finding: EndpointFinding): boolean {
+  if (classifyZone(finding.site.path) !== 'test') return false;
+  const route = finding.route;
+  if (route === null || route === '') return true;
+  return classifyZone(`${route}/x.ts`) !== 'test';
+}
+
 function pathOf(finding: BoundaryFinding): string {
   if ('site' in finding && finding.site) return finding.site.path;
   if ('path' in finding && typeof finding.path === 'string') return finding.path;
@@ -249,7 +293,11 @@ export function buildBoundaryGraph(raw: BuildInput): BoundaryGraph {
 
   // Before anything is merged: a door's identity is its address, and half the address
   // lives in the file that mounted its router rather than the file that declared it.
-  const shipped = composeRoutePrefixes(raw.findings.filter(describesTheApp()));
+  // Helper-registered doors are expanded first so they go through that composition on
+  // exactly the same terms as a route somebody wrote out longhand — the prefix, the
+  // ellipsis when it cannot be read, and the ordering of the checks around it.
+  const declared = raw.findings.filter(describesTheApp());
+  const shipped = composeRoutePrefixes([...declared, ...helperRoutes(declared)]);
 
   // A call made through a wrapper module is a real call to a real company; it just
   // took two files to say so. Resolved before anything is merged, so those sites land
@@ -304,6 +352,7 @@ export function buildBoundaryGraph(raw: BuildInput): BoundaryGraph {
     reachableGuards(guards, input.references ?? [], input.nodeNames ?? new Map()),
     input.findings.filter((f): f is RouterBuildFinding => f.type === 'router-build'),
     input.findings.filter((f): f is RouterMountFinding => f.type === 'router-mount'),
+    input.findings.filter((f): f is RouterHandoffFinding => f.type === 'router-handoff'),
   );
   applyHandlerDecorators(endpoints, decoratorGuards);
   applyDependencyGuards(
@@ -474,6 +523,10 @@ function collectEndpoints(input: BuildInput): Map<string, MergedEndpoint> {
     const id = makeEndpointId(finding.endpointKind, finding.key);
     const existing = merged.get(id);
     if (existing) {
+      // One declaration outside the suite is the whole answer: an address the app serves
+      // and a test re-declares is served, and a fact that says otherwise would take a
+      // real door off the count. The flag only survives while every site agrees.
+      if (!declaredInTest(finding)) delete existing.meta.declaredInTest;
       existing.meta.sites.push(finding.site);
       existing.meta.writes = existing.meta.writes || finding.writes;
       for (const guard of finding.guards) existing.meta.guards.push(guard);
@@ -501,6 +554,7 @@ function collectEndpoints(input: BuildInput): Map<string, MergedEndpoint> {
         ...(finding.generatedEntry ? { generatedEntry: true } : {}),
         ...(finding.handlerUnlinked ? { handlerUnlinked: true } : {}),
         ...(finding.declaredPublic ? { declaredPublic: true } : {}),
+        ...(declaredInTest(finding) ? { declaredInTest: true } : {}),
         sites: [finding.site],
       },
       handlerIds: new Set(finding.handlerId ? [finding.handlerId] : []),
@@ -558,6 +612,131 @@ function collectEndpoints(input: BuildInput): Map<string, MergedEndpoint> {
   addPublishedPortDoors(input, add);
 
   return merged;
+}
+
+const WRITE_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
+
+/** An argument's position resolved against the list a caller actually wrote. */
+function argAtPosition<T>(position: ArgPosition, list: T[]): T | undefined {
+  return position.from === 'start' ? list[position.index] : list[list.length - 1 - position.index];
+}
+
+/**
+ * The doors a repo declares through a helper of its own (#229).
+ *
+ * Whether `setupPageRoute` registers routes is a fact from the file that defines it, and
+ * whether `/login` is an address is a fact from the 334 files that call it, so this is
+ * the only place both are known. Same division as `mount-method`.
+ *
+ * ## The middleware is deliberately not read as a check
+ *
+ * The obvious next step — forward the helper's middleware list onto the doors it opens —
+ * is the one thing here that would make the map worse. NodeBB builds every list in
+ * `setupPageRoute` and `setupApiRoute` starting with `middleware.authenticateRequest`,
+ * and that function ends:
+ *
+ *   if (!res.headersSent) auth.setAuthVars(req);
+ *   return !res.headersSent;
+ *
+ * — it returns *true* for an anonymous caller and calls `next()`. It parses a session; it
+ * does not refuse anyone. It is also on `/login` and `/register`, which is the proof:
+ * a check that stands on the door handing out sessions is not a lock. Claiming it would
+ * put a confident green tick on all 300-odd doors of a forum whose entire public side is
+ * readable by anybody, and `authenticateRequest` matches `GUARD_PREFIX` on its name
+ * alone, so nothing downstream would have caught it.
+ *
+ * So these doors arrive with no checks and read as "not examined", which is what the tool
+ * says everywhere else it has not established an answer. An address that is right with an
+ * auth column that is blank is worth having; the same address wearing a lock that is not
+ * there is the failure this file exists to prevent.
+ *
+ * An earlier version of this comment claimed the rule cost NodeBB's 61 admin pages a real
+ * lock, because `setupAdminPageRoute` injects `middleware.admin.isAdminPage`. Reading the
+ * body says otherwise:
+ *
+ *   middleware.isAdminPage = function (req, res, next) {
+ *       res.locals.isAdminPage = true;
+ *       next();
+ *   };
+ *
+ * It sets a flag. NodeBB's real admin gate is a path matcher in `src/routes/index.js`,
+ * `router.all('(/+admin|/+admin/*?)', …, middleware.admin.checkPrivileges)`, which is a
+ * shape this file already reads. So the withdrawal costs nothing there — and the claim
+ * that it did was made from a *name*, which is the mistake the whole rule is about.
+ * See `test/routehelper.test.js`, which records this as a decision rather than an oversight.
+ */
+function helperRoutes(findings: BoundaryFinding[]): EndpointFinding[] {
+  const doors: EndpointFinding[] = [];
+  const add = (finding: EndpointFinding) => void doors.push(finding);
+  const helpers = new Map<string, RouteHelperFinding>();
+  const calls: HelperRouteCallFinding[] = [];
+  /** Variables this repo builds a router in, so a fragment can be told from an address. */
+  const built = new Set<string>();
+  for (const finding of findings) {
+    if (finding.type === 'router-build') built.add(`${finding.path}\0${finding.varName}`);
+  }
+  for (const finding of findings) {
+    // Keyed on the last segment: the definition knows it as `setupPageRoute`, and a
+    // caller may have written `helpers.setupPageRoute` or destructured the name out.
+    if (finding.type === 'route-helper') helpers.set(finding.name, finding);
+    else if (finding.type === 'helper-route-call') calls.push(finding);
+  }
+  if (helpers.size === 0) return doors;
+
+  for (const call of calls) {
+    const helper = helpers.get(call.callee.split('.').pop() ?? call.callee);
+    if (!helper) continue;
+
+    const route = argAtPosition(helper.pathArg, call.args);
+    if (!route || !route.startsWith('/')) continue;
+
+    const verb =
+      'literal' in helper.verb ? helper.verb.literal : (argAtPosition(helper.verb.at, call.args) ?? null);
+    // A door whose verb the caller computed is a door we cannot name. `ANY` would be a
+    // guess printed as a fact, and skipping loses less than that costs.
+    if (!verb) continue;
+    const method = verb.toLowerCase() === 'all' ? 'ANY' : verb.toUpperCase();
+
+    const routerVar = argAtPosition(helper.router, call.names) ?? null;
+    const handler = helper.handler ? (argAtPosition(helper.handler, call.names) ?? null) : null;
+
+    for (const template of helper.templates) {
+      const full = template.replace('{}', route);
+      add({
+        type: 'endpoint',
+        endpointKind: 'http-route',
+        key: `${method} ${full}`,
+        name: `${method} ${full}`,
+        method,
+        route: full,
+        framework: call.framework,
+        writes: WRITE_METHODS.has(method),
+        // Only what the *caller* wrote in the argument list — see `helperGuards`. The
+        // list the helper injects into every door it opens is still refused, for the
+        // reason above; this is the one written beside this door by the person who
+        // declared it, and is the same evidence as a plain `router.get('/x', check, h)`.
+        guards: call.guards,
+        site: {
+          path: call.path,
+          line: call.line,
+          nodeId: call.nodeId,
+          snippet: `${call.callee}(…, '${route}', …${handler ? ` ${handler}` : ''})`,
+        },
+        handlerId: null,
+        routerVar,
+        // A router this file built with `express.Router()` is a router somebody else
+        // mounts, so its fragment is not its address until that mount has been read —
+        // and `/:cid` on its own is not a door, it is four different doors wearing one
+        // name. #151's rule, arriving through a helper. A router the file was *handed*
+        // is the other case: `setupPageRoute(app, '/login', …)` is already whole, and
+        // putting an ellipsis in front of it would describe a prefix that is usually
+        // empty.
+        ...(routerVar && built.has(`${call.path}\0${routerVar}`) ? { prefixFromCaller: true } : {}),
+      });
+    }
+  }
+
+  return doors;
 }
 
 /**
@@ -914,6 +1093,7 @@ function applyGuards(
   reached: Map<string, ReachedGuard[]>,
   builds: RouterBuildFinding[],
   mounts: RouterMountFinding[],
+  handoffs: RouterHandoffFinding[],
 ): void {
   const byFile = new Map<string, GuardFinding[]>();
   const matchers: GuardFinding[] = [];
@@ -933,7 +1113,7 @@ function applyGuards(
     else byFile.set(file, [guard]);
   }
 
-  const above = registeredAboveTheGate(mountedAt);
+  const above = registeredAboveTheGate(mountedAt, builds, handoffs);
 
   for (const endpoint of endpoints.values()) {
     const route = endpoint.meta.route;
@@ -1097,7 +1277,7 @@ function applyHandlerDecorators(endpoints: Map<string, MergedEndpoint>, guards: 
  * every application puts above its gate are a health check and a webhook whose
  * signature is its lock (#201).
  *
- * Two positions are readable, and both are read:
+ * Three positions are readable, and all three are read:
  *
  *   - a route written on the guarded router in the file that writes the gate, ordered
  *     by its own line;
@@ -1106,6 +1286,10 @@ function applyHandlerDecorators(endpoints: Map<string, MergedEndpoint>, guards: 
  *     `webhooks.js` above it, and nothing in that file mentions the check — which is
  *     the half that matters, since the file being wrong is not the file you would look
  *     in.
+ *   - the guarded router *handed to another module as an argument* in that file, ordered
+ *     by the **call's** line (#206). `require('./public')(app)` above the gate registers
+ *     every route in `public.js` above the gate, and CommonJS Express is largely written
+ *     this way. Nothing here is a mount, so the mount graph has no edge to follow.
  *
  * Only the first hop out of the guarded file is followed, and everything else keeps its
  * guard. That asymmetry is deliberate, and it is the correction the first attempt at
@@ -1117,7 +1301,11 @@ function applyHandlerDecorators(endpoints: Map<string, MergedEndpoint>, guards: 
  */
 function registeredAboveTheGate(
   mountedAt: Map<string, RouterMountFinding[]>,
+  builds: RouterBuildFinding[],
+  handoffs: RouterHandoffFinding[],
 ): (endpoint: MergedEndpoint, guard: GuardFinding) => boolean {
+  const builtAt = new Set(builds.map((build) => moduleRouterKey(moduleOf(build.path), build.varName)));
+
   return (endpoint, guard) => {
     const gate = guard.coversFrom;
     const host = guard.routerVar;
@@ -1137,6 +1325,28 @@ function registeredAboveTheGate(
         if (mount.path !== gate.path || mount.hostVar !== host) continue;
         return mount.line < gate.line;
       }
+    }
+
+    for (const key of endpoint.routers) {
+      const owned = byModule(key);
+      // A router this module *built* is its own, whatever else the module was handed.
+      // `const router = express.Router()` in a file that also takes an `app` parameter
+      // is two routers, and only a mount says where the first one ended up.
+      if (builtAt.has(owned)) continue;
+      const where = owned.slice(0, owned.indexOf('\0'));
+      const handed = handoffs.filter(
+        (handoff) =>
+          handoff.path === gate.path &&
+          handoff.hostVar === host &&
+          gate.line >= handoff.scope.from &&
+          gate.line <= handoff.scope.to &&
+          answersTo(where, handoff.targetModule),
+      );
+      // Any of them, not all. A module handed the app twice — once above the gate and
+      // once below it — registers its routes twice, and Express answers with the *first*
+      // registration it matches. So the copy above the gate is the one a stranger
+      // reaches, and the earliest readable position is the one that decides the door.
+      if (handed.some((handoff) => handoff.line < gate.line)) return true;
     }
     return false;
   };
@@ -1242,7 +1452,11 @@ function applyDependencyGuards(
     if (guard) byRouter.set(routerKey(build.path, build.varName), { ...guard, how: 'config' });
   }
 
-  const behind = routersBehindACheck(routers, mounts, attached, byName);
+  // A check with a switch on it says nothing about a whole group — see
+  // `AuthCheckerFinding.switched`. Withheld here and nowhere else: the same function
+  // written straight onto a handler is still that handler's check.
+  const switched = new Set(checkers.filter((checker) => checker.switched).map((checker) => checker.name));
+  const behind = routersBehindACheck(routers, mounts, attached, byName, switched);
   const inherited = checkInherited(aliases, byName);
   // Only the wiring that names something the project turns callers away with. A module
   // applies a logger with the same two calls it applies a lock.
@@ -1381,56 +1595,99 @@ function routersBehindACheck(
   mounts: RouterMountFinding[],
   attached: RouterGuardFinding[],
   byName: Map<string, GuardInfo>,
+  switched: Set<string>,
 ): Map<string, GuardInfo> {
   if (mounts.length === 0 && attached.length === 0) return new Map();
+
+  // Everything this function decides is a claim about a *group* — one answer covering
+  // every door mounted under a router — so a check whose refusal its caller switches on
+  // and off is no evidence here, however plainly it rejects when it is switched on.
+  const readable = (names: string[] | undefined): string[] | undefined =>
+    switched.size === 0 ? names : names?.filter((name) => !switched.has(name.split('.').pop() ?? name));
 
   // What a router carries in its own right: the dependencies it was built with, and
   // any middleware added to it. Both are names until they are looked up here.
   const own = new Map<string, GuardInfo>();
-  const claim = (path: string, varName: string, names: string[] | undefined, how: 'config' | 'middleware') => {
+  /**
+   * Every check attached to a router, with the line it was attached on — because for a
+   * framework that copies middleware into a group as `Group()` runs, "what does this
+   * router carry" has no answer until you say *when*.
+   */
+  const timeline = new Map<string, { line: number; guard: GuardInfo }[]>();
+  const claim = (
+    path: string,
+    varName: string,
+    names: string[] | undefined,
+    how: 'config' | 'middleware',
+    line: number,
+  ) => {
     const key = routerKey(moduleOf(path), varName);
-    if (own.has(key)) return;
-    const guard = firstCheck(names, byName);
-    if (guard) own.set(key, { ...guard, how });
+    const guard = firstCheck(readable(names), byName);
+    if (!guard) return;
+    const entry = { ...guard, how };
+    if (!own.has(key)) own.set(key, entry);
+    const list = timeline.get(key);
+    if (list) list.push({ line, guard: entry });
+    else timeline.set(key, [{ line, guard: entry }]);
   };
-  for (const build of builds) claim(build.path, build.varName, build.dependencies, 'config');
-  for (const guard of attached) claim(guard.path, guard.varName, guard.names, guard.how);
+  for (const build of builds) claim(build.path, build.varName, build.dependencies, 'config', build.line);
+  for (const guard of attached) claim(guard.path, guard.varName, guard.names, guard.how, guard.line);
 
   const mountedAt = mountGraph(builds, mounts);
   const answers = new Map<string, GuardInfo | null>();
 
-  const guardFor = (key: string, seen: Set<string>): GuardInfo | null => {
-    const done = answers.get(key);
+  /** What this router carried by then, or everything it carries when the question is not asked. */
+  const carried = (key: string, asOf: number | null): GuardInfo | null => {
+    if (asOf === null) return own.get(key) ?? null;
+    let best: { line: number; guard: GuardInfo } | null = null;
+    for (const entry of timeline.get(key) ?? []) {
+      if (entry.line >= asOf) continue;
+      if (!best || entry.line > best.line) best = entry;
+    }
+    return best?.guard ?? null;
+  };
+
+  const guardFor = (key: string, seen: Set<string>, asOf: number | null): GuardInfo | null => {
+    // The answer depends on when it was asked, so the memo has to remember that too.
+    const memo = `${key}\0${asOf ?? ''}`;
+    const done = answers.get(memo);
     if (done !== undefined) return done;
     // A router mounted on itself, round however long a loop, tells us nothing.
-    if (seen.has(key)) return null;
-    seen.add(key);
+    if (seen.has(memo)) return null;
+    seen.add(memo);
 
-    let found = own.get(key) ?? null;
+    let found = carried(key, asOf);
     if (!found) {
       const parents = mountedAt.get(key) ?? [];
       // A router nobody mounts is a root: whatever it carries is all it has.
       if (parents.length > 0) {
         const guards = parents.map((mount) => {
-          const onTheMount = firstCheck(mount.dependencies, byName);
+          const onTheMount = firstCheck(readable(mount.dependencies), byName);
           // Written in the wiring, not in the handler — which is what `config` says,
           // and the difference a reader needs when they go looking for it.
           if (onTheMount) return { ...onTheMount, how: 'config' as const };
-          return guardFor(routerKey(moduleOf(mount.path), mount.hostVar), seen);
+          // A group made by this line inherits the host as the host stood on this line.
+          // Anything else asks the host what it carries, full stop, which is what every
+          // framework that wraps rather than copies actually does.
+          return guardFor(
+            routerKey(moduleOf(mount.path), mount.hostVar),
+            seen,
+            mount.inheritsInOrder === true ? mount.line : asOf,
+          );
         });
         found = guards.every((guard) => guard !== null) ? guards[0] : null;
       }
     }
 
-    seen.delete(key);
-    answers.set(key, found);
+    seen.delete(memo);
+    answers.set(memo, found);
     return found;
   };
 
   const out = new Map<string, GuardInfo>();
   for (const build of builds) {
     const key = routerKey(moduleOf(build.path), build.varName);
-    const guard = guardFor(key, new Set());
+    const guard = guardFor(key, new Set(), null);
     if (guard) out.set(key, { ...guard, confidence: 'likely' });
   }
   return out;
@@ -1477,6 +1734,29 @@ function guardConfidence(endpoint: MergedEndpoint, guard: GuardFinding): Confide
 }
 
 function pushGuard(endpoint: MergedEndpoint, guard: GuardInfo): void {
+  // A door the suite declared takes no check from anywhere (#250).
+  //
+  // directus's five mock-license-server routes came out wearing `authenticate`, sourced
+  // to `api/src/app.ts:328` — the shipped application's own `app.use`, reported as the
+  // lock on a Fastify service that exists for the length of an e2e run and that directus
+  // does not deploy. A catch-all covers a door whatever its address turns out to be
+  // (#172), and "whatever its address turns out to be" quietly included the addresses of
+  // a different program.
+  //
+  // It is a blanket refusal rather than a rule about catch-alls, because the suite's own
+  // checks are already gone: #25 filters a guard by the file it was registered in, so
+  // anything still able to reach a test-declared door was written in application code.
+  // The application does not stand in front of a server the harness started. "Not
+  // examined" is then the true answer, and it is the answer this door gets.
+  //
+  // Here rather than at the nine call sites for the reason `openDoors.ts` gives about
+  // `Record<OpenKind, …>`: a rule you have to remember in nine places is one that comes
+  // back. The reverse direction — a check registered by the suite reaching an
+  // application door — needs nothing, and that is measured rather than assumed: zero
+  // across nine repositories, and a constructed repro does not fire either, because a
+  // `.use` matcher carries its *registration* site as its path and #25 already drops it.
+  if (endpoint.meta.declaredInTest) return;
+
   // Two guards pointing at one line of one file are one check, whatever each of them
   // decided to call it. A controller that declares `@UseGuards(SessionGuard)` reaches
   // this twice — once as the decorator, once as the chain that inherits it — and

@@ -15,7 +15,13 @@
   display: flex;
   flex-direction: column;
   /* The step is the thing being read; the map behind it is the illustration. At 52%
-     a five-line step ended mid-sentence while half the canvas above sat empty. */
+     a five-line step ended mid-sentence while half the canvas above sat empty.
+
+     A ceiling, not a height: the drawer is a column of `flex: none` bands around one
+     `flex: 1` body, so it has always sized to its content. Measured on a 900px window,
+     the steps of the welcome and traced tours come out between 177px and 359px and
+     never touch this. The one case that does reach it is a step with its code snippet
+     expanded — 554px — which is exactly what the ceiling is for. */
   max-height: min(68%, 560px);
   border: 1px solid var(--line-strong);
   border-radius: 4px;
@@ -82,35 +88,41 @@
   border-color: #c4881c;
 }
 
-.wt-bar {
+/*
+ * One band across the top: which tour, the route through it, the way out.
+ *
+ * This was two bands — a title bar over the trail — which between them cost 77.5px of
+ * fixed height. Measured against a step body of 83px on the shortest step of the
+ * welcome tour, that was a header nearly as tall as the thing it was heading. They are
+ * one line now because they were always answering one question, "where am I".
+ *
+ * Deliberately `nowrap`: the trail is the flexible item and does its own wrapping
+ * inside this row, so a long tour grows the band by a line of trail rather than
+ * dropping the ✕ onto a line of its own.
+ */
+.wt-head {
   flex: none;
   display: flex;
+  flex-wrap: nowrap;
   align-items: center;
-  gap: 14px;
-  padding: 9px 12px 9px 15px;
+  gap: 12px;
+  padding: 7px 12px 7px 15px;
   border-bottom: 1px solid var(--line);
   background: var(--surface-press);
 }
 
-.wt-where {
-  display: flex;
-  flex-direction: column;
-  gap: 1px;
-  min-width: 0;
-  flex: 1;
-}
-
 .wt-tour {
+  flex: 0 1 auto;
+  min-width: 0;
+  /* A guard, not a size. Sharing the line means a long tour title could crowd the trail
+     off it; measured, the longest title here wants 281px and the trail 540px, and both
+     fit. Past this the title ellipsizes rather than the route disappearing. */
+  max-width: 40ch;
   font-size: 12.5px;
   font-weight: 650;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-}
-
-.wt-count {
-  font-size: 11px;
-  color: var(--ink-faint);
 }
 
 /*
@@ -121,14 +133,12 @@
  * announcing as a list.
  */
 .wt-trail {
-  flex: none;
+  flex: 1 1 auto;
+  min-width: 0;
   display: flex;
   flex-wrap: wrap;
   align-items: baseline;
   gap: 2px 0;
-  padding: 7px 15px 8px;
-  border-bottom: 1px solid var(--line);
-  background: var(--surface-press);
 }
 
 .wt-trail-step {
@@ -163,6 +173,7 @@
 }
 
 .wt-close {
+  flex: none;
   border: 0;
   background: none;
   font-size: 15px;
@@ -294,16 +305,29 @@
 }
 
 /* Never shrinks, and draws its own edge so the text above it visibly ends rather
-   than appearing to run underneath. */
+   than appearing to run underneath. `stretch` rather than `center` so the three
+   buttons come out one height: they are one row of controls and were reading as three
+   sizes — 26.5px, 41px and 29px, left to right. */
 .wt-actions {
   flex: none;
   display: flex;
-  align-items: center;
+  align-items: stretch;
   justify-content: space-between;
   gap: 12px;
   padding: 11px 15px 13px;
   border-top: 1px solid var(--line);
   background: var(--surface);
+}
+
+/*
+ * `.btn-primary` carries `margin-top: 12px` for the panels it was written for, where it
+ * follows a paragraph. In a row of buttons that margin is nothing but height: it made
+ * this row 66px tall around a 29px button, and stretched Back to 41px beside a 26.5px
+ * "Show me again", which is why the two ghost buttons never looked like a pair.
+ */
+.wt-actions .btn-primary,
+.wt-resume-nav .btn-primary {
+  margin-top: 0;
 }
 
 .wt-nav {

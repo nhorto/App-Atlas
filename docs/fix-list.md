@@ -823,30 +823,30 @@ differently.
       Every class-based door in every Django repo came back `unlinked` with an empty
       guard list, with `LoginRequiredMixin` on the line under the class statement.
       paperless routes 37 of its doors this way and registers 20 DRF ViewSets besides.
-      **Done. On paperless, 43 of 47 readable doors now carry the verdict its source
-      says they should, and the four reported open are open.** `as_view()` resolves to
-      the *class*, so the door links to a type node rather than to a function id that
-      exists nowhere. Five spellings of a lock are read, because Django gives a class
-      five: a mixin in the bases, `permission_classes`, `@method_decorator(login_required,
-      name="dispatch")`, a decorator on `dispatch`, and a `dispatch` that returns 403
-      itself. A bare `from documents.views import DocumentViewSet` resolves too, which is
-      the only spelling `router.register` accepts — so the 20 registrations are opened
-      and read rather than named and set aside.
+      **Done, and largely on `main` before this branch reached it** — `as_view()`
+      resolves to the class, bases are followed within a file, and `permission_classes`
+      travels as an alias dependency. What is added here is the rest of the ways a class
+      says it, and one thing it must not say.
+      **`@method_decorator(login_required, name="dispatch")` and a `dispatch` that
+      returns 403 itself.** Django's other two spellings, neither previously read.
       **Silence on a DRF class is not an open door.** DRF falls back to
       `DEFAULT_PERMISSION_CLASSES` in settings, which this reader has not read, so a
       ViewSet declaring no permission keeps the blank and says which file holds the
       answer instead of the stock "not followed to its handler" — it *was* followed.
-      `IsAuthenticatedOrReadOnly` gets the same treatment for a different reason: it locks
-      the writes and opens the reads, and DRF's router declares no method to say which of
-      those this door is. Calling it guarded claims a lock the GET has not got.
+      paperless's `/api/remote_version/` was being reported open on that basis.
+      **A DRF base with a type parameter is still a DRF base.** paperless writes
+      `GenericAPIView[Any]`, `ModelViewSet[ApplicationConfiguration]`,
+      `GenericViewSet[Document]` — every one of them subscripted, and with the brackets
+      left on the name none matched anything. No fixture written from the documentation
+      would have had brackets in it.
       **And #147 for the third time.** A check on a class travels by inheritance and by
       nothing else. Seeded into the reference walk — where an edge means "mentions" —
       `SecureView` reached the billing view that inherits it, then the login page that
-      merely names the billing view, and the product's front door was reported locked. So
-      class-level checks are excluded from that walk, and inheritance is followed through
-      the bases instead, which is also what makes paperless's six document operations
-      report the `IsAuthenticated` they inherit from one mixin rather than a serializer
-      validator three hops away.
+      merely names the billing view, and the product's front door was reported locked.
+      Reproduced on `main` before the fix. Class-level checks are out of that walk now;
+      the in-file bases walk covers the real case, and names the chain at the point it
+      is read (`PermissionMixin → IsAuthenticated`) rather than letting the reference
+      walk discover it.
 
 - [x] **46. `include()` around a list literal drops every prefix** — *Tier 1.*
       Item 40 composed Django's `include()` for a module string and for a named local
@@ -858,5 +858,22 @@ differently.
       carried its `^` into the middle of every address underneath, and Django's
       `include((patterns, "app_name"))` two-tuple looked like a list with no routes in it,
       which is where `/api/auth/login/` went.
-      **Done. 53 of 53 addresses correct, none invented** — plus `/ws/status/`, a
-      Channels consumer the hand-written ground-truth resolver had missed.
+      **Done on `main`, independently and in the same week**, all three parts. Verified
+      here rather than re-fixed: 53 of 53 addresses correct, none invented — plus
+      `/ws/status/`, a Channels consumer the hand-written ground-truth resolver had
+      missed.
+
+- [x] **47. A company named only by the middle of an import path** — *Tier 2.*
+      `serviceForPythonModule` keys on the first segment of a module path, so
+      `from httpx_oauth.clients.google import GoogleOAuth2` reduces to `httpx_oauth` — a
+      library, not a company. paperless reaches Gmail and Outlook through exactly those
+      two lines, and they are the **only** mention of either company in 748 files: the
+      mail server itself comes from the user's own account settings, so no hostname
+      literal exists anywhere to read. The Security page said two outside companies where
+      the honest answer is four.
+      **Done.** A longest-match table of dotted prefixes is consulted ahead of the
+      first-segment lookup, covering the OAuth client libraries and the Google Cloud and
+      Azure module paths that have the same shape. Google and Microsoft now appear with
+      their import as the evidence line. The invariant this could have broken is now
+      written down in `shipped.test.js`: a service earns its name from a host it calls or
+      from a package the catalog knows, and never from the variable that took the call.

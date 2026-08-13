@@ -6,7 +6,13 @@ from django.http import HttpResponseForbidden
 from django.utils.decorators import method_decorator
 from django.views.generic import ListView, TemplateView, View
 
-from .base import SecureView
+from .base import RemoteSecureView
+
+
+class SecureView(LoginRequiredMixin, View):
+    """The base every locked page in this app inherits from."""
+
+    login_url = "/accounts/login/"
 
 
 class WidgetList(LoginRequiredMixin, ListView):
@@ -16,9 +22,21 @@ class WidgetList(LoginRequiredMixin, ListView):
 
 
 class BillingView(SecureView):
-    """Says nothing, inherits everything. The lock is two files away."""
+    """Says nothing, inherits everything. The lock is on the class above."""
 
     template_name = "billing.html"
+
+
+class ArchiveView(RemoteSecureView):
+    """Inherits from a base in *another* file, which this reader does not follow.
+
+    A class and its view mixins usually live together and here is where the reader
+    looks. Following a base across files would mean trusting a name, and two apps in
+    one repo naming a class `Base` is ordinary — so this door under-claims rather than
+    borrow a lock that may belong to somebody else's class.
+    """
+
+    template_name = "archive.html"
 
 
 @method_decorator(login_required, name="dispatch")

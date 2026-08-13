@@ -76,49 +76,54 @@ export function Walkthrough({
 
   return (
     <aside className={`walkthrough${step.tone === 'warn' ? ' is-warn' : ''}`} aria-label="Guided walkthrough">
-      <div className="wt-bar">
-        <div className="wt-where">
-          <span className="wt-tour">{tour.title}</span>
-          <span className="wt-count">
-            Step {index + 1} of {tour.steps.length}
-          </span>
-        </div>
+      {/*
+        Which tour, the route through it, and the way out — on one line.
+
+        The tour name and the trail used to be two stacked bands. They answer the same
+        question, "where am I", and between them they took 77.5px off a drawer whose
+        step body measured 83px on the shortest step, so they answer it together now.
+
+        "Step 3 of 5" went with them. It was a weaker retelling of what the trail shows
+        directly — the trail names every step, marks the current one with `aria-current`,
+        and each button still says "Step 3 of 5: <title>" to a screen reader, which is
+        the only place the count was carrying its own weight.
+
+        The steps are named rather than hidden: seven anonymous dots told you how far
+        along you were and nothing about where. Once the middle of a tour became a real
+        route through the code, the shape of that route is the thing worth seeing at a
+        glance — which hop you are on, what came before it, and that there is a database
+        at the end of it. They were also once inside an aria-hidden wrapper while staying
+        tabbable, so keyboard focus landed on controls a screen reader would not announce
+        and a sighted reader could not see it reach.
+      */}
+      <div className="wt-head">
+        <span className="wt-tour">{tour.title}</span>
+
+        <nav className="wt-trail" aria-label={`Steps in ${tour.title}`}>
+          {tour.steps.map((one, i) => (
+            <Fragment key={one.id}>
+              {i > 0 ? (
+                <span className="wt-trail-sep" aria-hidden="true">
+                  →
+                </span>
+              ) : null}
+              <button
+                className={i === index ? 'wt-trail-step is-current' : 'wt-trail-step'}
+                title={one.title}
+                aria-label={`Step ${i + 1} of ${tour.steps.length}: ${one.title}`}
+                aria-current={i === index ? 'step' : undefined}
+                onClick={() => onStep(i)}
+              >
+                {one.title}
+              </button>
+            </Fragment>
+          ))}
+        </nav>
+
         <button className="wt-close" onClick={onClose} aria-label="End the walkthrough">
           ✕
         </button>
       </div>
-
-      {/*
-        The steps by name, in order, as the path they now are.
-        Seven anonymous dots told you how far along you were and nothing about where. Once
-        the middle of a tour became a real route through the code, the shape of that route
-        is the thing worth seeing at a glance — which hop you are on, what came before it,
-        and that there is a database at the end of it.
-
-        Named rather than hidden: these were once inside an aria-hidden wrapper while
-        staying tabbable, so keyboard focus landed on controls a screen reader would not
-        announce and a sighted reader could not see it reach.
-      */}
-      <nav className="wt-trail" aria-label={`Steps in ${tour.title}`}>
-        {tour.steps.map((one, i) => (
-          <Fragment key={one.id}>
-            {i > 0 ? (
-              <span className="wt-trail-sep" aria-hidden="true">
-                →
-              </span>
-            ) : null}
-            <button
-              className={i === index ? 'wt-trail-step is-current' : 'wt-trail-step'}
-              title={one.title}
-              aria-label={`Step ${i + 1} of ${tour.steps.length}: ${one.title}`}
-              aria-current={i === index ? 'step' : undefined}
-              onClick={() => onStep(i)}
-            >
-              {one.title}
-            </button>
-          </Fragment>
-        ))}
-      </nav>
 
       {/* The step is what changes when you press Next, so it is the live region. Without
           it the panel advanced in complete silence for anyone not watching the map. */}

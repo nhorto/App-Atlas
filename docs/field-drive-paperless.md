@@ -22,11 +22,15 @@ and bases read straight off the class statement.
 
 ## What it found, and what that cost
 
-Two Tier-1 defects and one Tier-2, all in shapes the healthchecks drive could not have
-produced. They are items 45 and 46 in [fix-list.md](fix-list.md); this records what the
-tool said before them.
+Three defects in shapes the healthchecks drive could not have produced. They are items
+45–47 in [fix-list.md](fix-list.md); this records what the tool said before them.
 
-### 1. Every address was missing its prefix — 46 of 53 wrong
+Two of the three were found and fixed on `main` in the same week, independently, from
+the same repo — the address composition below in full, and the first half of the
+class-based-view work. That is recorded rather than quietly absorbed: the parts this
+branch adds are marked, and the parts it only *verified* say so.
+
+### 1. Every address was missing its prefix — 46 of 53 wrong *(fixed on `main`)*
 
 paperless writes its entire URL tree as list literals nested inside the `include()`
 calls themselves:
@@ -60,7 +64,7 @@ The 20 DRF registrations keep the `…/documents (UnifiedSearchViewSet)` form on
 the router's urls are spliced in as `*api_router.urls`, and the prefix that lands in
 front of them is not readable from the registration.
 
-### 2. Every class-based view was a door with no verdict
+### 2. Every class-based view was a door with no verdict *(half on `main`)*
 
 healthchecks writes function views, so item 44's hop — `urls.py` → `views.py` → the
 decorator — covered all of it. paperless routes 37 doors through `SomeView.as_view()`
@@ -70,18 +74,33 @@ one line under the class statement.
 
 The five spellings this repo actually uses, all now read:
 
-| how the class says it | example in paperless | confidence |
+| how the class says it | example in paperless | added here |
 |---|---|---|
-| `permission_classes` | 19 of 20 registered ViewSets | certain |
-| inherited from a base class | six document operations, via one mixin | likely |
-| a mixin in the bases | — (healthchecks-shaped; fixture only) | certain |
-| `@method_decorator(login_required, name="dispatch")` | — (fixture only) | certain |
-| a `dispatch` that returns 403 | — (fixture only) | likely |
+| `permission_classes` | 19 of 20 registered ViewSets | on `main` |
+| inherited from a base class in the same file | six document operations, via one mixin | on `main` |
+| a mixin in the bases | — (healthchecks-shaped; fixture only) | on `main` |
+| `@method_decorator(login_required, name="dispatch")` | — (fixture only) | **yes** |
+| a `dispatch` that returns 403 | — (fixture only) | **yes** |
+
+A base class in *another* file is deliberately not followed, and the fixture pins that
+as an under-claim rather than a gap: resolving a bare class name across a whole repo
+means trusting a name, and two apps each with a `Base` is ordinary. paperless keeps
+every view mixin beside its views, which is the case the in-file walk was scoped to.
 
 **43 of the 47 readable doors now carry the verdict the source says they should**, and
 the four reported open — the auth-token endpoint, the favicon, the logo, and the public
 share link — are open by design. Checked row by row against the source afterwards,
 because a false *protected* costs more than a false *open*.
+
+**And the way it reached them mattered.** Following the reference graph out of a class
+that carries a check is how `main` was reaching some of these, and a reference edge
+between two classes means *mentions*. Reproduced on `main`, before any change here: an
+open login page that names a locked billing view, which inherits a base carrying
+`LoginRequiredMixin`, was reported **locked** — three hops of "mentions", and the front
+door of the product badged as protected. That is #147 for the third time and the one
+error this screen cannot afford, because nobody re-checks a door they were told was
+locked. A check on a class travels by inheritance and by nothing else now; the chain is
+named where it is read, so `PermissionMixin → IsAuthenticated` survives the change.
 
 ### 3. Silence on a DRF class is not an open door
 
@@ -97,11 +116,6 @@ So those doors keep the blank, and say which file holds the answer rather than t
 > `RemoteVersionView` declares no permission_classes — a DRF view without one answers to
 > DEFAULT_PERMISSION_CLASSES in your settings, which App Atlas has not read
 
-`IsAuthenticatedOrReadOnly` gets the same treatment for a different reason. It locks the
-writes and leaves the reads open, and DRF's router declares no method for the door it
-generates; guarded claims a lock the GET has not got, unguarded claims none on the POST
-that has one, and both are false.
-
 Finding this needed the repo. paperless types every DRF base it inherits —
 `GenericAPIView[Any]`, `ModelViewSet[ApplicationConfiguration]` — and with the subscript
 left on the name none of them matched anything, so `RemoteVersionView` read as a plain
@@ -110,29 +124,43 @@ would have had brackets in it.
 
 ---
 
+### 4. Two of the four companies were named and missed
+
+`paperless_mail/oauth.py` writes `from httpx_oauth.clients.google import GoogleOAuth2`
+and `from httpx_oauth.clients.microsoft import MicrosoftGraphOAuth2` — the company named
+as unambiguously as `import openai` names OpenAI, which the tool does report. These are
+the *only* mention of either company in 748 files: the mail server comes from the user's
+own account settings, so no hostname literal exists anywhere to read.
+
+`serviceForPythonModule` keyed on the first segment of the module path, so
+`httpx_oauth.clients.google` reduced to `httpx_oauth` — a library, not a company. The
+Security page said two outside companies where the honest answer is four. Fixed with a
+longest-match table of dotted prefixes consulted ahead of the first-segment lookup.
+
+---
+
 ## What it got right, unprompted
 
 - **The DRF registration table.** All 20 ViewSets found and read, which was item 42's
   work on a repo that did not exist when it was written.
-- **Both outside companies, with exact evidence.** GitHub from
+- **Two of the four companies, with exact evidence.** GitHub from
   `httpx.get("https://api.github.com/repos/paperless-ngx/…")`, OpenAI from
   `from openai import APITimeoutError`. The IMAP and SMTP hosts stay blank and should:
   they come from the user's own mail-account configuration and there is no literal to
-  read.
+  read. The other two are defect 4 above.
 - **The data stores**: Postgres/SQLite, Redis, the filesystem, and browser storage.
-- **The `#147` trap held.** A page that merely *mentions* a locked view stays open. This
-  is the third time that bug has been found in a new disguise and the first time the
-  fixture was written before the repo confirmed it.
+- **The four doors it calls open really are open** — the auth-token endpoint, the
+  favicon, the logo, and the public share link. On a screen where a false *protected* is
+  the expensive error, the four false-negative-shaped rows all check out.
 
 ## Still open
 
-- **Google and Microsoft are named and missed.** `paperless_mail/oauth.py` writes
-  `from httpx_oauth.clients.google import GoogleOAuth2` and
-  `from httpx_oauth.clients.microsoft import MicrosoftGraphOAuth2` — the company named
-  as unambiguously as `import openai` names OpenAI, which the tool does report.
-  `serviceForPythonModule` keys on the first segment of the module path only, so
-  `httpx_oauth.clients.google` reduces to `httpx_oauth` and nothing matches. Needs a
-  dotted-prefix lookup ahead of the first-segment one.
+- **`IsAuthenticatedOrReadOnly` is reported as a guard.** It locks the writes and leaves
+  every read open, and DRF's router declares no method for the door it generates — so
+  "protected" is true of the POST and false of the GET. The name is shown in full, which
+  is the argument for leaving it: a reader who sees `IsAuthenticatedOrReadOnly` can
+  finish the sentence. Worth a decision rather than an assumption, and it is a decision
+  taken on `main` rather than one this drive is entitled to reverse.
 
 ## Coverage note
 

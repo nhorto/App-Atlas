@@ -8,10 +8,11 @@
  * list — while `LoginRequiredMixin` sat on the line under the class statement.
  *
  * Django gives a class five ways to say who may come in, and this fixture writes each
- * one once: a mixin in the bases, a mixin inherited from a base class two files away,
+ * one once: a mixin in the bases, a mixin inherited from a base class beside it,
  * `@method_decorator(login_required, name="dispatch")`, a `dispatch` that returns 403
- * itself, and DRF's `permission_classes`. Two doors have none and are reported as
- * having none, which is the half that makes the other half worth reading.
+ * itself, and DRF's `permission_classes`. Three doors have none and are reported as
+ * having none, which is the half that makes the other half worth reading — and a sixth
+ * class inherits from another *file*, which is deliberately not followed.
  *
  * The two DRF blanks are the point of the exercise as much as the verdicts are. A
  * ViewSet naming no `permission_classes` was followed, opened and read — and what
@@ -55,6 +56,7 @@ test('as_view() is a door, at the address the include() chain composes', () => {
       '/api/status/',
       '/api/version/',
       '/app/about/',
+      '/app/archive/',
       '/app/billing/',
       '/app/gate/',
       '/app/login/',
@@ -85,16 +87,21 @@ test('a mixin in the bases is read with the certainty it was written with', () =
   }
 });
 
-test('a mixin inherited from a base class reaches the door, and stays `likely`', () => {
-  // `BillingView(SecureView)` and `SecureView(LoginRequiredMixin, View)` — neither the
-  // URLconf nor the view file mentions the mixin. Never `certain`: a subclass can
-  // override `dispatch` and undo the whole thing.
-  const billing = named('/app/billing/');
-  assert.deepEqual(guardsOn('/app/billing/'), ['LoginRequiredMixin']);
-  assert.equal(billing.meta.guards[0].confidence, 'likely');
-  // And the evidence points at the class that actually put the mixin in its bases,
-  // not at some other class in the repo that happens to use the same one.
-  assert.equal(billing.meta.guards[0].path, 'dashboard/base.py');
+test('a mixin inherited from a base class reaches the door, named with its source', () => {
+  // `BillingView(SecureView)` declares nothing; `SecureView(LoginRequiredMixin, View)`
+  // one class up is the whole of its protection. The reader's next question about an
+  // inherited check is always *inherited from where*, so the chain is the name.
+  assert.deepEqual(guardsOn('/app/billing/'), ['SecureView → LoginRequiredMixin']);
+  assert.equal(named('/app/billing/').meta.guards[0].path, 'dashboard/views.py');
+});
+
+test('a base in another file is not followed, and the door under-claims', () => {
+  // `ArchiveView(RemoteSecureView)` where the base is in `base.py`. Reaching across
+  // files would mean resolving a bare class name against the whole repo, and two apps
+  // each with a `Base` is ordinary — a lock attributed to the wrong one is the
+  // expensive direction. So this door says nothing rather than borrow one.
+  assert.deepEqual(guardsOn('/app/archive/'), []);
+  assert.equal(named('/app/archive/').meta.handlerUnlinked, undefined, 'the class was read');
 });
 
 test('method_decorator on the class is the decorator it wraps', () => {
@@ -146,14 +153,12 @@ test('a DRF view naming no permission keeps the blank, and says why', () => {
   assert.doesNotMatch(quiet.meta.open.because, /has not followed it/);
 });
 
-test('a permission that locks writes and opens reads is stated, not rounded', () => {
-  // `IsAuthenticatedOrReadOnly` on a door whose method DRF never declares. Guarded
-  // claims a lock on the GET that has none; unguarded claims none on the POST that
-  // has one. Both are false, so the door says which it is and stops there.
-  const notes = named('/api/notes/');
-  assert.equal(notes.meta.handlerUnlinked, true);
-  assert.deepEqual(notes.meta.guards, []);
-  assert.match(notes.meta.open.because, /IsAuthenticatedOrReadOnly/);
+test('a permission that locks only the writes is named, not summarised', () => {
+  // `IsAuthenticatedOrReadOnly` locks the writes and leaves every GET open, and DRF's
+  // router declares no method for the door it generates. The verdict cannot carry that
+  // and the *name* has to: a reader who sees `IsAuthenticatedOrReadOnly` can finish the
+  // sentence, where a bare "protected" would have finished it for them and wrongly.
+  assert.deepEqual(guardsOn('/api/notes/'), ['IsAuthenticatedOrReadOnly']);
 });
 
 test('a DRF base written with a type parameter is still a DRF base', () => {
@@ -168,8 +173,9 @@ test('a DRF base written with a type parameter is still a DRF base', () => {
 });
 
 test('the blanks stay out of both totals, and the doors stay on the map', () => {
-  assert.equal(atlas.meta.stats.routes, 12);
-  // `/app/about/`, `/app/login/`, `/api/status/` — read, and genuinely open.
-  assert.equal(atlas.meta.stats.unprotectedRoutes, 3);
-  assert.equal(atlas.meta.stats.unlinkedRoutes, 3);
+  assert.equal(atlas.meta.stats.routes, 13);
+  // `/app/about/`, `/app/archive/`, `/app/login/`, `/api/status/` — all read.
+  assert.equal(atlas.meta.stats.unprotectedRoutes, 4);
+  // `/api/quiet/` and `/api/version/`, both DRF views that named no permission.
+  assert.equal(atlas.meta.stats.unlinkedRoutes, 2);
 });

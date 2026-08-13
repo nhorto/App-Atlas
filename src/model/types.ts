@@ -302,7 +302,8 @@ export type OpenKind =
   | 'unreadable'
   | 'generated'
   | 'unlinked'
-  | 'declared-public';
+  | 'declared-public'
+  | 'in-test';
 
 export interface OpenVerdict {
   kind: OpenKind;
@@ -416,6 +417,17 @@ export interface EndpointMeta {
    * decisions on the worry list. Neither is what the author wrote down.
    */
   declaredPublic?: boolean;
+  /**
+   * The suite declared this door, not the app (#247). Nobody can knock on it: it exists
+   * for the length of a test run, inside a server the harness stood up.
+   *
+   * Written on the door rather than used to delete it, because the evidence is a file
+   * path and a path is the one thing this project will not drop a door over — dub serves
+   * a live Stripe webhook from a directory called `test`. So the row stays on the map
+   * carrying the reason, where a reader who disagrees can see what we claimed and say so;
+   * what it leaves is the sentence about how many doors were judged.
+   */
+  declaredInTest?: boolean;
   /** Cron expression, when a scheduler is what knocks. */
   schedule?: string;
   /** Only on the single `env` endpoint. */
@@ -548,6 +560,23 @@ export interface AtlasStats {
    * evidence of safety and not evidence of danger.
    */
   unlinkedRoutes?: number;
+  /**
+   * Routes the test suite declares, which no deployed app answers at (#247).
+   *
+   * Set aside for the same reason as `unlinkedRoutes` and counted the same way — out of
+   * the denominator, not into the numerator — but on a different ground. Those were not
+   * judged; these were, and the verdict does not describe the application. Sails' HTTP
+   * surface is thirty doors of which twenty-nine are `GET /res_sending_back_a_boolean/1`
+   * and friends, so "29 of 30 routes have no auth check" was a true sentence about a
+   * program nobody deploys.
+   *
+   * Counted over doors rather than off the open-door tally. Since #250 the two agree —
+   * a door the suite declared carries no guard, so it always reaches a verdict — and
+   * that is a reason to state this directly rather than to derive it. A denominator
+   * that is only right while a rule in another file keeps holding is one that goes
+   * wrong quietly the day that rule changes.
+   */
+  testRoutes?: number;
   /**
    * Guarded routes whose every guard is below `certain` — a check matched through a
    * pattern, a policy read out of a migration, a filter reached one hop away.
@@ -730,6 +759,20 @@ export interface AtlasMeta {
    * which is a third thing again from "no baseline" and from "nothing changed".
    */
   changes?: AtlasChanges;
+  /**
+   * The commit the working tree was on when this atlas was written.
+   *
+   * `generatedAt` already says *when* the analyzer ran, but a reader's real question is
+   * whether the code has moved since, and a timestamp cannot answer it: ten minutes is
+   * nothing on an untouched repo and three features on one an agent is working in. The
+   * commit can be compared, so anything reading this atlas later can tell the difference
+   * between old and out of date.
+   *
+   * Absent whenever that could not be established — not a git repository, an unreadable
+   * `.git`, a branch with no commits on it. Absent means nobody could tell, never that
+   * nothing has changed, and the surfaces that read it say so in those words.
+   */
+  vcs?: { commit: string };
   /** Non-fatal problems worth surfacing in the UI. */
   warnings: string[];
 }
