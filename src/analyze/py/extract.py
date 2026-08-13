@@ -697,8 +697,43 @@ def url_lists(tree):
                         entry["includeModule"] = inner.value
                     elif isinstance(inner, ast.Name):
                         entry["includeList"] = inner.id
+                    else:
+                        # `include([...])` — the patterns written straight into the
+                        # argument, with no name anywhere for a mount to resolve against.
+                        # `paperless-ngx` nests these four deep and puts all 64 of its API
+                        # routes inside them, so read flat every one of its addresses is
+                        # missing `/api/` and its section. An invented name makes the list
+                        # a list, which is all the rest of the machinery needs.
+                        entry["includeList"] = inline(inner)
             found.append(entry)
         return found
+
+    def inline(node):
+        """A list literal handed to `include()`, given a name so it can be mounted.
+
+        Two spellings, and Django's own docs use both: `include([...])` and the
+        namespaced `include(([...], "app_name"))`, whose first element is the list. The
+        name is invented from the line, which is unique per file and stable across runs —
+        the same trick the Gin reader uses for a group built in an argument (#194).
+
+        Recursive on purpose: nesting is how Django spells a multi-segment address, and a
+        list that stops one level short composes an address that is wrong rather than
+        short.
+        """
+        if isinstance(node, ast.Tuple) and node.elts:
+            node = node.elts[0]
+        if not isinstance(node, (ast.List, ast.Tuple)):
+            return None
+        name = f"__urls_{getattr(node, 'lineno', 0)}"
+        if name in by_var:
+            return name
+        record = {"var": name, "line": getattr(node, "lineno", 0), "entries": []}
+        # Registered before its entries are read, so a list that somehow contains itself
+        # stops here rather than recursing forever.
+        by_var[name] = record
+        out.append(record)
+        record["entries"] = entries_of(node.elts)
+        return name if record["entries"] else None
 
     def take(name, line, value):
         if not isinstance(value, (ast.List, ast.Tuple)):
