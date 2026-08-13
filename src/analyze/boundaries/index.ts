@@ -27,6 +27,7 @@ import {
   nextRoutesDetector,
   nodeRoutesDetector,
   routeHelperDetector,
+  strapiRoutesDetector,
   trpcDetector,
 } from './http.js';
 import { jobsDetector } from './jobs.js';
@@ -53,6 +54,7 @@ const DETECTORS: BoundaryDetector[] = [
   refusalDetector,
   nodeRoutesDetector,
   routeHelperDetector,
+  strapiRoutesDetector,
   trpcDetector,
   edgeFunctionDetector,
   jobsDetector,

@@ -1258,6 +1258,161 @@ function nestController(cls: ClassDeclaration, ctx: DetectorContext): void {
 }
 
 // ---------------------------------------------------------------------------
+// Strapi — the route is a data structure, not a call (#246)
+// ---------------------------------------------------------------------------
+
+/**
+ * `{ method: 'GET', path: '/settings', handler: 'admin-settings.getSettings' }` — a door
+ * declared as an object literal in a file nothing calls.
+ *
+ * Strapi's route helper has exactly **one** call site, so #229's rule finds nothing here:
+ * there is no call to read. The doors are 272 object literals across 112 files, and
+ * `packages/core/core` reported **2** ways in before this existed. That is the shape of
+ * wrong this project is built against — confident and empty, for a CMS whose entire admin
+ * API lives in those files.
+ *
+ * ## Why this is not "any object with a path and a method"
+ *
+ * That reading is the danger #235 warns about, and Strapi is where it would bite: the
+ * React admin declares its *outbound* requests the same way —
+ *
+ *   query: (args) => ({ url: `/admin/webhooks/${args?.id ?? ''}`, method: 'GET' })
+ *
+ * Dozens of those, and read as doors they would invent routes the server never serves.
+ * What actually keeps them out is that they key the address as **`url`**, not `path` —
+ * measured, by deleting the other rule and watching nothing change.
+ *
+ * The `handler` requirement is therefore a narrowing guard the corpus does not exercise,
+ * and it is kept deliberately rather than by oversight: without it the shape being
+ * matched is `{ method, path }`, which is the general form #235 says must not be read,
+ * and the `url` spelling is one client library's habit rather than a rule. An object
+ * naming what answers the request is declaring a door; one saying where to send a fetch
+ * is not. It narrows, so it can only ever lose a door, never invent one — and it did lose
+ * one until `handler(ctx) { … }` was handled, which is the cost of a rule like this and
+ * the reason it is written down.
+ *
+ * ## The address is deliberately a fragment
+ *
+ * `/settings` in the upload plugin is served at `/upload/settings`, and nothing in the
+ * route file says so — `register-routes.ts` does `router.prefix ?? \`/${pluginName}\``,
+ * with the name coming from a registry keyed by the directory the plugin loaded from.
+ * The content API adds `strapi.config.get('api.rest.prefix', '/api')` on top, which is a
+ * deployment setting. So the head is unread and says so (#245), rather than printing
+ * `/settings` as though that were an address somebody could call.
+ */
+function strapiRoute(node: Node, ctx: DetectorContext): void {
+  if (!Node.isObjectLiteralExpression(node)) return;
+
+  const method = literalString(objectProp(node, 'method'))?.toUpperCase();
+  if (!method || !STRAPI_METHODS.has(method)) return;
+  const route = literalString(objectProp(node, 'path'));
+  if (!route?.startsWith('/')) return;
+  // Present, whatever it is: a string naming a controller action, an identifier, an
+  // array, an inline function, or a method shorthand. `objectProp` is not enough here —
+  // it resolves a property to its *initializer*, and `handler(ctx) { … }` has none, which
+  // silently dropped the public redirect at the root of every Strapi site.
+  if (!node.getProperty('handler')) return;
+
+  const config = objectProp(node, 'config');
+  const httpMethod = method === 'ALL' ? 'ANY' : method;
+  ctx.emit({
+    type: 'endpoint',
+    endpointKind: 'http-route',
+    key: `${httpMethod} ${route}`,
+    name: `${httpMethod} ${route}`,
+    method: httpMethod,
+    route,
+    framework: 'Strapi',
+    writes: WRITE_METHODS.has(httpMethod),
+    // `auth: false` is somebody writing down that this door is open on purpose — the
+    // same statement `permitsEverything` reads off a Nest guard (#152).
+    ...(objectProp(config, 'auth')?.getText() === 'false' ? { declaredPublic: true } : {}),
+    guards: strapiPolicies(config, ctx),
+    site: ctx.site(node, `${httpMethod} ${route}`),
+    // The handler is `'admin-settings.getSettings'`, a name in a registry this layer
+    // does not resolve. Saying so is better than attributing the door to the route file,
+    // which would make an unread controller look like a handler with no checks in it.
+    handlerId: null,
+    handlerUnlinked: true,
+    prefixUnread: true,
+  });
+}
+
+const STRAPI_METHODS = new Set([...HTTP_METHODS, 'ALL']);
+
+/**
+ * The checks on a Strapi route, which are the `policies` and never the `middlewares`.
+ *
+ * Both keys sit in the same `config` object and the difference is the whole rule. A
+ * policy has a refusal contract, written into `services/server/policy.ts`:
+ *
+ *   const result = await handler(context, config, { strapi });
+ *   if (![true, undefined].includes(result)) throw new errors.PolicyError();
+ *
+ * — the framework saying, in as many words, that this decides whether the request
+ * proceeds, which is the same evidence `@UseGuards` carries in Nest. A middleware is
+ * `koa-compose`d and promises nothing.
+ *
+ * Measured across every route file in the repo, the split is not close. All 350-odd
+ * policy entries are authorization: `isAuthenticatedAdmin`, `hasPermissions`, `.read`,
+ * `.update`, `.publish`. The middleware list is `sso`, `audit-logs`, `review-workflows`
+ * — and `rateLimit`, ten times, standing on `/auth/local`, `/auth/local/register`,
+ * `/auth/forgot-password` and `/auth/reset-password`. Reading that list would put a lock
+ * on the door that hands out sessions, which is exactly what NodeBB's
+ * `authenticateRequest` would have done in #229. Same trap, different framework, and the
+ * framework itself has already separated the two keys for us.
+ *
+ * Two spellings, because the schema allows both: the name on its own, and
+ * `{ name: 'admin::hasPermissions', config: { actions: [...] } }`.
+ */
+function strapiPolicies(config: Node | undefined, ctx: DetectorContext): GuardInfo[] {
+  const list = objectProp(config, 'policies');
+  if (!list || !Node.isArrayLiteralExpression(list)) return [];
+  const guards: GuardInfo[] = [];
+  for (const element of list.getElements()) {
+    const name = literalString(element) ?? literalString(objectProp(element, 'name'));
+    if (!name) continue;
+    guards.push({
+      name,
+      how: 'config',
+      provider: 'Strapi',
+      path: ctx.ref.relPath,
+      line: element.getStartLineNumber(),
+      confidence: 'certain',
+    });
+  }
+  return guards;
+}
+
+/**
+ * Gated on the package rather than the file, and that is deliberate.
+ *
+ * `packages/core/upload/server/src/routes/admin.ts` opens with `export const routes = {`
+ * and imports nothing at all — seven doors and not one line saying which framework they
+ * belong to. #230's lesson twice over: the file that declares routes is the file least
+ * likely to name the framework, so asking the file would switch this off in exactly the
+ * case it exists for. The manifest is asked as well as the imports because a plugin
+ * depends on `@strapi/utils` without ever depending on `strapi` itself.
+ */
+export const strapiRoutesDetector: BoundaryDetector = {
+  id: 'strapi-routes',
+  enabled: (ctx) => strapiInPlay(ctx),
+  visit(node, ctx) {
+    strapiRoute(node, ctx);
+  },
+};
+
+function strapiInPlay(ctx: DetectorContext): boolean {
+  for (const name of ctx.signals.packages) {
+    if (name === 'strapi' || name.startsWith('@strapi/')) return true;
+  }
+  for (const name of ctx.packages) {
+    if (name === 'strapi' || name.startsWith('@strapi/')) return true;
+  }
+  return false;
+}
+
+// ---------------------------------------------------------------------------
 // Supabase Edge Functions — deployed HTTP the rest of the repo never mentions
 // ---------------------------------------------------------------------------
 
