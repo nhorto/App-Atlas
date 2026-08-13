@@ -551,8 +551,26 @@ function globalPrefix(call: CallExpression, ctx: DetectorContext): void {
   });
 }
 
+/**
+ * Which server framework is in play — asked of the manifest *and* of the file itself.
+ *
+ * The manifest alone is not evidence enough, and a repo with no manifest at all is not
+ * a repo with no doors. `NodeBB/NodeBB` keeps its `package.json` in `install/` and
+ * copies it into place during setup, so a checked-out clone has none — and 927 files
+ * and 150,000 lines of Express came out as two ways in, no framework, and the archetype
+ * "a service other things call, no interface files". For a forum with a full web UI.
+ *
+ * Nothing was unreadable and nothing warned: the whole route detector is gated on this
+ * answer, so the map was confident and empty, which is the shape of wrong this project
+ * is built to avoid.
+ *
+ * `require('express')` in the file doing the routing is the better evidence anyway. A
+ * manifest says what somebody declared; the import says what this code uses.
+ */
 function serverFrameworks(ctx: DetectorContext): string[] {
-  return SERVER_PACKAGES.filter(({ pkg }) => ctx.signals.packages.has(pkg)).map(({ name }) => name);
+  return SERVER_PACKAGES.filter(({ pkg }) => ctx.signals.packages.has(pkg) || ctx.packages.has(pkg)).map(
+    ({ name }) => name,
+  );
 }
 
 /** `app.post('/users', requireAuth, createUser)` */
