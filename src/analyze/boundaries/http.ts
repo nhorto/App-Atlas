@@ -284,6 +284,7 @@ export const nodeRoutesDetector: BoundaryDetector = {
       routeCall(node, ctx);
       fastifyRouteObject(node, ctx);
       routerMount(node, ctx);
+      routerHandoff(node, ctx);
       globalPrefix(node, ctx);
     } else if (Node.isClassDeclaration(node)) {
       nestController(node, ctx);
@@ -405,6 +406,108 @@ function routerMount(call: CallExpression, ctx: DetectorContext): void {
       line: call.getStartLineNumber(),
     });
   }
+}
+
+/**
+ * `require('./routes')(app)` and `registerRoutes(app)` — the app handed to another file
+ * as an argument, on a line the reader can see (#206).
+ *
+ * This is the CommonJS half of "where was the route registered". A mount says *this
+ * router hangs under that one*; a handoff says *this module was given the router itself*,
+ * and everything it writes on the parameter it received is registered at the call's own
+ * line. `const app = express(); require('./public')(app); app.use(requireAuth)` puts
+ * `/health` above the gate from a file that never mentions the gate — and today the map
+ * says the gate covers it.
+ *
+ * The argument has to be a bare identifier this file thinks is a router, and the callee
+ * has to resolve to code in this repo. Both halves matter: `http.createServer(app)` hands
+ * the app to a package, and a package's internals are not where routes are declared; and
+ * a property access as the argument (`app.locals`, `config.app`) is not the router.
+ *
+ * Mounts are skipped rather than double-read. `app.use('/api', users)` is already a
+ * `router-mount` and already ordered by {@link registeredAboveTheGate}; reading it a
+ * second time here would say the same thing in a weaker way, since a handoff cannot see
+ * which of several arguments was the router.
+ */
+function routerHandoff(call: CallExpression, ctx: DetectorContext): void {
+  const callee = call.getExpression();
+
+  // `app.use(...)`, `app.get(...)`, `router.route(...)`: the router is the *receiver*
+  // here, not a passenger. Its ordering is the mount rule's to answer.
+  const dotted = dottedName(callee);
+  if (dotted?.includes('.')) {
+    const parts = dotted.split('.');
+    const receiver = parts[parts.length - 2];
+    if (receiver && isRouter(receiver, ctx.locals)) return;
+  }
+
+  const target = handoffTarget(callee, ctx);
+  if (!target) return;
+
+  for (const arg of call.getArguments()) {
+    if (!Node.isIdentifier(arg)) continue;
+    const hostVar = arg.getText();
+    if (!isRouter(hostVar, ctx.locals)) continue;
+    ctx.emit({
+      type: 'router-handoff',
+      path: ctx.ref.relPath,
+      hostVar,
+      targetModule: target,
+      line: call.getStartLineNumber(),
+      scope: sequenceOf(call, ctx.sf),
+    });
+    return;
+  }
+}
+
+/**
+ * The module a call hands its arguments to, or null when that is not this repo's code.
+ *
+ * Three spellings, and they are the three CommonJS actually writes:
+ *
+ *   require('./routes')(app)   — the module invoked where it is loaded
+ *   routes(app)                — a name bound by an import or an earlier `require`
+ *   routes.setup(app)          — a method on one
+ *
+ * External packages are refused outright. Whatever `express.static(app)` or
+ * `winston.info(app)` does with the argument, it does not declare routes in a file this
+ * analysis can read, and a finding pointing into `node_modules` can only ever match
+ * nothing or match by accident.
+ */
+function handoffTarget(callee: Node, ctx: DetectorContext): string | null {
+  // `require('./routes')(app)` — the specifier is right there in the callee.
+  if (Node.isCallExpression(callee)) {
+    const specifier = requireSpecifier(callee);
+    return specifier ? importedModule(ctx.ref.relPath, specifier) : null;
+  }
+
+  const root = Node.isIdentifier(callee) ? callee.getText() : dottedName(callee)?.split('.')[0];
+  if (!root) return null;
+  const imported = ctx.imports.get(root);
+  if (!imported || imported.external) return null;
+  return importedModule(ctx.ref.relPath, imported.module);
+}
+
+/**
+ * The run of statements a call belongs to: its innermost enclosing function, or the
+ * whole file when it has none.
+ *
+ * Line numbers are only an ordering while both statements are in one sequence. A
+ * `function wire(app) { require('./x')(app) }` at the top of a file has a smaller line
+ * number than the `app.use(auth)` at the bottom and runs *after* it, so the merge checks
+ * that the gate falls in this span before it compares — see {@link RouterHandoffFinding}.
+ */
+function sequenceOf(call: CallExpression, sf: SourceFile): { from: number; to: number } {
+  const fn = call.getFirstAncestor(
+    (node) =>
+      Node.isFunctionDeclaration(node) ||
+      Node.isFunctionExpression(node) ||
+      Node.isArrowFunction(node) ||
+      Node.isMethodDeclaration(node) ||
+      Node.isConstructorDeclaration(node),
+  );
+  if (fn) return { from: fn.getStartLineNumber(), to: fn.getEndLineNumber() };
+  return { from: 1, to: sf.getEndLineNumber() };
 }
 
 /**
