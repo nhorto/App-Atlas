@@ -17,6 +17,6 @@ exports.setup = function (app) {
 	app.get('/plain', controllers.plain);
 
 	const writeApi = express.Router();
-	require('./write')(writeApi);
+	require('./write')({ mountPoint: writeApi });
 	app.use(writeApi);
 };
