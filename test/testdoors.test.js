@@ -135,17 +135,34 @@ const guarded = await analyzeProject(path.join(here, 'fixtures', 'testdoorsguard
   cache: 'off',
 });
 
-test('a door the suite declared is set aside even when something guards it', () => {
-  // Counted over doors, not over open-door verdicts — a verdict is only ever reached for
-  // a door with nothing on it, so a set-aside built from verdicts would keep every
-  // guarded route the suite declares. directus is exactly this: all five of its mock
-  // license server's routes come out wearing `authenticate` from `api/src/app.ts`, the
-  // real application's own middleware, on a program directus does not ship.
+test("the application's own catch-all does not reach into the suite", () => {
+  // #250. directus put `authenticate` on the whole application in `api/src/app.ts` and
+  // it landed on all five routes of a Fastify mock license server in `tests/` — a lock
+  // from a program those doors have never been served by. A catch-all covers a door
+  // whatever its address turns out to be (#172), and that included the addresses of a
+  // different program.
+  //
+  // Asserted as a pair, because only the pair says anything: the same middleware must
+  // still be the lock on the application's own door. A rule that took the check off both
+  // would pass the half of this that matters and be a worse bug than the one it fixed.
+  const doors = new Map(
+    guarded.atlas.nodes.filter((node) => node.kind === 'endpoint').map((node) => [node.name, node]),
+  );
+  assert.deepEqual(doors.get('GET /admin/settings')?.meta.guards.map((guard) => guard.name), ['authenticate']);
+  assert.deepEqual(doors.get('GET /license/:key')?.meta.guards, [], 'a borrowed lock landed on a test-declared door');
+  assert.equal(doors.get('GET /license/:key')?.meta.declaredInTest, true, 'the fixture stopped testing this');
+});
+
+test('a door the suite declared is set aside, and the count is taken over doors', () => {
+  // Since #250 a test-declared door never carries a guard, so it always reaches a
+  // verdict and `testRoutes` agrees with the `in-test` tally. They agree because of a
+  // rule in another file; the count is still taken over doors so that the denominator
+  // does not depend on that rule continuing to hold.
   const stats = guarded.atlas.meta.stats;
-  const verdicts = classifyOpenDoors(guarded.atlas.nodes, guarded.atlas.edges);
-  assert.equal([...verdicts.values()].length, 0, 'the fixture stopped testing this — a door lost its guard');
+  const verdicts = [...classifyOpenDoors(guarded.atlas.nodes, guarded.atlas.edges).values()];
+  assert.deepEqual(verdicts.map((verdict) => verdict.kind), ['in-test']);
   assert.equal(stats.routes, 2);
-  assert.equal(stats.testRoutes, 1, 'a count taken over verdicts would be 0 here');
+  assert.equal(stats.testRoutes, 1);
   assert.equal(authHeadline(stats)?.headline, 'the one route has an auth check — matched, not proven');
 });
 

@@ -561,9 +561,11 @@ export interface AtlasStats {
    * and friends, so "29 of 30 routes have no auth check" was a true sentence about a
    * program nobody deploys.
    *
-   * Counted over every route in the suite, guarded or not, because the denominator is a
-   * count of doors and not a count of verdicts: directus stands a mock license server up
-   * in `tests/`, and its five routes carry a real check that is still not directus's.
+   * Counted over doors rather than off the open-door tally. Since #250 the two agree —
+   * a door the suite declared carries no guard, so it always reaches a verdict — and
+   * that is a reason to state this directly rather than to derive it. A denominator
+   * that is only right while a rule in another file keeps holding is one that goes
+   * wrong quietly the day that rule changes.
    */
   testRoutes?: number;
   /**

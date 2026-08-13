@@ -1,11 +1,10 @@
-// directus, in miniature: `api/src/app.ts` puts `authenticate` on the whole application,
-// and App Atlas reports it as the lock on five Fastify routes that belong to the mock
-// license server in `tests/` — a program directus does not ship.
+// directus, in miniature: `api/src/app.ts` puts `authenticate` on the whole application
+// with a single `app.use`, and App Atlas reported it as the lock on five Fastify routes
+// belonging to the mock license server in `tests/` — a program directus does not ship.
 //
-// That is why the count of set-aside doors is taken over doors and not over open-door
-// verdicts. A verdict is only ever reached for a door with nothing on it, so a set-aside
-// built from verdicts would keep every guarded route the suite declares, and directus's
-// denominator would still be five doors too big.
+// A catch-all covers a door whatever its address turns out to be (#172), and that
+// quietly included the addresses of a different program. This file is the catch-all;
+// `tests/mock-license-server/src/routes.ts` is the door it must not reach (#250).
 import express from 'express';
 
 import { authenticate } from './authenticate.js';
