@@ -166,8 +166,30 @@ import { dominantZone } from './zones.js';
  * The number moves anyway, for the reason 0.10.0 and 0.12.0 moved: it is stamped into
  * `ATLAS.md`, which people commit, and a build that writes another version's number into
  * a checked-in file is making a false claim about where that file came from.
+ *
+ * 0.27.0 is the strongest ordinary case since 0.23.0, and it is a batch: eight changes,
+ * of which five alter what a cached finding *means* rather than making it thinner.
+ *
+ * Two invert a protection claim. A directus atlas written by 0.26.0 holds `authenticate`
+ * as the lock on 241 of its 253 doors, and that middleware refuses nobody — it reads a
+ * token and calls `next()` (#237). The same cache holds the shipped application's
+ * `authenticate` as the lock on five routes of a mock server in `tests/` that directus
+ * does not deploy (#250). Both are "protected" recorded about doors nothing protects, and
+ * a cache holding one keeps holding it until this number moves.
+ *
+ * Three change which doors exist at all. A Strapi cache holds **2** ways in where there
+ * are now 233 (#246); a Parse Server cache holds an empty routing table where there are
+ * now 75 (#235); and a Sails cache counts 29 test-suite routes as the application's
+ * interface, which is its entire HTTP list (#247). An absence is the one thing a cache
+ * can never be asked to re-derive, which is what makes these the case this comment is
+ * about rather than a tidy-up.
+ *
+ * The last three would not have moved it alone: an unread address head said once instead
+ * of twice (#245), Django's class-based views (#253), and a check read from the scope a
+ * route was registered in rather than its handler (#255) — though that one, too, ends a
+ * false green, on `GET /metrics` in mastodon among others.
  */
-export const TOOL_VERSION = '0.26.0';
+export const TOOL_VERSION = '0.27.0';
 
 export interface AnalyzeOptions {
   maxFiles?: number;
