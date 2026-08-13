@@ -255,8 +255,12 @@ function dirOf(relPath: string): string {
  * The tail rather than the whole, because what a mount writes is relative to wherever
  * the app is started from and nothing in the repo records that: `app/api/routes/items`
  * has to be able to find `backend/app/api/routes/items.py`.
+ *
+ * Exported because a handoff names a module the same way a mount does — `require('./routes')`
+ * is written from the caller's directory — so both have to ask the question identically
+ * or the same specifier resolves two ways.
  */
-function answersTo(where: string, wanted: string): boolean {
+export function answersTo(where: string, wanted: string): boolean {
   return where === wanted || where.endsWith(`/${wanted}`);
 }
 

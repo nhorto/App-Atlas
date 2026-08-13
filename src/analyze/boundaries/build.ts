@@ -41,7 +41,7 @@ import { hashParts } from '../../util/hash.js';
 import { isWorker } from '../wrangler.js';
 import { classifyZone } from '../zones.js';
 import { isCatchAllMatcher, matcherMatches } from './auth.js';
-import { composeRoutePrefixes, moduleOf, mountGraph, routerKey as moduleRouterKey } from './mounts.js';
+import { answersTo, composeRoutePrefixes, moduleOf, mountGraph, routerKey as moduleRouterKey } from './mounts.js';
 import {
   guardThroughHops,
   reachableGuards,
@@ -60,6 +60,7 @@ import type {
   RouterBuildFinding,
   PathGuardFinding,
   RouterGuardFinding,
+  RouterHandoffFinding,
   RouterMountFinding,
   StoreFinding,
 } from './types.js';
@@ -215,6 +216,7 @@ function describesTheApp(): (finding: BoundaryFinding) => boolean {
         return !isTest(finding.site.path);
       case 'router-build':
       case 'router-mount':
+      case 'router-handoff':
       case 'router-guard':
       case 'path-constant':
       case 'global-prefix':
@@ -293,6 +295,7 @@ export function buildBoundaryGraph(raw: BuildInput): BoundaryGraph {
     reachableGuards(guards, input.references ?? [], input.nodeNames ?? new Map()),
     input.findings.filter((f): f is RouterBuildFinding => f.type === 'router-build'),
     input.findings.filter((f): f is RouterMountFinding => f.type === 'router-mount'),
+    input.findings.filter((f): f is RouterHandoffFinding => f.type === 'router-handoff'),
   );
   applyHandlerDecorators(endpoints, decoratorGuards);
   applyDependencyGuards(
@@ -897,6 +900,7 @@ function applyGuards(
   reached: Map<string, ReachedGuard[]>,
   builds: RouterBuildFinding[],
   mounts: RouterMountFinding[],
+  handoffs: RouterHandoffFinding[],
 ): void {
   const byFile = new Map<string, GuardFinding[]>();
   const matchers: GuardFinding[] = [];
@@ -916,7 +920,7 @@ function applyGuards(
     else byFile.set(file, [guard]);
   }
 
-  const above = registeredAboveTheGate(mountedAt);
+  const above = registeredAboveTheGate(mountedAt, builds, handoffs);
 
   for (const endpoint of endpoints.values()) {
     const route = endpoint.meta.route;
@@ -1053,7 +1057,7 @@ function applyHandlerDecorators(endpoints: Map<string, MergedEndpoint>, guards: 
  * every application puts above its gate are a health check and a webhook whose
  * signature is its lock (#201).
  *
- * Two positions are readable, and both are read:
+ * Three positions are readable, and all three are read:
  *
  *   - a route written on the guarded router in the file that writes the gate, ordered
  *     by its own line;
@@ -1062,6 +1066,10 @@ function applyHandlerDecorators(endpoints: Map<string, MergedEndpoint>, guards: 
  *     `webhooks.js` above it, and nothing in that file mentions the check — which is
  *     the half that matters, since the file being wrong is not the file you would look
  *     in.
+ *   - the guarded router *handed to another module as an argument* in that file, ordered
+ *     by the **call's** line (#206). `require('./public')(app)` above the gate registers
+ *     every route in `public.js` above the gate, and CommonJS Express is largely written
+ *     this way. Nothing here is a mount, so the mount graph has no edge to follow.
  *
  * Only the first hop out of the guarded file is followed, and everything else keeps its
  * guard. That asymmetry is deliberate, and it is the correction the first attempt at
@@ -1073,7 +1081,11 @@ function applyHandlerDecorators(endpoints: Map<string, MergedEndpoint>, guards: 
  */
 function registeredAboveTheGate(
   mountedAt: Map<string, RouterMountFinding[]>,
+  builds: RouterBuildFinding[],
+  handoffs: RouterHandoffFinding[],
 ): (endpoint: MergedEndpoint, guard: GuardFinding) => boolean {
+  const builtAt = new Set(builds.map((build) => moduleRouterKey(moduleOf(build.path), build.varName)));
+
   return (endpoint, guard) => {
     const gate = guard.coversFrom;
     const host = guard.routerVar;
@@ -1093,6 +1105,28 @@ function registeredAboveTheGate(
         if (mount.path !== gate.path || mount.hostVar !== host) continue;
         return mount.line < gate.line;
       }
+    }
+
+    for (const key of endpoint.routers) {
+      const owned = byModule(key);
+      // A router this module *built* is its own, whatever else the module was handed.
+      // `const router = express.Router()` in a file that also takes an `app` parameter
+      // is two routers, and only a mount says where the first one ended up.
+      if (builtAt.has(owned)) continue;
+      const where = owned.slice(0, owned.indexOf('\0'));
+      const handed = handoffs.filter(
+        (handoff) =>
+          handoff.path === gate.path &&
+          handoff.hostVar === host &&
+          gate.line >= handoff.scope.from &&
+          gate.line <= handoff.scope.to &&
+          answersTo(where, handoff.targetModule),
+      );
+      // Any of them, not all. A module handed the app twice — once above the gate and
+      // once below it — registers its routes twice, and Express answers with the *first*
+      // registration it matches. So the copy above the gate is the one a stranger
+      // reaches, and the earliest readable position is the one that decides the door.
+      if (handed.some((handoff) => handoff.line < gate.line)) return true;
     }
     return false;
   };

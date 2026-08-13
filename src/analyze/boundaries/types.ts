@@ -568,6 +568,59 @@ export interface RouterMountFinding {
 }
 
 /**
+ * The router left this file as an *argument* — `require('./routes')(app)`,
+ * `registerRoutes(app)` — rather than as a mount (#206).
+ *
+ * A mount hangs a child router under a parent, and `RouterMountFinding` records where.
+ * This is the other half of the same question and the commoner shape in CommonJS: the
+ * app itself is handed to another module, which writes `app.get(…)` on the parameter it
+ * arrived in. Nothing in that module is a mount, so the mount graph has no edge, and the
+ * ordering rule has no line to compare against the gate:
+ *
+ *   const app = express();
+ *   require('./public')(app);   // ← this line, and every route registered beneath it
+ *   app.use(requireAuth);       // ← the gate
+ *
+ * The knowable fact is the position of *this call*. `require` runs where it is written,
+ * and so does an ordinary function call, so every route the receiving module registers
+ * on the router it was handed is registered at this line. Above the gate means above the
+ * gate, however far down the callee's file the `.get` happens to sit.
+ *
+ * Deliberately not "the direction of the import", which is what #206 asked for. In ESM
+ * the shape that argument rests on — `app.js` importing `routes.js`, which imports `app`
+ * back — is a `ReferenceError` on the `const app` binding: the program never starts, so
+ * there is no wrong answer to correct. The CJS cycle does run, and what decides it there
+ * is where the `require()` call sits. So the line is the fact, and the import edge is not.
+ */
+export interface RouterHandoffFinding {
+  type: 'router-handoff';
+  /** Where the call is written. Only ever compared against a gate in this same file. */
+  path: string;
+  /** The router variable handed over — `app` in `require('./routes')(app)`. */
+  hostVar: string;
+  /**
+   * The module receiving it, as this file spelled it: slashes, no extension. Matched
+   * against a route's own module by tail, the same way a mount's `childModule` is,
+   * because a specifier is relative to wherever it was written.
+   */
+  targetModule: string;
+  /** The call's own line — the position every route registered inside the target inherits. */
+  line: number;
+  /**
+   * The lines of the innermost function containing the call, or the whole file when it
+   * sits at module scope.
+   *
+   * Comparing two line numbers only means anything when both statements run in one
+   * sequence. `function wire(app) { require('./x')(app) }` written at the top of a file
+   * and called from the bottom of it has the smaller line number and runs *last* — so
+   * the merge asks whether the gate falls inside this span before it compares, and
+   * declines when it does not. A module-scope handoff spans the file, which is the same
+   * statement of the same fact: everything else in the file is in its sequence.
+   */
+  scope: { from: number; to: number };
+}
+
+/**
  * A check attached to a router or an app rather than to any one route on it:
  * `APIRouter(dependencies=[Depends(get_current_user)])`, or an ASGI middleware added
  * with `app.add_middleware(AuthMiddleware)`.
@@ -669,6 +722,7 @@ export type BoundaryFinding =
   | AuthAliasFinding
   | RouterBuildFinding
   | RouterMountFinding
+  | RouterHandoffFinding
   | RouterGuardFinding
   | HandlerDecoratorFinding
   | HttpWrapperFinding
