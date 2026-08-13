@@ -380,6 +380,10 @@ function synthesizeRouteHandlers(
       },
     });
     finding.handlerId = id;
+    // The old id named the registering method; this one names the lambda itself. Whatever
+    // the detector knew about the first no longer describes the second — a check written
+    // in the method around it is not written on this handler (#255).
+    delete finding.handlerIsScope;
     spans.push({ id, ...span });
   }
   if (spans.length === 0) return;

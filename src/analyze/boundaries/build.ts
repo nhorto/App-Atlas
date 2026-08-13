@@ -442,6 +442,14 @@ interface MergedEndpoint {
   meta: EndpointMeta;
   /** Atlas nodes that answer this door. */
   handlerIds: Set<string>;
+  /**
+   * The subset of `handlerIds` that is really the scope a registration was written in
+   * (#255). Kept rather than filtered out at the door: it is still the right end for an
+   * `exposed-by` edge and the right parent for a synthesized handler, and it is still
+   * where the door's code lives. It is only useless for one question — whether a check
+   * found nearby covers this door — and {@link handlersProper} is what asks that one.
+   */
+  scopeIds: Set<string>;
   /** Unresolved type names from the handler's signature; see `EndpointFinding`. */
   paramTypes: Set<string>;
   /** One `routerKey` for each place this door is registered. */
@@ -530,7 +538,10 @@ function collectEndpoints(input: BuildInput): Map<string, MergedEndpoint> {
       existing.meta.sites.push(finding.site);
       existing.meta.writes = existing.meta.writes || finding.writes;
       for (const guard of finding.guards) existing.meta.guards.push(guard);
-      if (finding.handlerId) existing.handlerIds.add(finding.handlerId);
+      if (finding.handlerId) {
+        existing.handlerIds.add(finding.handlerId);
+        if (finding.handlerIsScope) existing.scopeIds.add(finding.handlerId);
+      }
       // The class file read the timer and the registration did not; whichever arrived
       // first, the door keeps the schedule somebody actually wrote down.
       if (finding.schedule && !existing.meta.schedule) existing.meta.schedule = finding.schedule;
@@ -558,6 +569,7 @@ function collectEndpoints(input: BuildInput): Map<string, MergedEndpoint> {
         sites: [finding.site],
       },
       handlerIds: new Set(finding.handlerId ? [finding.handlerId] : []),
+      scopeIds: new Set(finding.handlerId && finding.handlerIsScope ? [finding.handlerId] : []),
       paramTypes: new Set(finding.paramTypes ?? []),
       routers: new Set(finding.routerVar ? [routerKey(finding.site.path, finding.routerVar)] : []),
       owners: new Set(finding.handlerOwner ? [finding.handlerOwner] : []),
@@ -1173,7 +1185,12 @@ function applyGuards(
       }
     }
 
-    for (const handlerId of endpoint.handlerIds) {
+    // The walk starts at the handler, so it has to *be* the handler (#255). From a
+    // registration scope it starts at everything the scope calls, which in mastodon's
+    // `startServer` is the entire streaming server — and none of it is a hop this door
+    // takes. There is no confidence gate on this path either, so a wrong start attaches
+    // a check outright rather than merely over-grading one.
+    for (const handlerId of handlersProper(endpoint)) {
       for (const hop of reached.get(handlerId) ?? []) {
         const through = guardThroughHops(hop);
         if (gated.has(head(through.name))) continue;
@@ -1276,7 +1293,9 @@ function applyHandlerDecorators(endpoints: Map<string, MergedEndpoint>, guards: 
     else byNode.set(guard.nodeId, [guard.guard]);
   }
   for (const endpoint of endpoints.values()) {
-    for (const handlerId of endpoint.handlerIds) {
+    // A decorator is written on one function, and "this door's function" is the only
+    // reading under which that means anything (#255).
+    for (const handlerId of handlersProper(endpoint)) {
       for (const guard of byNode.get(handlerId) ?? []) pushGuard(endpoint, guard);
     }
   }
@@ -1727,8 +1746,32 @@ function weaker(a: Confidence, b: Confidence): Confidence {
   return CONFIDENCE_RANK[a] <= CONFIDENCE_RANK[b] ? a : b;
 }
 
+/**
+ * The handler ids that are actually this door's handler (#255).
+ *
+ * Three rules below reason from "the check is written on the node that answers this
+ * door", and every one of them is wrong about a node that merely *contains the line
+ * where the door was registered*. Mastodon's `startServer` is 1,317 lines holding four
+ * `app.get`s, the WebSocket handler and `authorizeListAccess`; the guard's node and all
+ * four doors' nodes are that one function, so the checks matched and `/metrics` was
+ * reported locked by a routine that authorizes access to a timeline list.
+ *
+ * This is the same mistake `guardConfidence` documents at file granularity, one level
+ * in — "the handler is the whole file" became "the handler is this whole function" — and
+ * it is worth saying why the obvious discriminator is not the one used. *Sharing* an id
+ * between doors looks like the tell and is not: gin-realworld's `ArticleUpdate` is one
+ * Go function serving `/api/articles/:slug` and `/api/articles/:slug/`, doing its own
+ * checking, and it is shared and correct. What separates the two cases is not how many
+ * doors point at the node but whether the node was ever the handler, which is knowable
+ * where the id is made and nowhere afterwards.
+ */
+function handlersProper(endpoint: MergedEndpoint): Set<string> {
+  if (endpoint.scopeIds.size === 0) return endpoint.handlerIds;
+  return new Set([...endpoint.handlerIds].filter((id) => !endpoint.scopeIds.has(id)));
+}
+
 function guardConfidence(endpoint: MergedEndpoint, guard: GuardFinding): Confidence | null {
-  if (guard.nodeId && endpoint.handlerIds.has(guard.nodeId)) return 'certain';
+  if (guard.nodeId && handlersProper(endpoint).has(guard.nodeId)) return 'certain';
   // A module-scope check runs for everything the file declares.
   if (guard.nodeId?.startsWith('file:')) return 'likely';
   // We only pinned the handler down as far as its file, so anything in that file may
@@ -1739,6 +1782,11 @@ function guardConfidence(endpoint: MergedEndpoint, guard: GuardFinding): Confide
   // so the two used to give the same answer — which is how `mux.Handle("/debug/vars",
   // expvar.Handler())` came to be reported as protected by a middleware standing in front
   // of the route on the line above it.
+  //
+  // Deliberately the full set and not `handlersProper`. A door registered at module scope
+  // has a scope id, and that scope id is its file — which is exactly the case this rule
+  // was written for. Narrowing here would empty the set, `[].every(…)` would be true
+  // again, and the size check above would be back to guarding nothing.
   if (endpoint.handlerIds.size > 0 && [...endpoint.handlerIds].every((id) => id.startsWith('file:'))) {
     return 'likely';
   }
@@ -1889,6 +1937,7 @@ function collectEnv(input: BuildInput): MergedEndpoint | null {
           .join(', ') || null,
     },
     handlerIds: new Set(sites.map((site) => makeFileId(site.path))),
+    scopeIds: new Set(),
     paramTypes: new Set(),
     routers: new Set(),
     owners: new Set(),

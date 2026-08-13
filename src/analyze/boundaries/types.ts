@@ -69,6 +69,22 @@ export interface EndpointFinding {
   /** The atlas node that answers this door. */
   handlerId: string | null;
   /**
+   * `handlerId` is the scope the registration was *written in*, not this door's handler
+   * (#255).
+   *
+   * An inline arrow is not an atlas node, so "which function is this" walks up past it
+   * and answers with whatever encloses the `app.get(…)` call. In a file that registers
+   * one route per function those are the same node and nobody notices. In mastodon's
+   * `startServer` — 1,317 lines holding four registrations, the WebSocket handler and
+   * `authorizeListAccess` — they are not, and every check anywhere inside it read as
+   * written on every door inside it. `/metrics` came out locked.
+   *
+   * So the id is still recorded, because it is the right parent for a synthesized
+   * handler and the right end for a `exposed-by` edge, and this flag says which of the
+   * two questions it can answer. It cannot answer "does this check cover this door".
+   */
+  handlerIsScope?: boolean;
+  /**
    * Where the handler's code sits when it is a lambda the source never named (#99):
    * `app.MapGet("/x", () => …)`. A lambda is not a definition, so `handlerId` can only
    * say "the method that registered it" — which, in a file registering twenty routes,

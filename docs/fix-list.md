@@ -877,3 +877,46 @@ differently.
       their import as the evidence line. The invariant this could have broken is now
       written down in `shipped.test.js`: a service earns its name from a host it calls or
       from a package the catalog knows, and never from the variable that took the call.
+
+- [x] **48. A check anywhere in a registration scope is read as written on every door in
+      it** — *Tier 1.* Found by pointing the tool at mastodon, which had never been in
+      the corpus. Its Node streaming server declares four HTTP routes and a WebSocket
+      connection, and the screen said `every one of the 5 routes has an auth check — all
+      matched, none proven`. Three of those five have nothing in front of them at all,
+      and one of them is `/metrics`.
+      **The mechanism is one line meeting another.** An inline arrow is not a node in the
+      atlas, so `guessHandlerId` walks up past it and answers with whatever encloses the
+      `app.get(…)` call — here `startServer`, 1,317 lines holding every registration in
+      the program, the WebSocket handler, and `authorizeListAccess`. The check's node is
+      that same function, so `handlerIds.has(guard.nodeId)` is true and the reach grades
+      `certain`. It is the failure `guardConfidence` already documents at file
+      granularity — "we could not find the handler" is not "the handler is the whole
+      file" — one level in.
+      **Sharing is not the discriminator**, which is what makes this worth writing down.
+      gin-realworld's `ArticleUpdate` serves `/api/articles/:slug` and
+      `/api/articles/:slug/` from one Go function that does its own checking: shared, and
+      correct. What separates the cases is whether the node was ever the handler, and
+      only the code that made the id can answer that. So `guessHandlerId` compares its
+      two walks and says which happened, and three rules that reason from "written on
+      this door's handler" stop reading the answer when it is "written somewhere in the
+      1,300 lines around it".
+      **Measured across eleven repositories: nine doors change, all nine by losing a
+      check, none gaining one.** mastodon 4 and parse-server 5. Six of the nine are
+      plainly right — parse-server's own source comments that its GET file routes skip
+      `handleParseHeaders`. Three are honest under-claims: mastodon's
+      `/api/v1/streaming/*splat` and parse-server's `POST /files/:filename` and
+      `DELETE /files/*filepath` do have a check in front of them. Every one of those
+      three has it *in the route's own argument list*, where the reader is already
+      precise — and misses it because `authenticationMiddleware` and `handleParseHeaders`
+      match no name in the guard vocabulary. They were right by coincidence: the scope
+      walk gave all five parse-server doors the same answer and was wrong on three.
+      **The cost is in the fixture rather than in a paragraph.** `/admin/keys` calls its
+      check inside its own handler — the genuine version of what mastodon only looked
+      like — and reports open. `ctx.enclosing` collapses both to the same function, so no
+      id can tell them apart; `handlerSpan`, which already exists for C# lambdas, is the
+      way back.
+      **Left alone deliberately, and measured before deciding.** The cron, queue and
+      realtime emitters attribute a door to `ctx.enclosing(<the registration>)` too, and
+      the same rule applied there buys one honest downgrade — NodeBB's socket `authorize`
+      from an unearned `certain` to `likely` — and costs mastodon's WebSocket door a
+      check that really does run on it. That is not a trade worth taking blind.

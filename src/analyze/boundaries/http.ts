@@ -1116,7 +1116,7 @@ function routeCall(call: CallExpression, ctx: DetectorContext): void {
     writes: WRITE_METHODS.has(httpMethod),
     guards: middlewareGuards(call, ctx),
     site: ctx.site(call, `${dotted}('${route}', …)`),
-    handlerId: guessHandlerId(call, ctx),
+    ...handlerOf(call, ctx),
     // Which router this hangs off, so whatever prefix that router was mounted under
     // becomes part of the address before anything is merged.
     routerVar: holder,
@@ -1520,10 +1520,31 @@ function frameworkFor(name: string, ctx: DetectorContext): string | null {
 /**
  * The handler is usually an inline arrow, which is not a node in the atlas, so we
  * attribute the door to whatever *is*: the function or file the route is declared in.
+ *
+ * And say which of those two things happened, because the caller cannot tell from the id
+ * and the difference is #255. `ctx.enclosing` walks up from the node it is given until it
+ * reaches something registered; an inline arrow is not registered, and neither is an
+ * identifier *referring* to a handler declared elsewhere, so both walks usually end at
+ * the same place the call's own walk ends. When they do, the id names the registration's
+ * scope and not the handler.
+ *
+ * Comparing the two walks rather than asking whether `functionArg` found anything is the
+ * point: it is the answer to the question actually being asked, so a handler that does
+ * resolve to its own node — a C# lambda repointed by `handlerSpan`, or anything a future
+ * extractor decides to register — is recognised as one without this rule being revisited.
  */
-function guessHandlerId(call: CallExpression, ctx: DetectorContext): string {
+function guessHandlerId(call: CallExpression, ctx: DetectorContext): { id: string; isScope: boolean } {
+  const scope = ctx.enclosing(call);
   const handler = functionArg(call);
-  return ctx.enclosing(handler ?? call);
+  if (!handler) return { id: scope, isScope: true };
+  const id = ctx.enclosing(handler);
+  return { id, isScope: id === scope };
+}
+
+/** The two `EndpointFinding` fields {@link guessHandlerId} answers, ready to spread. */
+function handlerOf(call: CallExpression, ctx: DetectorContext): Pick<EndpointFinding, 'handlerId' | 'handlerIsScope'> {
+  const { id, isScope } = guessHandlerId(call, ctx);
+  return { handlerId: id, ...(isScope ? { handlerIsScope: true } : {}) };
 }
 
 // ---------------------------------------------------------------------------
