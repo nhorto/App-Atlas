@@ -385,6 +385,26 @@ export interface AuthCheckerFinding {
   /** The function's name, which is what a dependency list will say. */
   name: string;
   guard: GuardInfo;
+  /**
+   * The check has a switch on it, and the switch is thrown by whoever calls it.
+   *
+   * ```go
+   * func AuthMiddleware(auto401 bool) gin.HandlerFunc {
+   *     …
+   *     if auto401 { c.AbortWithStatus(http.StatusUnauthorized) }
+   * ```
+   *
+   * The realworld example attaches that same function twice — `AuthMiddleware(false)`
+   * in front of its anonymous reads, `AuthMiddleware(true)` in front of everything else
+   * — so the name alone says nothing about whether a group behind it is shut. The
+   * generic IR carries a nested call as its callee and drops the arguments, so the
+   * value is not available to read, and both attachments arrive identical.
+   *
+   * Only ever a reason to say *less*. A check written straight onto a handler is still
+   * a check; what this withdraws is the claim over a whole group, where one wrong
+   * answer is multiplied by every door under it (#194).
+   */
+  switched?: boolean;
 }
 
 /**
@@ -488,6 +508,27 @@ export interface RouterMountFinding {
    * the evidence — whether that module builds a router — arrives.
    */
   childName?: string | null;
+  /**
+   * The child was *made* by this line, and carries only what its host had at the time.
+   *
+   * Gin, echo and their relatives copy the host's middleware into a group when `Group()`
+   * runs, so a check added to the parent afterwards never reaches it. The realworld
+   * example is the whole argument for reading it:
+   *
+   *   v1 := r.Group("/api")
+   *   users.UsersRegister(v1.Group("/users"))     // made first — public, and must be
+   *   v1.Use(users.AuthMiddleware(false))
+   *   articles.ArticlesRegister(v1.Group("/articles"))
+   *
+   * Without this, composing those addresses puts `AuthMiddleware` beside
+   * `POST /api/users/login` — a lock on the door that hands out the sessions, which is a
+   * worse answer than the honest ellipsis it replaced (#194).
+   *
+   * Opt-in per emitter, because it is not true everywhere: ASGI's `add_middleware`
+   * wraps the whole application whatever order it is written in, and a FastAPI router's
+   * `dependencies=` belong to its constructor rather than to a sequence.
+   */
+  inheritsInOrder?: boolean;
   hasPrefix: boolean;
   prefix: string | null;
   prefixName: string | null;

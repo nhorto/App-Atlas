@@ -303,13 +303,45 @@ function detectRoutes(
   for (const def of file.defs) {
     for (const param of def.params) {
       const type = bareType(param.type);
-      if (!ROUTER_TYPE.test(type) || routers.has(param.name)) continue;
-      const pkg = type.includes('.') ? type.slice(0, type.indexOf('.')) : null;
-      const module = pkg ? imports.get(pkg) : null;
-      // A known library gets its own name; anything else is named after the type it is,
-      // which is what a reader would have to go and look at anyway.
-      routers.set(param.name, (module && goFrameworkFor(module)) ?? type);
-      if (CALLER_PREFIXED_TYPE.test(type)) callerPrefixed.add(param.name);
+      if (!ROUTER_TYPE.test(type)) continue;
+      if (!routers.has(param.name)) {
+        const pkg = type.includes('.') ? type.slice(0, type.indexOf('.')) : null;
+        const module = pkg ? imports.get(pkg) : null;
+        // A known library gets its own name; anything else is named after the type it is,
+        // which is what a reader would have to go and look at anyway.
+        routers.set(param.name, (module && goFrameworkFor(module)) ?? type);
+      }
+      if (!CALLER_PREFIXED_TYPE.test(type)) continue;
+      callerPrefixed.add(param.name);
+
+      // A group handed in is known outside by the name of the function it was handed to,
+      // which is the only name a caller ever writes: `articles.ArticlesRegister(…)`. The
+      // same rule the return-value case already lives by, read at the parameter end.
+      //
+      // Per function rather than per file, and that is the whole reason it is needed:
+      // `articles/routers.go` declares `ArticlesRegister`, `ArticlesAnonymousRegister`
+      // and `TagsAnonymousRegister`, and all three call their parameter `router`. One
+      // name for three prefixes is three sets of doors under whichever the merge picked.
+      if (def.kind !== 'function' || named.has(def.name)) continue;
+      named.add(def.name);
+      aliases.push({ varName: param.name, identity: def.name, startIndex: def.startIndex, endIndex: def.endIndex });
+      // A build under that name, because a name with nothing built under it is a name a
+      // mount cannot resolve — the merge asks whether the module it imported declares
+      // this router before it will hang anything off it.
+      findings.push({
+        type: 'router-build',
+        routerName: type,
+        varName: def.name,
+        path: file.path,
+        line: def.line,
+        hasPrefix: false,
+      });
+      // Both names carry the flag. `routerVar` becomes the function's name from here on,
+      // and #151's net is keyed on it — losing the flag is what silently disarmed the
+      // first attempt at this, so that every group it could not place printed its bare
+      // fragment as a whole address instead of an ellipsis (#194). The flag costs nothing
+      // when composition succeeds: it is only ever read after composition has failed.
+      callerPrefixed.add(def.name);
     }
   }
 
@@ -420,6 +452,27 @@ function detectRoutes(
     return goFrameworkFor(module) ?? handed.type;
   };
 
+  /**
+   * The call this one was written inside the arguments of, when it was.
+   *
+   * By containment, because that is all the IR keeps: a call handed to another call
+   * arrives as its callee's name and nothing else, so `v1.Group("/users")` inside
+   * `users.UsersRegister(…)` is connected to it only by sitting between its brackets.
+   *
+   * The *innermost* container, so `a(b(c.Group("/x")))` hands the group to `b` rather
+   * than to `a`. A receiver of its own disqualifies nothing — what matters is that the
+   * group went somewhere, and the merge decides whether that somewhere has doors.
+   */
+  const enclosingCall = (call: GCall): GCall | null => {
+    let best: GCall | null = null;
+    for (const other of file.calls) {
+      if (other.startIndex === call.startIndex) continue;
+      if (other.startIndex > call.startIndex || other.endIndex < call.endIndex) continue;
+      if (!best || other.startIndex > best.startIndex) best = other;
+    }
+    return best;
+  };
+
   /** What a router variable is called outside the function it was built in. */
   const identityOf = (varName: string, index: number): string => {
     for (const alias of aliases) {
@@ -495,9 +548,17 @@ function detectRoutes(
     const pattern = patternOf(call.args);
     const closure = call.args.find((arg): arg is Extract<GValue, { t: 'func' }> => arg.t === 'func');
 
+    // A group made to be handed straight to somebody: `users.UsersRegister(v1.Group(
+    // "/users"))`. No variable, no closure, and it is what real Gin code writes — the
+    // realworld example wires its entire API this way, and the rule that looked for a
+    // router *variable* as the argument never fired on any of it (#194).
+    const handedTo = bound === null && !closure ? enclosingCall(call) : null;
+
     // `admin := r.Group("/admin")` — a real variable, and every route on it says its
-    // name. `r.Route("/admin", func(…){ … })` — no variable at all, so it gets one.
-    const varName = bound ?? (closure ? `${host.varName}#${call.line}` : null);
+    // name. `r.Route("/admin", func(…){ … })` — no variable at all, so it gets one, and
+    // an inline group is the same case: invent a name, hang it under its host with the
+    // prefix it was written with, then hang the function it was handed to under that.
+    const varName = bound ?? (closure || handedTo ? `${host.varName}#${call.line}` : null);
     if (!varName) continue;
 
     routers.set(varName, host.framework);
@@ -519,8 +580,33 @@ function detectRoutes(
       hasPrefix: pattern.prefix !== null || pattern.prefixName !== null,
       prefix: pattern.prefix,
       prefixName: pattern.prefixName,
+      // `Group()` copies the host's middleware as it runs, so this child carries what the
+      // host had on this line and nothing added to it later.
+      inheritsInOrder: true,
       line: call.line,
     });
+
+    // The second half of the hand-over: the function this group was passed to owns the
+    // doors, and is known by its own name because that is what its parameter was aliased
+    // to at the top of this pass. `users` here is the package, and the merge resolves it
+    // the same way `Mount` does.
+    if (handedTo) {
+      const callee = handedTo.callee;
+      const dot = callee.lastIndexOf('.');
+      const pkg = dot > 0 ? callee.slice(0, dot) : null;
+      const module = pkg ? (imports.get(pkg) ?? null) : null;
+      findings.push({
+        type: 'router-mount',
+        path: file.path,
+        hostVar: varName,
+        childModule: module === null ? null : packageDir(module, input.signals.goModule),
+        childVar: dot > 0 ? callee.slice(dot + 1) : callee,
+        hasPrefix: false,
+        prefix: null,
+        prefixName: null,
+        line: handedTo.line,
+      });
+    }
 
     // The lock on a whole group, written either as an argument —
     // `g.Group("/plugin/", RequireClient)`, gin and echo — or chained onto the result:
@@ -861,7 +947,7 @@ function detectCheckers(input: BoundaryInput, wiring: Set<string>, findings: Bou
 
     // Named, so that a router that attaches it by name — in this file or four files
     // away — can be told a lock from a logger.
-    findings.push({ type: 'auth-checker', name: def.name, guard });
+    findings.push({ type: 'auth-checker', name: def.name, guard, ...(switchedByCaller(def) ? { switched: true } : {}) });
 
     // And attached to itself, because a handler that does its own checking is guarded,
     // and a route answering with it should not read as wide open. Gin's `ArticleDelete`
@@ -922,6 +1008,27 @@ function rejectingFunctions(file: GenericFile, wiring: Set<string>): Set<string>
     if (!grew) break;
   }
   return rejecting;
+}
+
+/**
+ * Whether this check has a switch on it that the caller throws.
+ *
+ * `func AuthMiddleware(auto401 bool) gin.HandlerFunc` — the 401 sits behind `if
+ * auto401`, and the realworld example attaches the same function twice, once each way.
+ * A boolean handed to a middleware is a switch on its behaviour; a string is a subject
+ * for it, which is why `RequireRole("admin")` is not caught here and should not be.
+ *
+ * The condition itself is not readable: this tier sees definitions, calls and the names
+ * they mention, not the statements between them. So the question asked is the one the
+ * shape can answer — *is there a switch* — rather than *which way was it set*, and the
+ * answer is used only to withhold a claim, never to make one.
+ *
+ * A middleware factory is the only place it applies. `func Login(c *gin.Context, remember
+ * bool)` is a handler with an argument, not a check somebody configured, and it is not
+ * attached to a group by name in the first place.
+ */
+function switchedByCaller(def: GDef): boolean {
+  return def.params.some((param) => bareType(param.type) === 'bool');
 }
 
 /** Whether a definition itself ever answers with a 401 or a 403. */
