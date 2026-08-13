@@ -32,6 +32,11 @@ const GUARD_NAMES = new Set([
   'ensureAuthenticated',
   'ensureAuth',
   'ensureSignedIn',
+  // `connect-ensure-login` exports this name, and NodeBB puts it in front of every one of
+  // its admin routes. Exact names rather than an `ensure`/`check` prefix on purpose:
+  // `checkRequired` sits in the same NodeBB argument list and validates a request body.
+  'ensureLoggedIn',
+  'checkPrivileges',
   'isAuthenticated',
   'checkAuth',
   'checkPermission',

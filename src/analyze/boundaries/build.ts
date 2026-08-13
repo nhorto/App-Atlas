@@ -589,10 +589,20 @@ function argAtPosition<T>(position: ArgPosition, list: T[]): T | undefined {
  * auth column that is blank is worth having; the same address wearing a lock that is not
  * there is the failure this file exists to prevent.
  *
- * The cost is real and is accepted: `setupAdminPageRoute` injects `middleware.admin.isAdminPage`,
- * which *is* a refusal, and its 61 doors lose a true fact. Under-claiming is the
- * recoverable direction. See `test/routehelper.test.js`, which records it as a decision
- * rather than leaving it to look like an oversight.
+ * An earlier version of this comment claimed the rule cost NodeBB's 61 admin pages a real
+ * lock, because `setupAdminPageRoute` injects `middleware.admin.isAdminPage`. Reading the
+ * body says otherwise:
+ *
+ *   middleware.isAdminPage = function (req, res, next) {
+ *       res.locals.isAdminPage = true;
+ *       next();
+ *   };
+ *
+ * It sets a flag. NodeBB's real admin gate is a path matcher in `src/routes/index.js`,
+ * `router.all('(/+admin|/+admin/*?)', …, middleware.admin.checkPrivileges)`, which is a
+ * shape this file already reads. So the withdrawal costs nothing there — and the claim
+ * that it did was made from a *name*, which is the mistake the whole rule is about.
+ * See `test/routehelper.test.js`, which records this as a decision rather than an oversight.
  */
 function helperRoutes(findings: BoundaryFinding[]): EndpointFinding[] {
   const doors: EndpointFinding[] = [];
@@ -640,8 +650,11 @@ function helperRoutes(findings: BoundaryFinding[]): EndpointFinding[] {
         route: full,
         framework: call.framework,
         writes: WRITE_METHODS.has(method),
-        // Empty on purpose — see the note above this function.
-        guards: [],
+        // Only what the *caller* wrote in the argument list — see `helperGuards`. The
+        // list the helper injects into every door it opens is still refused, for the
+        // reason above; this is the one written beside this door by the person who
+        // declared it, and is the same evidence as a plain `router.get('/x', check, h)`.
+        guards: call.guards,
         site: {
           path: call.path,
           line: call.line,

@@ -24,9 +24,15 @@
  * injects `createAuthorizeMiddleware`, which genuinely refuses with `ctx.unauthorized()`.
  * Same slot, opposite meaning, and nothing in the shape distinguishes them. So these
  * doors arrive with no checks and read as "not examined", which is what this tool says
- * everywhere else it has not established an answer. The cost is accepted and is real:
- * NodeBB's 61 admin pages carry a genuine `isAdminPage` refusal and lose a true fact.
- * Under-claiming is the recoverable direction.
+ * everywhere else it has not established an answer, and under-claiming is the recoverable
+ * direction.
+ *
+ * This comment used to say the rule cost NodeBB's 61 admin pages a real lock, because
+ * `setupAdminPageRoute` injects `middleware.admin.isAdminPage`. That was wrong, and wrong
+ * in the exact way this rule exists to prevent — it was read off the *name*. The body is
+ * `res.locals.isAdminPage = true; next();`. It sets a flag and refuses nobody. NodeBB's
+ * real admin gate is `middleware.admin.checkPrivileges`, attached by a path matcher in
+ * `src/routes/index.js`, which is a shape read elsewhere in this codebase.
  */
 import assert from 'node:assert/strict';
 import { fileURLToPath } from 'node:url';
@@ -93,9 +99,44 @@ test('no check is claimed from the middleware the helper injects', () => {
   // The whole point. `authenticateRequest` matches the guard-prefix rule on its name
   // alone, is injected into every list `setupPageRoute` builds, and refuses nobody.
   // Claiming it would put a lock on the login page.
-  for (const door of doors) {
-    assert.deepEqual(door.meta.guards, [], `${door.name} claimed a check it cannot prove`);
+  for (const route of ['/login', '/register', '/reset/:code?', '/api/login', '/api/register']) {
+    assert.deepEqual(byName.get(route)?.meta.guards ?? [], [], `${route} claimed a check it cannot prove`);
   }
+});
+
+test('a check the caller passes is read, because that is ordinary evidence', () => {
+  // The other list, and the distinction the rule turns on. What the helper injects is
+  // uniform across every door it opens and says nothing about any of them; what the
+  // *caller* writes in the argument list sits beside one door, the same as
+  // `router.get('/x', requireAuth, handler)`.
+  //
+  // Withholding it left 21 of NodeBB's `/api/v3/admin/*` doors — token management,
+  // analytics, the settings writer — reading as though nothing guarded them, while
+  // `[middleware.ensureLoggedIn, middleware.admin.checkPrivileges]` sat in the call.
+  const door = doors.find((node) => node.meta.method === 'DELETE' && node.meta.route === '/api/v3/categories/:cid');
+  assert.deepEqual(
+    door?.meta.guards.map((guard) => guard.name),
+    ['middleware.ensureLoggedIn'],
+  );
+});
+
+test('a check spread from a list the file built earlier is still read', () => {
+  // `const middlewares = [middleware.ensureLoggedIn]` and then `[...middlewares]` — the
+  // name never appears in the argument list as written, and this is how NodeBB writes
+  // every one of them. Resolved through the identifier's symbol rather than by scanning
+  // the file, so a list declared inside a factory is still found (#204's scope trap).
+  const door = doors.find((node) => node.meta.method === 'PUT' && node.meta.route === '/api/v3/categories/:cid');
+  assert.deepEqual(
+    door?.meta.guards.map((guard) => guard.name),
+    ['middleware.ensureLoggedIn'],
+  );
+});
+
+test('a helper call with no middleware of its own stays blank', () => {
+  // The same helper, the same file, one line up. If the spread resolution leaked across
+  // call sites this is the door that would show it.
+  const door = doors.find((node) => node.meta.method === 'GET' && node.meta.route === '/api/v3/categories/:cid');
+  assert.deepEqual(door?.meta.guards, []);
 });
 
 test('a route written out longhand is untouched by any of this', () => {
