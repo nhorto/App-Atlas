@@ -23,6 +23,7 @@ import { countStaleDocs } from '../model/staleness.js';
 import { FORMAT_VERSION, makeAppId, makeEdgeId } from '../model/types.js';
 import { appendAll } from '../util/append.js';
 import { hashParts } from '../util/hash.js';
+import { headCommit } from '../util/head.js';
 import { classifyArchetype } from './archetype.js';
 import { buildBoundaryGraph } from './boundaries/build.js';
 import { buildExportDoors } from './boundaries/exports.js';
@@ -153,7 +154,20 @@ import { dominantZone } from './zones.js';
  * is now the sign-in door rather than an unchecked one (#186), and a test fixture is no
  * longer a scope (#185), so the very set of atlases a workspace produces is different.
  */
-export const TOOL_VERSION = '0.25.0';
+/*
+ * 0.26.0 is the 0.12.1 case, and worth naming as such because the feature it ships is
+ * about staleness and could be mistaken for a reason to expire caches. It is not one. The
+ * analyzer sees exactly what it saw; every finding, every guard and every door is
+ * unchanged. What is new is one meta field recording the commit those findings describe,
+ * and it is deliberately computed outside the per-file cache on every run — git history
+ * moves while file text does not, so a commit restored from a cache slice would be the
+ * stale-but-never-invalidated answer this whole comment exists to prevent.
+ *
+ * The number moves anyway, for the reason 0.10.0 and 0.12.0 moved: it is stamped into
+ * `ATLAS.md`, which people commit, and a build that writes another version's number into
+ * a checked-in file is making a false claim about where that file came from.
+ */
+export const TOOL_VERSION = '0.26.0';
 
 export interface AnalyzeOptions {
   maxFiles?: number;
@@ -459,6 +473,12 @@ export async function analyzeProject(rootDir: string, options: AnalyzeOptions = 
 
   options.onProgress?.('Building the map', 1, 1);
 
+  // Read last, so it names the commit the analysis finished on rather than one a commit
+  // made mid-run has already replaced. Either answer would be defensible; the later one
+  // is the conservative direction, because it can only ever make a fresh atlas look
+  // stale, and never a stale one look fresh.
+  const commit = headCommit(project.root);
+
   const atlas: Atlas = {
     meta: {
       formatVersion: FORMAT_VERSION,
@@ -489,6 +509,11 @@ export async function analyzeProject(rootDir: string, options: AnalyzeOptions = 
       // is zero-by-absence: a map that quietly leaves code out is the failure this
       // project exists to avoid (#87).
       retiredFiles: retiredCount,
+      // Which commit these facts describe. Recorded at the moment they were derived,
+      // because nothing downstream can recover it afterwards: a second process reading
+      // this atlas sees whatever the tree has moved to since, which is the comparison
+      // this is here to make possible rather than a substitute for it.
+      ...(commit ? { vcs: { commit } } : {}),
       warnings,
     },
     nodes: nodes.sort((a, b) => a.id.localeCompare(b.id)),

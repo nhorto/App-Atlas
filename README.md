@@ -349,6 +349,23 @@ Seven tools, over the same graph the screen draws:
 Every answer names the file and line it came from, keeps the confidence the analyzer
 had, marks any sentence a model wrote, and says when the analysis was run.
 
+**And it says when the code has moved on since.** A timestamp tells your agent how old
+the map is, not whether it is still true — an atlas from last week is perfect if nobody
+committed, and one from four minutes ago is describing deleted code if your agent has
+been busy. So the analyzer writes down the commit it read, and every answer compares it
+against the repo in front of it:
+
+```
+This code has moved since it was analysed: the atlas describes 6de1024 and the working
+tree is now on 392d207. Anything above may describe code that no longer exists — re-run
+`app-atlas analyze` before trusting it.
+```
+
+Where there is no answer — not a git repo, an atlas written before this existed — it
+says nothing at all rather than telling you it is current. A false alarm costs you a
+re-analysis; a false all-clear costs your agent a confident wrong answer, and this tool
+does not round in that direction.
+
 The server reads the atlas `analyze` already wrote and never runs one itself — an MCP
 client starts its servers at the beginning of a session and a first answer that took
 forty seconds would look like a hang. So run `app-atlas analyze` first, and again after
