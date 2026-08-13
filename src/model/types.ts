@@ -710,6 +710,20 @@ export interface AtlasMeta {
    * which is a third thing again from "no baseline" and from "nothing changed".
    */
   changes?: AtlasChanges;
+  /**
+   * The commit the working tree was on when this atlas was written.
+   *
+   * `generatedAt` already says *when* the analyzer ran, but a reader's real question is
+   * whether the code has moved since, and a timestamp cannot answer it: ten minutes is
+   * nothing on an untouched repo and three features on one an agent is working in. The
+   * commit can be compared, so anything reading this atlas later can tell the difference
+   * between old and out of date.
+   *
+   * Absent whenever that could not be established — not a git repository, an unreadable
+   * `.git`, a branch with no commits on it. Absent means nobody could tell, never that
+   * nothing has changed, and the surfaces that read it say so in those words.
+   */
+  vcs?: { commit: string };
   /** Non-fatal problems worth surfacing in the UI. */
   warnings: string[];
 }

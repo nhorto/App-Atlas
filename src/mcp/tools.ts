@@ -30,6 +30,7 @@ import { bundleMaps } from '../model/sourcemap.js';
 import { grammarTier } from '../model/tiers.js';
 import { findPersonalData } from '../model/personal.js';
 import type { AtlasEdge, AtlasNode, CodeSite, EndpointMeta, GuardInfo } from '../model/types.js';
+import { headCommit, shortCommit } from '../util/head.js';
 import type { AtlasApp, AtlasSource } from './atlas.js';
 
 /** What one tool call sends back. Mirrors the protocol's `CallToolResult`. */
@@ -963,6 +964,9 @@ function provenance(app: AtlasApp, apps: AtlasApp[], graph: AtlasGraph): string[
       'analysis and never runs one.',
   );
 
+  const moved = staleness(app, graph);
+  if (moved) lines.push(moved);
+
   const tier = grammarTier(graph.allNodes());
   if (tier) lines.push(tier.sentence);
 
@@ -976,14 +980,58 @@ function provenance(app: AtlasApp, apps: AtlasApp[], graph: AtlasGraph): string[
   return lines;
 }
 
+/**
+ * The sentence that says the code has moved on since this atlas was written, or null.
+ *
+ * The timestamp a line above already tells an agent how old these facts are. It does not
+ * tell it whether they are *wrong*, and those are different questions: an atlas from last
+ * week describes this repo perfectly if nobody committed to it, and one from four minutes
+ * ago describes code that no longer exists if an agent has been working since. Comparing
+ * the commit the analyzer read against the one checked out now answers the question that
+ * was actually being asked.
+ *
+ * Silent unless both commits are known *and* they differ. The two absences are the reason
+ * this returns null rather than a reassuring sentence: a repo with no git, and a working
+ * tree this cannot read, are both "nobody can tell", and printing "up to date" for either
+ * would be the tool inventing an all-clear. Saying nothing leaves the timestamp as the
+ * only claim, which is the one it can support.
+ *
+ * The uncommitted edits an agent has made and not committed are invisible here, and the
+ * line says so, because a reader told the atlas matches HEAD would otherwise take that
+ * for a guarantee that it matches the files on disk.
+ */
+function staleness(app: AtlasApp, graph: AtlasGraph): string | null {
+  const analyzed = graph.meta.vcs?.commit;
+  if (!analyzed) return null;
+
+  const current = headCommit(app.dir);
+  if (!current || current === analyzed) return null;
+
+  return (
+    `This code has moved since it was analysed: the atlas describes ${shortCommit(analyzed)} and the working tree ` +
+    `is now on ${shortCommit(current)}. Anything above may describe code that no longer exists — re-run ` +
+    '`app-atlas analyze` before trusting it. (Uncommitted edits are not visible to this check, so a matching ' +
+    'commit is not by itself proof the atlas is current.)'
+  );
+}
+
 /** The keys every structured result carries, so provenance survives the text being skipped. */
 function envelope(app: AtlasApp, graph: AtlasGraph): Record<string, unknown> {
+  const analyzed = graph.meta.vcs?.commit;
+  const current = analyzed ? headCommit(app.dir) : null;
+
   return {
     app: app.name,
     scope: app.id,
     root: app.dir,
     analyzedAt: graph.meta.generatedAt,
     toolVersion: graph.meta.toolVersion,
+    // Omitted rather than sent as null or false when either commit is unknown, so a
+    // consumer reading `stale` gets a verdict only where one was actually reached. A
+    // field that is absent has to be handled; a `false` invites being trusted.
+    ...(analyzed ? { analyzedCommit: analyzed } : {}),
+    ...(current ? { currentCommit: current } : {}),
+    ...(analyzed && current ? { stale: current !== analyzed } : {}),
   };
 }
 
