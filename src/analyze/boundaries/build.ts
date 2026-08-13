@@ -1198,7 +1198,11 @@ function applyDependencyGuards(
     if (guard) byRouter.set(routerKey(build.path, build.varName), { ...guard, how: 'config' });
   }
 
-  const behind = routersBehindACheck(routers, mounts, attached, byName);
+  // A check with a switch on it says nothing about a whole group — see
+  // `AuthCheckerFinding.switched`. Withheld here and nowhere else: the same function
+  // written straight onto a handler is still that handler's check.
+  const switched = new Set(checkers.filter((checker) => checker.switched).map((checker) => checker.name));
+  const behind = routersBehindACheck(routers, mounts, attached, byName, switched);
   const inherited = checkInherited(aliases, byName);
   // Only the wiring that names something the project turns callers away with. A module
   // applies a logger with the same two calls it applies a lock.
@@ -1337,56 +1341,99 @@ function routersBehindACheck(
   mounts: RouterMountFinding[],
   attached: RouterGuardFinding[],
   byName: Map<string, GuardInfo>,
+  switched: Set<string>,
 ): Map<string, GuardInfo> {
   if (mounts.length === 0 && attached.length === 0) return new Map();
+
+  // Everything this function decides is a claim about a *group* — one answer covering
+  // every door mounted under a router — so a check whose refusal its caller switches on
+  // and off is no evidence here, however plainly it rejects when it is switched on.
+  const readable = (names: string[] | undefined): string[] | undefined =>
+    switched.size === 0 ? names : names?.filter((name) => !switched.has(name.split('.').pop() ?? name));
 
   // What a router carries in its own right: the dependencies it was built with, and
   // any middleware added to it. Both are names until they are looked up here.
   const own = new Map<string, GuardInfo>();
-  const claim = (path: string, varName: string, names: string[] | undefined, how: 'config' | 'middleware') => {
+  /**
+   * Every check attached to a router, with the line it was attached on — because for a
+   * framework that copies middleware into a group as `Group()` runs, "what does this
+   * router carry" has no answer until you say *when*.
+   */
+  const timeline = new Map<string, { line: number; guard: GuardInfo }[]>();
+  const claim = (
+    path: string,
+    varName: string,
+    names: string[] | undefined,
+    how: 'config' | 'middleware',
+    line: number,
+  ) => {
     const key = routerKey(moduleOf(path), varName);
-    if (own.has(key)) return;
-    const guard = firstCheck(names, byName);
-    if (guard) own.set(key, { ...guard, how });
+    const guard = firstCheck(readable(names), byName);
+    if (!guard) return;
+    const entry = { ...guard, how };
+    if (!own.has(key)) own.set(key, entry);
+    const list = timeline.get(key);
+    if (list) list.push({ line, guard: entry });
+    else timeline.set(key, [{ line, guard: entry }]);
   };
-  for (const build of builds) claim(build.path, build.varName, build.dependencies, 'config');
-  for (const guard of attached) claim(guard.path, guard.varName, guard.names, guard.how);
+  for (const build of builds) claim(build.path, build.varName, build.dependencies, 'config', build.line);
+  for (const guard of attached) claim(guard.path, guard.varName, guard.names, guard.how, guard.line);
 
   const mountedAt = mountGraph(builds, mounts);
   const answers = new Map<string, GuardInfo | null>();
 
-  const guardFor = (key: string, seen: Set<string>): GuardInfo | null => {
-    const done = answers.get(key);
+  /** What this router carried by then, or everything it carries when the question is not asked. */
+  const carried = (key: string, asOf: number | null): GuardInfo | null => {
+    if (asOf === null) return own.get(key) ?? null;
+    let best: { line: number; guard: GuardInfo } | null = null;
+    for (const entry of timeline.get(key) ?? []) {
+      if (entry.line >= asOf) continue;
+      if (!best || entry.line > best.line) best = entry;
+    }
+    return best?.guard ?? null;
+  };
+
+  const guardFor = (key: string, seen: Set<string>, asOf: number | null): GuardInfo | null => {
+    // The answer depends on when it was asked, so the memo has to remember that too.
+    const memo = `${key}\0${asOf ?? ''}`;
+    const done = answers.get(memo);
     if (done !== undefined) return done;
     // A router mounted on itself, round however long a loop, tells us nothing.
-    if (seen.has(key)) return null;
-    seen.add(key);
+    if (seen.has(memo)) return null;
+    seen.add(memo);
 
-    let found = own.get(key) ?? null;
+    let found = carried(key, asOf);
     if (!found) {
       const parents = mountedAt.get(key) ?? [];
       // A router nobody mounts is a root: whatever it carries is all it has.
       if (parents.length > 0) {
         const guards = parents.map((mount) => {
-          const onTheMount = firstCheck(mount.dependencies, byName);
+          const onTheMount = firstCheck(readable(mount.dependencies), byName);
           // Written in the wiring, not in the handler — which is what `config` says,
           // and the difference a reader needs when they go looking for it.
           if (onTheMount) return { ...onTheMount, how: 'config' as const };
-          return guardFor(routerKey(moduleOf(mount.path), mount.hostVar), seen);
+          // A group made by this line inherits the host as the host stood on this line.
+          // Anything else asks the host what it carries, full stop, which is what every
+          // framework that wraps rather than copies actually does.
+          return guardFor(
+            routerKey(moduleOf(mount.path), mount.hostVar),
+            seen,
+            mount.inheritsInOrder === true ? mount.line : asOf,
+          );
         });
         found = guards.every((guard) => guard !== null) ? guards[0] : null;
       }
     }
 
-    seen.delete(key);
-    answers.set(key, found);
+    seen.delete(memo);
+    answers.set(memo, found);
     return found;
   };
 
   const out = new Map<string, GuardInfo>();
   for (const build of builds) {
     const key = routerKey(moduleOf(build.path), build.varName);
-    const guard = guardFor(key, new Set());
+    const guard = guardFor(key, new Set(), null);
     if (guard) out.set(key, { ...guard, confidence: 'likely' });
   }
   return out;
