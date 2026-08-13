@@ -348,7 +348,12 @@ function detectDjangoRoutes(
           childModule: entry.includeModule ? entry.includeModule.replace(/\./g, '/') : null,
           childVar: entry.includeModule ? 'urlpatterns' : entry.includeList,
           hasPrefix: entry.route !== '',
-          prefix: entry.route,
+          // The same anchors `pushDjangoRoute` takes off a leaf, taken off a segment.
+          // `re_path(r"^api/", include([…]))` contributes `api/` to everything under it,
+          // and carrying the `^` through composed `/^api/^documents/post_document/` —
+          // an address that is wrong in a way that looks like a bug in the tool rather
+          // than a fact about the app, which is at least the recoverable direction.
+          prefix: entry.route === null ? null : djangoSegment(entry.call, entry.route),
           prefixName: entry.routeName,
           // `path(prefix, include("hc.accounts.urls"))` is how a Django app offers to be
           // served under a configured sub-path, and `prefix` is `""` in every deployment
@@ -513,6 +518,19 @@ function resolveBoundModule(input: PythonBoundaryInput, bound: string): string |
   return null;
 }
 
+/**
+ * One segment of a Django address, with the regex punctuation taken off.
+ *
+ * `re_path(r'^legacy/widgets/$', …)` serves `/legacy/widgets/`. The anchors are regex
+ * syntax, not part of the address, and leaving them in prints a URL nobody can visit.
+ * Only the anchors come off: the rest of the pattern is left exactly as written, because
+ * a capture group is a real part of the route and rewriting it into something prettier
+ * would be inventing an address. `path()` is not a regex at all, so it is untouched.
+ */
+function djangoSegment(callee: string, route: string): string {
+  return callee === 'path' ? route : route.replace(/^\^/, '').replace(/\$$/, '');
+}
+
 function pushDjangoRoute(
   input: PythonBoundaryInput,
   findings: BoundaryFinding[],
@@ -532,8 +550,7 @@ function pushDjangoRoute(
   // nobody can visit. Only the anchors come off: the rest of the pattern is left
   // exactly as written, because a capture group is a real part of the route and
   // rewriting it into something prettier would be inventing an address.
-  const pattern = callee === 'path' ? route : route.replace(/^\^/, '').replace(/\$$/, '');
-  const shown = `/${pattern}`.replace(/\/+/g, '/');
+  const shown = `/${djangoSegment(callee, route)}`.replace(/\/+/g, '/');
   findings.push({
     type: 'endpoint',
     endpointKind: 'http-route',
