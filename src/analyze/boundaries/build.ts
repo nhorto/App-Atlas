@@ -442,6 +442,8 @@ interface MergedEndpoint {
   meta: EndpointMeta;
   /** Atlas nodes that answer this door. */
   handlerIds: Set<string>;
+  /** Handler ids that are only the scope the registration was written in (#255). */
+  scopeIds: Set<string>;
   /** Unresolved type names from the handler's signature; see `EndpointFinding`. */
   paramTypes: Set<string>;
   /** One `routerKey` for each place this door is registered. */
@@ -531,6 +533,7 @@ function collectEndpoints(input: BuildInput): Map<string, MergedEndpoint> {
       existing.meta.writes = existing.meta.writes || finding.writes;
       for (const guard of finding.guards) existing.meta.guards.push(guard);
       if (finding.handlerId) existing.handlerIds.add(finding.handlerId);
+      if (finding.handlerId && finding.handlerIsScope) existing.scopeIds.add(finding.handlerId);
       // The class file read the timer and the registration did not; whichever arrived
       // first, the door keeps the schedule somebody actually wrote down.
       if (finding.schedule && !existing.meta.schedule) existing.meta.schedule = finding.schedule;
@@ -558,6 +561,7 @@ function collectEndpoints(input: BuildInput): Map<string, MergedEndpoint> {
         sites: [finding.site],
       },
       handlerIds: new Set(finding.handlerId ? [finding.handlerId] : []),
+      scopeIds: new Set(finding.handlerId && finding.handlerIsScope ? [finding.handlerId] : []),
       paramTypes: new Set(finding.paramTypes ?? []),
       routers: new Set(finding.routerVar ? [routerKey(finding.site.path, finding.routerVar)] : []),
       owners: new Set(finding.handlerOwner ? [finding.handlerOwner] : []),
@@ -1174,6 +1178,10 @@ function applyGuards(
     }
 
     for (const handlerId of endpoint.handlerIds) {
+      // A reference out of the *scope* a route was registered in is not a reference out
+      // of its handler (#255). `mountAdmin` imports `requireAdmin` for the door on the
+      // line above; the door below it references nothing and is guarded by nothing.
+      if (endpoint.scopeIds.has(handlerId)) continue;
       for (const hop of reached.get(handlerId) ?? []) {
         const through = guardThroughHops(hop);
         if (gated.has(head(through.name))) continue;
@@ -1728,7 +1736,25 @@ function weaker(a: Confidence, b: Confidence): Confidence {
 }
 
 function guardConfidence(endpoint: MergedEndpoint, guard: GuardFinding): Confidence | null {
-  if (guard.nodeId && endpoint.handlerIds.has(guard.nodeId)) return 'certain';
+  if (guard.nodeId && endpoint.handlerIds.has(guard.nodeId)) {
+    // …unless that id is the scope the registration was written in rather than the
+    // function that answers the door (#255). mastodon registers four routes inside a
+    // ~1,300-line `startServer` that also declares `authorizeListAccess`, five hundred
+    // lines below them and called from a WebSocket subscription. All four came out
+    // locked, `GET /metrics` among them, and the headline read `every one of the 5
+    // routes has an auth check` for a server where none of them does.
+    //
+    // Refused outright rather than graded down. `likely` would leave the same lock on
+    // the same screen in a paler colour, and the evidence for it is nil: what a check
+    // shares with this door is a *file region*, which is the thing `guardConfidence`'s
+    // other rule already declines to treat as reach. The cost is a check called inside
+    // an inline handler, which cannot be told from one called inside the handler beside
+    // it — `ctx.enclosing` collapses both to the same node — and losing a real lock
+    // reports a door as open, which is the direction this tool can recover from.
+    // `EndpointFinding.handlerSpan` is how that cost gets paid back; it is not paid here.
+    if (!endpoint.scopeIds.has(guard.nodeId)) return 'certain';
+    return null;
+  }
   // A module-scope check runs for everything the file declares.
   if (guard.nodeId?.startsWith('file:')) return 'likely';
   // We only pinned the handler down as far as its file, so anything in that file may
@@ -1889,6 +1915,7 @@ function collectEnv(input: BuildInput): MergedEndpoint | null {
           .join(', ') || null,
     },
     handlerIds: new Set(sites.map((site) => makeFileId(site.path))),
+    scopeIds: new Set(),
     paramTypes: new Set(),
     routers: new Set(),
     owners: new Set(),

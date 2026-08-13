@@ -83,6 +83,22 @@ export interface EndpointFinding {
    */
   paramTypes?: string[];
   /**
+   * `handlerId` names the scope this route was *registered in*, not the function that
+   * answers it (#255).
+   *
+   * `app.get('/metrics', metrics.requestHandler)` has a handler, and it is either a name
+   * from another module or an inline arrow — and an arrow is not a node in the atlas, so
+   * the best `ctx.enclosing` can offer is whatever function the registration sits inside.
+   * In mastodon's streaming server that is `startServer`, ~1,300 lines holding four
+   * registrations, a WebSocket handler, and an unrelated `authorizeListAccess`. Every one
+   * of those four came out wearing it.
+   *
+   * A NestJS controller method or a Django view is the opposite case: the id *is* the
+   * handler, and a check written on it is written on this door. This flag is what keeps
+   * the merge from treating the two as the same evidence.
+   */
+  handlerIsScope?: boolean;
+  /**
    * The router variable this door is registered on — `locked` in `@locked.post(…)`.
    * Whatever dependencies that router carries reach this route and no other.
    */
