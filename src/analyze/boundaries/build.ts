@@ -51,12 +51,15 @@ import {
 } from './reach.js';
 import type { ReachedGuard } from './reach.js';
 import type {
+  ArgPosition,
   AuthAliasFinding,
   AuthCheckerFinding,
   BoundaryFinding,
   EndpointFinding,
   GuardFinding,
   HandlerDecoratorFinding,
+  HelperRouteCallFinding,
+  RouteHelperFinding,
   RouterBuildFinding,
   PathGuardFinding,
   RouterGuardFinding,
@@ -250,7 +253,11 @@ export function buildBoundaryGraph(raw: BuildInput): BoundaryGraph {
 
   // Before anything is merged: a door's identity is its address, and half the address
   // lives in the file that mounted its router rather than the file that declared it.
-  const shipped = composeRoutePrefixes(raw.findings.filter(describesTheApp()));
+  // Helper-registered doors are expanded first so they go through that composition on
+  // exactly the same terms as a route somebody wrote out longhand — the prefix, the
+  // ellipsis when it cannot be read, and the ordering of the checks around it.
+  const declared = raw.findings.filter(describesTheApp());
+  const shipped = composeRoutePrefixes([...declared, ...helperRoutes(declared)]);
 
   // A call made through a wrapper module is a real call to a real company; it just
   // took two files to say so. Resolved before anything is merged, so those sites land
@@ -544,6 +551,118 @@ function collectEndpoints(input: BuildInput): Map<string, MergedEndpoint> {
   addPublishedPortDoors(input, add);
 
   return merged;
+}
+
+const WRITE_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
+
+/** An argument's position resolved against the list a caller actually wrote. */
+function argAtPosition<T>(position: ArgPosition, list: T[]): T | undefined {
+  return position.from === 'start' ? list[position.index] : list[list.length - 1 - position.index];
+}
+
+/**
+ * The doors a repo declares through a helper of its own (#229).
+ *
+ * Whether `setupPageRoute` registers routes is a fact from the file that defines it, and
+ * whether `/login` is an address is a fact from the 334 files that call it, so this is
+ * the only place both are known. Same division as `mount-method`.
+ *
+ * ## The middleware is deliberately not read as a check
+ *
+ * The obvious next step — forward the helper's middleware list onto the doors it opens —
+ * is the one thing here that would make the map worse. NodeBB builds every list in
+ * `setupPageRoute` and `setupApiRoute` starting with `middleware.authenticateRequest`,
+ * and that function ends:
+ *
+ *   if (!res.headersSent) auth.setAuthVars(req);
+ *   return !res.headersSent;
+ *
+ * — it returns *true* for an anonymous caller and calls `next()`. It parses a session; it
+ * does not refuse anyone. It is also on `/login` and `/register`, which is the proof:
+ * a check that stands on the door handing out sessions is not a lock. Claiming it would
+ * put a confident green tick on all 300-odd doors of a forum whose entire public side is
+ * readable by anybody, and `authenticateRequest` matches `GUARD_PREFIX` on its name
+ * alone, so nothing downstream would have caught it.
+ *
+ * So these doors arrive with no checks and read as "not examined", which is what the tool
+ * says everywhere else it has not established an answer. An address that is right with an
+ * auth column that is blank is worth having; the same address wearing a lock that is not
+ * there is the failure this file exists to prevent.
+ *
+ * The cost is real and is accepted: `setupAdminPageRoute` injects `middleware.admin.isAdminPage`,
+ * which *is* a refusal, and its 61 doors lose a true fact. Under-claiming is the
+ * recoverable direction. See `test/routehelper.test.js`, which records it as a decision
+ * rather than leaving it to look like an oversight.
+ */
+function helperRoutes(findings: BoundaryFinding[]): EndpointFinding[] {
+  const doors: EndpointFinding[] = [];
+  const add = (finding: EndpointFinding) => void doors.push(finding);
+  const helpers = new Map<string, RouteHelperFinding>();
+  const calls: HelperRouteCallFinding[] = [];
+  /** Variables this repo builds a router in, so a fragment can be told from an address. */
+  const built = new Set<string>();
+  for (const finding of findings) {
+    if (finding.type === 'router-build') built.add(`${finding.path}\0${finding.varName}`);
+  }
+  for (const finding of findings) {
+    // Keyed on the last segment: the definition knows it as `setupPageRoute`, and a
+    // caller may have written `helpers.setupPageRoute` or destructured the name out.
+    if (finding.type === 'route-helper') helpers.set(finding.name, finding);
+    else if (finding.type === 'helper-route-call') calls.push(finding);
+  }
+  if (helpers.size === 0) return doors;
+
+  for (const call of calls) {
+    const helper = helpers.get(call.callee.split('.').pop() ?? call.callee);
+    if (!helper) continue;
+
+    const route = argAtPosition(helper.pathArg, call.args);
+    if (!route || !route.startsWith('/')) continue;
+
+    const verb =
+      'literal' in helper.verb ? helper.verb.literal : (argAtPosition(helper.verb.at, call.args) ?? null);
+    // A door whose verb the caller computed is a door we cannot name. `ANY` would be a
+    // guess printed as a fact, and skipping loses less than that costs.
+    if (!verb) continue;
+    const method = verb.toLowerCase() === 'all' ? 'ANY' : verb.toUpperCase();
+
+    const routerVar = argAtPosition(helper.router, call.names) ?? null;
+    const handler = helper.handler ? (argAtPosition(helper.handler, call.names) ?? null) : null;
+
+    for (const template of helper.templates) {
+      const full = template.replace('{}', route);
+      add({
+        type: 'endpoint',
+        endpointKind: 'http-route',
+        key: `${method} ${full}`,
+        name: `${method} ${full}`,
+        method,
+        route: full,
+        framework: call.framework,
+        writes: WRITE_METHODS.has(method),
+        // Empty on purpose — see the note above this function.
+        guards: [],
+        site: {
+          path: call.path,
+          line: call.line,
+          nodeId: call.nodeId,
+          snippet: `${call.callee}(…, '${route}', …${handler ? ` ${handler}` : ''})`,
+        },
+        handlerId: null,
+        routerVar,
+        // A router this file built with `express.Router()` is a router somebody else
+        // mounts, so its fragment is not its address until that mount has been read —
+        // and `/:cid` on its own is not a door, it is four different doors wearing one
+        // name. #151's rule, arriving through a helper. A router the file was *handed*
+        // is the other case: `setupPageRoute(app, '/login', …)` is already whole, and
+        // putting an ellipsis in front of it would describe a prefix that is usually
+        // empty.
+        ...(routerVar && built.has(`${call.path}\0${routerVar}`) ? { prefixFromCaller: true } : {}),
+      });
+    }
+  }
+
+  return doors;
 }
 
 /**

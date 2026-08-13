@@ -11,7 +11,16 @@
  * honest list of every way in.
  */
 import { Node, SyntaxKind } from 'ts-morph';
-import type { BinaryExpression, CallExpression, ClassDeclaration, SourceFile, VariableDeclaration } from 'ts-morph';
+import type {
+  ArrowFunction,
+  BinaryExpression,
+  CallExpression,
+  ClassDeclaration,
+  FunctionDeclaration,
+  FunctionExpression,
+  SourceFile,
+  VariableDeclaration,
+} from 'ts-morph';
 import type { GuardInfo } from '../../model/types.js';
 import {
   argAt,
@@ -25,7 +34,10 @@ import {
   permitsEverything,
 } from './ast.js';
 import { guardFromName } from './auth.js';
-import type { BoundaryDetector, DetectorContext } from './types.js';
+import type { ArgPosition, BoundaryDetector, DetectorContext, RouteHelperFinding } from './types.js';
+
+/** The three ways a route helper gets written down. */
+type FunctionLike = FunctionDeclaration | FunctionExpression | ArrowFunction;
 
 const HTTP_METHODS = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS'];
 const WRITE_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
@@ -297,6 +309,57 @@ export const nodeRoutesDetector: BoundaryDetector = {
 };
 
 /**
+ * Route helpers, and the calls that might be to one (#229).
+ *
+ * Separate from `nodeRoutesDetector`, and ungated, because **the file that defines a
+ * route helper is the file least likely to import the framework**. It takes the router
+ * as a parameter — that is the entire point of the pattern — so it has no reason to
+ * mention Express at all. NodeBB's `src/routes/helpers.js` carries 334 doors and its
+ * imports are `winston`, `../middleware` and `../controllers/helpers`.
+ *
+ * Gating this on the framework import would therefore switch it off in exactly the case
+ * it exists for, which is #230's lesson arriving from the other direction: the evidence
+ * that a file registers routes is what the file *does*, not what it declares.
+ *
+ * The shape rule is strict enough to stand without the gate — see `routeHelper` — and
+ * the merge throws away every call whose callee no file declared as a helper.
+ */
+export const routeHelperDetector: BoundaryDetector = {
+  id: 'route-helpers',
+  enabled: () => true,
+  visit(node, ctx) {
+    if (Node.isCallExpression(node)) {
+      helperRouteCall(node, ctx);
+    } else if (Node.isBinaryExpression(node)) {
+      // `helpers.setupPageRoute = function (…) {…}`, which is how a CommonJS module
+      // hangs a helper off its exports — NodeBB's three are all written this way.
+      const assigned = node.getRight();
+      const target = node.getLeft();
+      if (
+        node.getOperatorToken().getKind() === SyntaxKind.EqualsToken &&
+        (Node.isFunctionExpression(assigned) || Node.isArrowFunction(assigned)) &&
+        Node.isPropertyAccessExpression(target)
+      ) {
+        routeHelper(assigned, target.getName(), ctx);
+      }
+    } else if (Node.isFunctionDeclaration(node)) {
+      const name = node.getName();
+      if (name) routeHelper(node, name, ctx);
+    } else if (Node.isVariableDeclaration(node)) {
+      const initializer = node.getInitializer();
+      const nameNode = node.getNameNode();
+      if (
+        Node.isIdentifier(nameNode) &&
+        initializer &&
+        (Node.isFunctionExpression(initializer) || Node.isArrowFunction(initializer))
+      ) {
+        routeHelper(initializer, nameNode.getText(), ctx);
+      }
+    }
+  },
+};
+
+/**
  * `app.lazyUse = function (mountPath, fn) { app.use(mountPath, …) }` — a mount method an
  * app gave its own name (#204).
  *
@@ -333,6 +396,233 @@ function mountMethod(node: BinaryExpression, ctx: DetectorContext): void {
   if (!forwards) return;
 
   ctx.emit({ type: 'mount-method', name: target.getName(), path: ctx.ref.relPath, line: node.getStartLineNumber() });
+}
+
+// ---------------------------------------------------------------------------
+// Route helpers — route registration wearing the app's own name (#229)
+// ---------------------------------------------------------------------------
+
+/**
+ * Where each of a function's own parameters lands in the argument list callers write.
+ *
+ * Three spellings, because a rest parameter is what you are left with once one of the
+ * arguments in the middle is optional, and then the ones after it can only be reached
+ * from the end:
+ *
+ *   function (router, name, controller)          — plain, counted from the front
+ *   const [router, name] = args                  — destructured off a rest parameter
+ *   const controller = args[args.length - 1]     — counted from the back
+ *
+ * NodeBB's three helpers need all three at once. A conditional (`args.length > 3 ? … : []`)
+ * is deliberately not read: it resolves to a different argument depending on how the
+ * caller wrote the call, and a position that is only sometimes right is not a position.
+ */
+function paramPositions(fn: FunctionLike): Map<string, ArgPosition> {
+  const positions = new Map<string, ArgPosition>();
+  const params = fn.getParameters();
+  let restName: string | null = null;
+
+  params.forEach((param, index) => {
+    const nameNode = param.getNameNode();
+    if (!Node.isIdentifier(nameNode)) return;
+    if (param.isRestParameter()) restName = nameNode.getText();
+    else positions.set(nameNode.getText(), { from: 'start', index });
+  });
+
+  if (!restName) return positions;
+
+  const body = fn.getBody();
+  if (!body) return positions;
+
+  for (const declaration of body.getDescendantsOfKind(SyntaxKind.VariableDeclaration)) {
+    const initializer = declaration.getInitializer();
+    if (!initializer) continue;
+    const nameNode = declaration.getNameNode();
+
+    // `const [router, name] = args` — the front of the list, by position in the pattern.
+    if (Node.isArrayBindingPattern(nameNode) && initializer.getText() === restName) {
+      nameNode.getElements().forEach((element, index) => {
+        if (!Node.isBindingElement(element)) return;
+        const local = element.getNameNode();
+        if (Node.isIdentifier(local)) positions.set(local.getText(), { from: 'start', index });
+      });
+      continue;
+    }
+
+    if (!Node.isIdentifier(nameNode) || !Node.isElementAccessExpression(initializer)) continue;
+    if (initializer.getExpression().getText() !== restName) continue;
+    const position = indexFromAccess(initializer.getArgumentExpression(), restName);
+    if (position) positions.set(nameNode.getText(), position);
+  }
+
+  return positions;
+}
+
+/** `args[2]` and `args[args.length - 1]` — a position from either end of the list. */
+function indexFromAccess(index: Node | undefined, restName: string): ArgPosition | null {
+  if (!index) return null;
+  if (Node.isNumericLiteral(index)) return { from: 'start', index: index.getLiteralValue() };
+  if (!Node.isBinaryExpression(index)) return null;
+  if (index.getOperatorToken().getKind() !== SyntaxKind.MinusToken) return null;
+  if (index.getLeft().getText() !== `${restName}.length`) return null;
+  const right = index.getRight();
+  if (!Node.isNumericLiteral(right)) return null;
+  // `args.length - 1` is the last argument, which is index 0 counted from the back.
+  return { from: 'end', index: right.getLiteralValue() - 1 };
+}
+
+/**
+ * `setupPageRoute(router, '/login', controller)` — a route registered on the caller's
+ * behalf by a function this repo wrote itself (#229).
+ *
+ * The evidence is the body and never the name, exactly as for `mountMethod` above: the
+ * function hands one of its own parameters to a route method as the path. NodeBB's three
+ * helpers carry 334 doors against 41 written the plain way, so on that repo this rule is
+ * the difference between a map of the application and a map of its leftovers.
+ *
+ * Two guards against reading an ordinary function as a route helper. The route call has
+ * to take **at least two arguments** — a path and something to answer it — which is what
+ * separates `router.get(name, controller)` from `cache.get(key)`, the shape that
+ * otherwise matches word for word. And the whole detector only runs on a file where a
+ * server framework is in play.
+ */
+function routeHelper(fn: FunctionLike, name: string, ctx: DetectorContext): void {
+  const body = fn.getBody();
+  if (!body) return;
+  // A router and a path at the very least. Also the cheap way out of walking the body of
+  // every function in the repo, now that this runs ungated.
+  const positions = paramPositions(fn);
+  if (positions.size < 2) return;
+
+  let router: ArgPosition | null = null;
+  let pathArg: ArgPosition | null = null;
+  let verb: RouteHelperFinding['verb'] | null = null;
+  let handler: ArgPosition | null = null;
+  const templates: string[] = [];
+
+  for (const call of body.getDescendantsOfKind(SyntaxKind.CallExpression)) {
+    const callee = call.getExpression();
+    let receiver: Node;
+    let thisVerb: RouteHelperFinding['verb'];
+
+    if (Node.isPropertyAccessExpression(callee)) {
+      const method = callee.getName();
+      if (!ROUTER_METHODS.has(method)) continue;
+      receiver = callee.getExpression();
+      thisVerb = { literal: method };
+    } else if (Node.isElementAccessExpression(callee)) {
+      // `router[verb](name, …)` — the method itself comes from an argument, which is how
+      // one helper covers every verb. NodeBB's `setupApiRoute` is 204 of the 334.
+      const argument = callee.getArgumentExpression();
+      if (!argument || !Node.isIdentifier(argument)) continue;
+      const at = positions.get(argument.getText());
+      if (!at) continue;
+      receiver = callee.getExpression();
+      thisVerb = { at };
+    } else continue;
+
+    if (!Node.isIdentifier(receiver)) continue;
+    const routerAt = positions.get(receiver.getText());
+    if (!routerAt) continue;
+
+    const args = call.getArguments();
+    // A path and something to answer it. `cache.get(key)` stops here.
+    if (args.length < 2) continue;
+
+    const template = pathTemplate(args[0], positions);
+    if (!template) continue;
+
+    router = routerAt;
+    pathArg = template.at;
+    verb = thisVerb;
+    templates.push(template.shape);
+    handler ??= handlerPosition(args[args.length - 1], positions);
+  }
+
+  if (!router || !pathArg || !verb || templates.length === 0) return;
+
+  ctx.emit({
+    type: 'route-helper',
+    name,
+    router,
+    pathArg,
+    verb,
+    handler,
+    templates,
+    path: ctx.ref.relPath,
+    line: fn.getStartLineNumber(),
+  });
+}
+
+/**
+ * The path a route call is given, when it is built out of one of the enclosing
+ * function's parameters.
+ *
+ * `name` is the plain case. `` `/api${name}` `` is the other one, and it matters: NodeBB
+ * registers every page twice, once for the browser and once for the JSON the browser
+ * fetches, so half of that application's addresses exist nowhere in the calling file.
+ */
+function pathTemplate(arg: Node | undefined, positions: Map<string, ArgPosition>): { at: ArgPosition; shape: string } | null {
+  if (!arg) return null;
+  if (Node.isIdentifier(arg)) {
+    const at = positions.get(arg.getText());
+    return at ? { at, shape: '{}' } : null;
+  }
+  if (!Node.isTemplateExpression(arg)) return null;
+  const spans = arg.getTemplateSpans();
+  if (spans.length !== 1) return null;
+  const expression = spans[0].getExpression();
+  if (!Node.isIdentifier(expression)) return null;
+  const at = positions.get(expression.getText());
+  if (!at) return null;
+  // Anything after the interpolation would be a suffix on the address; none of the real
+  // ones have that, and inventing it is how a door gets an address nobody serves it at.
+  if (spans[0].getLiteral().getLiteralText() !== '') return null;
+  return { at, shape: `${arg.getHead().getLiteralText()}{}` };
+}
+
+/** The handler, through the one wrapper a helper usually puts round it. */
+function handlerPosition(arg: Node | undefined, positions: Map<string, ArgPosition>): ArgPosition | null {
+  if (!arg) return null;
+  if (Node.isIdentifier(arg)) return positions.get(arg.getText()) ?? null;
+  // `helpers.tryRoute(controller)` — the real handler is inside the wrapper.
+  if (Node.isCallExpression(arg)) {
+    const inner = arg.getArguments()[0];
+    if (inner && Node.isIdentifier(inner)) return positions.get(inner.getText()) ?? null;
+  }
+  return null;
+}
+
+/**
+ * Any call carrying a `/…` string literal, kept in case the merge turns out to know the
+ * callee as a route helper (#229).
+ *
+ * The same division of labour as `mount-method`: whether `setupPageRoute` registers
+ * routes is a fact from another file, so the call travels and the merge decides. The
+ * literal is a filter on noise rather than the check — a helper call with no readable
+ * path would be an address nobody could print anyway.
+ */
+function helperRouteCall(call: CallExpression, ctx: DetectorContext): void {
+  const callee = dottedName(call.getExpression());
+  if (!callee) return;
+
+  const args = call.getArguments();
+  if (args.length < 2) return;
+
+  const literals = args.map((arg) => literalString(arg));
+  if (!literals.some((value) => value !== null && value.startsWith('/'))) return;
+
+  ctx.emit({
+    type: 'helper-route-call',
+    callee,
+    args: literals,
+    names: args.map((arg) => (Node.isIdentifier(arg) ? arg.getText() : dottedName(arg))),
+    framework: serverFrameworks(ctx)[0] ?? 'HTTP',
+    path: ctx.ref.relPath,
+    line: call.getStartLineNumber(),
+    nodeId: ctx.enclosing(call),
+    snippet: `${callee}(…)`,
+  });
 }
 
 /**

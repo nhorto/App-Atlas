@@ -730,7 +730,92 @@ export type BoundaryFinding =
   | PathGuardFinding
   | PathConstantFinding
   | MountMethodFinding
+  | RouteHelperFinding
+  | HelperRouteCallFinding
   | GlobalPrefixFinding;
+
+/**
+ * Where one of a helper's arguments sits in the list its callers write (#229).
+ *
+ * Counted from the front for a plain parameter, and from the back for the
+ * `args[args.length - 1]` idiom that a rest parameter forces on anyone with an optional
+ * argument in the middle. NodeBB's helpers take `(...args)` and pull the controller off
+ * the end precisely so the middleware array can be omitted, so both directions are
+ * needed to read a single one of its 334 call sites.
+ */
+export type ArgPosition = { from: 'start' | 'end'; index: number };
+
+/**
+ * A function of the app's own that registers a route on the caller's behalf (#229).
+ *
+ * `NodeBB/NodeBB` declares almost every door through one of three of these:
+ *
+ *   helpers.setupPageRoute = function (...args) {
+ *       const [router, name] = args;
+ *       router.get(name, middlewares, helpers.tryRoute(controller));
+ *       router.get(`/api${name}`, middlewares, helpers.tryRoute(controller));
+ *   };
+ *
+ * 334 calls against 41 plain `router.get(…)` ones, so the helper *is* how that
+ * application declares its interface — and every one of those doors was missing from the
+ * map, `/login` and `/register` among them.
+ *
+ * The same shape as {@link MountMethodFinding} one level down, and recognised the same
+ * way: by what the body does — it hands one of its own parameters to a route method as
+ * the path — and never by the name. `setupPageRoute` is not a word this file knows.
+ *
+ * What it deliberately does *not* carry is the middleware the helper injects. See
+ * `helperGuards` in the merge: NodeBB puts `middleware.authenticateRequest` into every
+ * list it builds, and that function returns true for an anonymous caller. Reading it as
+ * a check would print a lock on the login page.
+ */
+export interface RouteHelperFinding {
+  type: 'route-helper';
+  /** The name it is called by, as written: `setupPageRoute`, `helpers.setupApiRoute`. */
+  name: string;
+  /** Which argument is the router the route is registered on. */
+  router: ArgPosition;
+  /** Which argument is the path. */
+  pathArg: ArgPosition;
+  /**
+   * The verb, when the body names one (`router.get`), or where to read it when the body
+   * computes it from an argument (`router[verb](…)`, which is `setupApiRoute`).
+   */
+  verb: { literal: string } | { at: ArgPosition };
+  /** Which argument is the handler, when the body forwards one. */
+  handler: ArgPosition | null;
+  /**
+   * One entry per route the body registers, with `{}` where the path argument lands.
+   * `setupPageRoute` yields `['{}', '/api{}']` — one call, two doors, and the second is
+   * an address that appears nowhere in the calling file.
+   */
+  templates: string[];
+  path: string;
+  line: number;
+}
+
+/**
+ * A call that might be to one of the above — resolved only in the merge (#229).
+ *
+ * Whether `setupPageRoute('/login', …)` is a route or an unrelated function of the same
+ * name is a fact from another file, so this carries the arguments and the merge decides,
+ * exactly as `mount-method` does for `lazyUse`. Emitted for any call with a `/…` string
+ * literal in it, which is a filter on noise rather than the check.
+ */
+export interface HelperRouteCallFinding {
+  type: 'helper-route-call';
+  /** The callee as written, matched against `RouteHelperFinding.name`. */
+  callee: string;
+  /** Every argument, flattened: the literal string, or `null` where it was not one. */
+  args: (string | null)[];
+  /** Identifier text of each argument, for finding the router and the handler. */
+  names: (string | null)[];
+  framework: string;
+  path: string;
+  line: number;
+  nodeId: string | null;
+  snippet: string;
+}
 
 /**
  * A method an app assigns onto its own router that forwards to `use` — a mount wearing
