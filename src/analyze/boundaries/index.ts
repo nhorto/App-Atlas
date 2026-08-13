@@ -21,7 +21,14 @@ import {
   svelteHooksDetector,
   svelteRoutesDetector,
 } from './fileroutes.js';
-import { edgeFunctionDetector, expoRoutesDetector, nextRoutesDetector, nodeRoutesDetector, trpcDetector } from './http.js';
+import {
+  edgeFunctionDetector,
+  expoRoutesDetector,
+  nextRoutesDetector,
+  nodeRoutesDetector,
+  routeHelperDetector,
+  trpcDetector,
+} from './http.js';
 import { jobsDetector } from './jobs.js';
 import { outboundDetector } from './outbound.js';
 import type {
@@ -45,6 +52,7 @@ const DETECTORS: BoundaryDetector[] = [
   remixRoutesDetector,
   refusalDetector,
   nodeRoutesDetector,
+  routeHelperDetector,
   trpcDetector,
   edgeFunctionDetector,
   jobsDetector,
@@ -190,7 +198,7 @@ function buildLocals(sf: SourceFile, imports: Map<string, ImportBinding>): Map<s
     }
     if (!init || !(Node.isCallExpression(init) || Node.isNewExpression(init))) continue;
 
-    const callee = dottedName(init.getExpression());
+    const callee = dottedName(init.getExpression()) ?? calleeThroughRequire(init.getExpression());
     if (!callee) continue;
     const root = callee.split('.')[0];
     const local = name.getText();
@@ -217,6 +225,26 @@ function buildLocals(sf: SourceFile, imports: Map<string, ImportBinding>): Map<s
   for (const name of ambiguous) locals.delete(name);
 
   return locals;
+}
+
+/**
+ * `const router = require('express').Router()` — a constructor reached straight off a
+ * require, with no name bound in between (#229).
+ *
+ * `dottedName` walks identifiers and property accesses and stops at the call in the
+ * middle, so this shape produced no binding at all: the file's `router` was not known to
+ * be a router, nothing mounted onto it composed, and every address on it stayed a
+ * fragment. Fourteen of NodeBB's route modules open this way, which is its whole write
+ * API. Rendered as `express.Router` so it reads the same as the two-line spelling.
+ */
+function calleeThroughRequire(expression: Node): string | null {
+  if (!Node.isPropertyAccessExpression(expression)) return null;
+  const base = expression.getExpression();
+  if (!Node.isCallExpression(base)) return null;
+  if (base.getExpression().getText() !== 'require') return null;
+  const specifier = base.getArguments()[0];
+  if (!specifier || !Node.isStringLiteral(specifier)) return null;
+  return `${specifier.getLiteralValue()}.${expression.getName()}`;
 }
 
 /** `@/lib/db` and `~/server/auth` are this repo's own code wearing a bare specifier. */
