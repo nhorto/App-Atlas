@@ -334,7 +334,7 @@ client can start it. In an `.mcp.json`, `mcp.json` or Cursor's config:
 }
 ```
 
-Seven tools, over the same graph the screen draws:
+Eight tools, over the same graph the screen draws:
 
 | Tool | Answers |
 |---|---|
@@ -342,6 +342,7 @@ Seven tools, over the same graph the screen draws:
 | `list_doors` | Every way in: routes, server actions, webhooks, crons, queues, exports, screens |
 | `what_calls` | Who reaches this function, type or file — the question you ask before changing it |
 | `where_is` | Where the thing with this name lives, and what it is for |
+| `trace_error` | Which of your files a stack trace actually runs through |
 | `unimported_files` | Which files nothing else imports — the abandoned drafts an agent left behind |
 | `data_stores` | Every database, bucket and cache, the tables, and what the migrations say guards their rows |
 | `env_vars` | Every environment variable the code reads, and whether anyone wrote it down |
@@ -365,6 +366,13 @@ Where there is no answer — not a git repo, an atlas written before this existe
 says nothing at all rather than telling you it is current. A false alarm costs you a
 re-analysis; a false all-clear costs your agent a confident wrong answer, and this tool
 does not round in that direction.
+
+**Ask about everything at once.** An agent about to change five files has one question,
+not five. `what_calls` takes a `targets` list and `where_is` takes `queries`, so that is
+one round trip instead of five — each answer labelled with the name it belongs to, and
+each name's `limit` its own, so a batch is never quietly rationed. Ask about more than
+twenty and it answers the first twenty and *tells you* how many it left, because a list
+that was trimmed in silence reads exactly like a complete one.
 
 The server reads the atlas `analyze` already wrote and never runs one itself — an MCP
 client starts its servers at the beginning of a session and a first answer that took
