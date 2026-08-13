@@ -183,6 +183,17 @@ export interface TypeMeta {
   provider?: string;
   /** Tables only: named in queries but declared nowhere, so the columns are unknown. */
   observed?: boolean;
+  /** Tables only: the file whose model class declares these columns. */
+  declaredBy?: string;
+  /**
+   * Tables only: the *node* of the model class that declares this table.
+   *
+   * Set when the schema is the class — Django, SQLAlchemy declarative, Mongoose. There
+   * is no second artifact in that case, so the two are one thing wearing two hats and
+   * the type explorer draws one card. A Prisma table has no such twin: its schema file
+   * and any interface beside it really are two declarations.
+   */
+  declaredById?: string;
   /**
    * Tables from SQL migrations only: row-level security, as the migrations state it.
    * Absent means the migrations said nothing — which is *unknown*, not "off"; a table

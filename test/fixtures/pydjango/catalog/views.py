@@ -1,9 +1,9 @@
 """The views the routing table names.
 
-`login_required` is here so the fixture keeps a record of what is *not* yet claimed:
-the guard is real and visible in this file, but nothing follows `views.widget_detail`
-back from `urls.py` to find it. Until something does, neither route may be reported
-as checked or as unchecked.
+`widget_detail` is locked and `widget_list` is not, and the only record of either is
+this file — `urls.py` names the views and says nothing about what stands in front of
+them. Following that link is item 40/44's work; before it, every Django door in every
+repo read "not examined".
 """
 
 from django.contrib.auth.decorators import login_required

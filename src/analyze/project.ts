@@ -61,6 +61,12 @@ export interface ProjectInfo {
   unreadLanguages: { ext: string; count: number }[];
   /** Repo-relative paths of markup files `markup.ts` will read. */
   markupFiles: string[];
+  /**
+   * Repo-relative paths of server-rendered pages — the interface of a Django, Flask or
+   * Rails app. Counted, never parsed: the archetype needs to know they exist, and
+   * nothing here claims to read what is in them.
+   */
+  templateFiles: string[];
   warnings: string[];
 }
 
@@ -133,6 +139,23 @@ const UNREAD_LANGUAGE_GLOB =
  * it. Kept apart from `SOURCE_GLOB` so no language plugin ever tries to claim one.
  */
 const MARKUP_GLOB = '**/*.xaml';
+
+/**
+ * Pages a server renders and sends (item 43).
+ *
+ * Django, Flask+Jinja and Rails put the entire user interface in files no analyzer here
+ * opens, and the archetype decided whether an app has a front end by asking whether any
+ * *source* file fell into the `ui` zone. No template is a source file, so the answer was
+ * structurally no: `healthchecks` — 130 templates, 81 stylesheets and scripts, a
+ * dashboard people log into every day — came out as "A service other things call · no
+ * interface files", which is the frame the whole tool is then read through.
+ *
+ * Restricted to the directories these frameworks put them in. A stray `.html` at a repo
+ * root is a coverage report or a downloaded page as often as it is a page this app
+ * serves, and counting those would hand a front end to projects that have none.
+ */
+const TEMPLATE_GLOB =
+  '**/{templates,template,views,jinja,jinja2}/**/*.{html,htm,jinja,jinja2,j2,twig,erb,hbs,handlebars,mustache,ejs,liquid}';
 
 /** Package-name → friendly framework label. First-pass detection only; M2 adds real plugins. */
 const FRAMEWORK_SIGNALS: Record<string, string> = {
@@ -251,6 +274,22 @@ export async function discoverProject(rootInput: string, options: DiscoverOption
   });
   const markupFiles = applyGitignore(root, markup.map(toPosix)).sort();
 
+  const templates = await fg(TEMPLATE_GLOB, {
+    cwd: root,
+    absolute: false,
+    dot: false,
+    onlyFiles: true,
+    followSymbolicLinks: false,
+    suppressErrors: true,
+    ignore: ignores.patterns,
+  });
+  // An email body is rendered and sent, and it is not a front end. A service that mails
+  // receipts is still a service, and counting `templates/emails` towards an interface
+  // would hand one a dashboard it does not have. healthchecks has 43 of them among 198.
+  const templateFiles = applyGitignore(root, templates.map(toPosix))
+    .filter((relPath) => !/(^|\/)(e?mails?)\//.test(relPath))
+    .sort();
+
   let relPaths = filtered;
   if (relPaths.length > options.maxFiles) {
     warnings.push(
@@ -278,6 +317,7 @@ export async function discoverProject(rootInput: string, options: DiscoverOption
     unreadFormats,
     unreadLanguages,
     markupFiles,
+    templateFiles,
     warnings,
   };
 }

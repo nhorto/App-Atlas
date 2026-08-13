@@ -598,6 +598,7 @@ function joinOrmModelsToTables(nodes: AtlasNode[]): void {
       observed?: boolean;
       fields?: unknown[];
       declaredBy?: string;
+      declaredById?: string;
     };
     // Only a table nobody has declared. A table read out of a migration or a
     // `schema.prisma` already has the real thing, and the schema outranks the model.
@@ -614,6 +615,22 @@ function joinOrmModelsToTables(nodes: AtlasNode[]): void {
     // Where the columns came from, so a reader can go and check rather than wonder why
     // a table in a database has Python type annotations on it.
     meta.declaredBy = model.path ?? model.name;
+    // …and *which node*, so the type explorer can tell that these two cards are one
+    // thing. For Prisma the schema file and a TypeScript interface really are two
+    // artifacts and deserve two cards; for an ORM whose class declaration *is* the
+    // schema there is no second artifact, and drawing two put every one of
+    // healthchecks' thirteen Django models on the canvas twice.
+    meta.declaredById = model.id;
+
+    // The table was standing at whichever file first queried it — a migration for
+    // `Profile`, a cron command for `TokenBucket`, `admin.py` for `Check`. The model is
+    // where it is actually written down, so a reader who clicks the table lands in
+    // `models.py` instead of somewhere it happened to be mentioned.
+    if (model.path) {
+      node.path = model.path;
+      node.startLine = model.startLine;
+      node.endLine = model.endLine;
+    }
   }
 }
 

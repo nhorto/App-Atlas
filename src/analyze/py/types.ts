@@ -141,6 +141,20 @@ export interface PyConstant {
   name: string;
   value: string;
   line: number;
+  /**
+   * The function this was written inside, or null for module and class level.
+   *
+   * URLs only. `url = "https://api.opsgenie.com/v2/alerts"` on the line above the
+   * request is how a great deal of real code names an address, and the scope is what
+   * stops two functions that both call it `url` from lending each other theirs.
+   */
+  scope?: string | null;
+  /**
+   * Another name this one stands for: `url = self.URL % account`. Function scope only,
+   * and followed exactly one hop — enough for the way an address is threaded through a
+   * method, and short of a constant-folding pass nothing here needs.
+   */
+  alias?: string;
 }
 
 /**
@@ -156,6 +170,33 @@ export interface PyBinding {
   /** Its first literal string argument — the database file, or the connection URL. */
   arg: string | null;
   line: number;
+}
+
+/** One entry of a Django URLconf list: a route, or an `include()` handing off to another. */
+export interface PyUrlEntry {
+  line: number;
+  /** `path`, `re_path` or the legacy `url`. */
+  call: string;
+  /** The segment as written, or null when it was not a readable literal. */
+  route: string | null;
+  /** The segment when it was written as a name — `path(prefix, include(…))`. */
+  routeName: string | null;
+  /** An f-string gave up only its literal half. */
+  partial: boolean;
+  /** `include(api_urls)` — a list in this same file. */
+  includeList: string | null;
+  /** `include("hc.front.urls")` — another module's `urlpatterns`. */
+  includeModule: string | null;
+  isInclude: boolean;
+  /** The view as written: `views.checks`. Null when the entry names no handler. */
+  view: string | null;
+}
+
+/** A module-level list Django assembles URLs from: `urlpatterns`, and its helper lists. */
+export interface PyUrlList {
+  var: string;
+  line: number;
+  entries: PyUrlEntry[];
 }
 
 /** `os.environ["KEY"]` and friends — a read that is a subscript, not a call. */
@@ -179,6 +220,7 @@ export interface PyFile {
   aliases?: PyAlias[];
   bindings?: PyBinding[];
   routers?: PyRouter[];
+  urlLists?: PyUrlList[];
   constants?: PyConstant[];
   uses?: string[];
   /** Line of a module-level `if __name__ == "__main__":` — this file is meant to be run. */

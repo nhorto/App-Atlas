@@ -26,10 +26,12 @@ import type {
   BoundaryFinding,
   ClientExportFinding,
   GuardFinding,
+  HttpWrapperFinding,
   ServiceFinding,
   UrlSinkFinding,
   UrlThroughFinding,
   WrapperCallFinding,
+  WrapperUrlCallFinding,
 } from './types.js';
 
 /**
@@ -220,6 +222,48 @@ export function servicesThroughUrlHelpers(findings: BoundaryFinding[]): ServiceF
       host,
       external: true,
       writes: match.writes,
+      site: call.site,
+    });
+  }
+  return out;
+}
+
+/**
+ * `curl.post("https://slack.com/…")`, where `curl` is a file this project wrote (item 42).
+ *
+ * healthchecks makes every one of its 282 outgoing requests through `hc/lib/curl.py`,
+ * its own "requests-like interface for PycURL". No call site imports an HTTP library,
+ * so the per-file readers saw a method call on a local module and stopped — and the
+ * boundary view reported one outside company, email, for a product whose whole job is
+ * notifying eleven others.
+ *
+ * Both halves have to be present. A module that exposes `post` and wraps nothing is a
+ * mailbox; a URL handed to it says nothing about the network. Only the pair is a call.
+ */
+export function servicesThroughPyWrappers(findings: BoundaryFinding[]): ServiceFinding[] {
+  const wrappers = findings.filter((f): f is HttpWrapperFinding => f.type === 'http-wrapper');
+  if (wrappers.length === 0) return [];
+  const calls = findings.filter((f): f is WrapperUrlCallFinding => f.type === 'wrapper-url-call');
+  if (calls.length === 0) return [];
+
+  const byPath = new Map(wrappers.map((wrapper) => [wrapper.path, wrapper]));
+  const out: ServiceFinding[] = [];
+  for (const call of calls) {
+    const wrapper = byPath.get(call.modulePath);
+    if (!wrapper || !wrapper.names.includes(call.name)) continue;
+
+    const host = hostOf(call.url);
+    if (!host || isInternalHost(host)) continue;
+
+    const known = serviceForHost(host);
+    out.push({
+      type: 'service',
+      name: known?.name ?? host,
+      category: known?.category ?? 'other',
+      package: null,
+      host,
+      external: true,
+      writes: call.writes,
       site: call.site,
     });
   }

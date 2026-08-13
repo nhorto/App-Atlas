@@ -194,6 +194,21 @@ const HOST_SERVICES: { pattern: RegExp; def: ServiceDef }[] = [
   { pattern: /(^|\.)algolia(net)?\.(com|net)$/, def: { name: 'Algolia', category: 'search' } },
   { pattern: /(^|\.)upstash\.io$/, def: { name: 'Upstash', category: 'other' } },
   { pattern: /(^|\.)vercel\.(com|app)$/, def: { name: 'Vercel', category: 'other' } },
+  // Alerting and chat destinations. An app that watches something almost always ends
+  // up talking to several of these, and `api.pushover.net` on a boundary card is a
+  // hostname the reader then has to go and look up.
+  { pattern: /(^|\.)pagerduty\.com$/, def: { name: 'PagerDuty', category: 'monitoring' } },
+  { pattern: /(^|\.)opsgenie\.com$/, def: { name: 'Opsgenie', category: 'monitoring' } },
+  { pattern: /(^|\.)pushover\.net$/, def: { name: 'Pushover', category: 'other' } },
+  { pattern: /(^|\.)pushbullet\.com$/, def: { name: 'Pushbullet', category: 'other' } },
+  { pattern: /(^|\.)telegram\.org$/, def: { name: 'Telegram', category: 'other' } },
+  { pattern: /(^|\.)trello\.com$/, def: { name: 'Trello', category: 'other' } },
+  { pattern: /(^|\.)ntfy\.sh$/, def: { name: 'ntfy', category: 'other' } },
+  { pattern: /(^|\.)gotify\.net$/, def: { name: 'Gotify', category: 'other' } },
+  { pattern: /(^|\.)zulip(chat)?\.com$/, def: { name: 'Zulip', category: 'other' } },
+  { pattern: /(^|\.)discordapp\.com$/, def: { name: 'Discord', category: 'other' } },
+  { pattern: /(^|\.)rocket\.chat$/, def: { name: 'Rocket.Chat', category: 'other' } },
+  { pattern: /(^|\.)victorops\.com$/, def: { name: 'Splunk On-Call', category: 'monitoring' } },
 ];
 
 /** Package name → the database client it is. */

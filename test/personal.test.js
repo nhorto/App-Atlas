@@ -16,7 +16,7 @@ import path from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { classifyColumn, findPersonalData } from '../dist/node/model/personal.js';
-import { analyzeProject, AtlasGraph } from '../dist/node/index.js';
+import { analyzeProject, AtlasGraph, buildTypeView } from '../dist/node/index.js';
 import { renderAtlasMarkdown } from '../dist/node/export/markdown.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -267,6 +267,31 @@ test('the fullest declaration of a table wins over a migration stub', async () =
   const row = report.tables.find((t) => t.name === 'customers');
   assert.ok(row, 'the joined table produced no finding');
   assert.deepEqual(row.columns.filter((c) => c.strength === 'direct').map((c) => c.column), ['email', 'phone_number']);
+});
+
+test('a model class and the table it declares are one card, not two (item 41)', async () => {
+  // Django's `class Profile(models.Model)` is not a table plus a class; it is a table,
+  // written as a class. The atlas holds two nodes for it — the queries produce the
+  // table, the file produces the class — and drawing both put all thirteen of
+  // healthchecks' models on the canvas twice with identical field lists, each pair's
+  // table half pointing at whichever file happened to query it first.
+  const { atlas } = await analyzeProject(path.join(here, 'fixtures', 'pymodels'), {
+    cache: 'off',
+    followReferences: true,
+  });
+  const view = buildTypeView(new AtlasGraph(atlas));
+
+  const names = view.cards.map((card) => card.name);
+  assert.equal(new Set(names).size, names.length, `duplicated cards: ${names.join(', ')}`);
+
+  // The card keeps the *table's* name and the *class's* location — `invoices` is what a
+  // reader will look for in a database, and `models.py` is where it is written down.
+  const invoices = view.cards.find((card) => card.name === 'invoices');
+  assert.ok(invoices, `no invoices card: ${names.join(', ')}`);
+  assert.equal(invoices.typeKind, 'table');
+  assert.equal(invoices.path, 'models.py');
+  assert.equal(invoices.observed ?? false, false);
+  assert.ok(!names.includes('Invoice'), 'the class half should have been absorbed');
 });
 
 test('one table reached under two names is one row, not two', () => {

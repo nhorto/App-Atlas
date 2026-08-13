@@ -36,6 +36,14 @@ const GAP: Part = { known: null };
 const ELLIPSIS = '…';
 
 /**
+ * How many addresses one route may be shown at before the list stops helping.
+ *
+ * Three API versions is a fact worth printing. Thirty mounts of one utility router is a
+ * screen nobody can read, and the ellipsis says the same thing in one line.
+ */
+const MAX_ADDRESSES = 6;
+
+/**
  * Rewrites every endpoint finding whose route is only part of its address.
  *
  * Returns a new array; the findings arriving here may have come from the incremental
@@ -70,7 +78,7 @@ export function composeRoutePrefixes(findings: BoundaryFinding[]): BoundaryFindi
 
   const chains = new Chains(builds, mounts, constants);
   const everywhere = globalPrefixes(globals);
-  return findings.map((finding) => {
+  return findings.flatMap((finding) => {
     if (finding.type === 'guard') return placeMatchers(finding, chains);
     // A module's `forRoutes('user')` names the address without the prefix the framework
     // puts in front of every route it serves. Same one line of `main.ts`, same answer.
@@ -81,9 +89,15 @@ export function composeRoutePrefixes(findings: BoundaryFinding[]): BoundaryFindi
     }
     if (finding.type !== 'endpoint' || finding.route === null) return finding;
     const global = finding.framework ? everywhere.get(finding.framework) : undefined;
-    const own = finding.routerVar
-      ? chains.prefixFor(routerKey(moduleOf(finding.site.path), finding.routerVar))
-      : [];
+    const places = finding.routerVar
+      ? chains.addressesFor(routerKey(moduleOf(finding.site.path), finding.routerVar))
+      : [[]];
+    // One router, several mounts, every one of them readable: the route really does
+    // answer at each, and each is its own door with its own identity.
+    if (places.length > 1) {
+      return places.map((parts) => applyPrefix(finding, global ? [global, ...parts] : parts));
+    }
+    const own = places[0] ?? [];
     if (!global && own.length === 0) {
       // Composition failed, and for most routes that is fine — `r.GET("/api/ping")` on
       // the top-level engine has no prefix because its address is already whole. A
@@ -374,6 +388,56 @@ class Chains {
   prefixFor(key: string): Part[] {
     const seen = new Set<string>();
     return this.walk(key, seen);
+  }
+
+  /**
+   * Every address this router answers at, when it is mounted more than once.
+   *
+   * `healthchecks` mounts one fifteen-route list under `api/v1/`, `api/v2/` and
+   * `api/v3/`: forty-five real addresses, and the routes themselves say only
+   * `checks/`. One of them is not the answer and neither is an ellipsis — all three
+   * are, and a reader who has to `curl` their own API needs the version in the string.
+   *
+   * Falls back to the single ellipsis `prefixFor` would have given whenever the
+   * alternatives cannot all be named: a gap anywhere in them, or so many that the list
+   * has stopped being an answer and become a wall.
+   */
+  addressesFor(key: string): Part[][] {
+    const options = this.options(key, new Set());
+    if (options.length <= 1) return options;
+    const distinct = new Map(options.map((parts) => [signature(parts), parts]));
+    if (distinct.size === 1) return [options[0]];
+    if (distinct.size > MAX_ADDRESSES) return [this.prefixFor(key)];
+    const named = [...distinct.values()];
+    if (named.some((parts) => parts.some((part) => part.known === null))) return [this.prefixFor(key)];
+    return named;
+  }
+
+  /** Every distinct chain of prefixes reaching this router, one per mount path. */
+  private options(key: string, seen: Set<string>): Part[][] {
+    if (seen.has(key)) return [[]];
+    const own = this.ownPrefix(this.index.byKey.get(key));
+    const mounts = this.mountedAt.get(key) ?? [];
+    if (mounts.length === 0) return [own];
+
+    seen.add(key);
+    const out: Part[][] = [];
+    for (const mount of mounts) {
+      const hostKey = routerKey(moduleOf(mount.path), mount.hostVar);
+      for (const parent of this.options(hostKey, seen)) {
+        out.push([
+          ...parent,
+          ...this.mountPrefix(mount),
+          ...(mount.overridesPrefix && mount.hasPrefix ? [] : own),
+        ]);
+        if (out.length > MAX_ADDRESSES) {
+          seen.delete(key);
+          return out;
+        }
+      }
+    }
+    seen.delete(key);
+    return out;
   }
 
   /**

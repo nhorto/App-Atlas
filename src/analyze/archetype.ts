@@ -82,7 +82,13 @@ export function classifyArchetype({ project, nodes }: ArchetypeInput): Archetype
 
   const doors = countDoors(nodes);
   const uiFrameworks = project.frameworks.filter((name) => UI_FRAMEWORKS.has(name));
-  const hasUiFiles = project.files.some((file) => file.zone === 'ui');
+  // A template is an interface file. It was not one before, because this asked only
+  // about files an analyzer had *parsed*, and no analyzer parses a template — so a
+  // server-rendered app could never answer yes however many pages it served, and
+  // Django, Flask+Jinja and Rails all landed on "a service other things call" by
+  // construction. healthchecks has 130 of them behind a login (item 43).
+  const templates = project.templateFiles.length;
+  const hasUiFiles = templates > 0 || project.files.some((file) => file.zone === 'ui');
   const bin = readBin(project.packageJson);
   const exported = countExports(nodes);
 
@@ -96,6 +102,9 @@ export function classifyArchetype({ project, nodes }: ArchetypeInput): Archetype
       if (doors.screen > 0) because.push(plural(doors.screen, 'screen'));
       if (doors.network > 0) because.push(plural(doors.network, 'way in over the network', 'ways in over the network'));
       if (uiFrameworks.length > 0) because.push(uiFrameworks.join(', '));
+      // Named, because it is the evidence a reader is most likely to want to check —
+      // and because the sentence it replaces said the opposite outright.
+      else if (templates > 0) because.push(plural(templates, 'page it renders', 'pages it renders'));
       return verdict('web-app', 'An app with a front end', because);
     }
     because.push(plural(doors.network, 'way in over the network', 'ways in over the network'));

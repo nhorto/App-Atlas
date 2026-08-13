@@ -78,6 +78,14 @@ def value_of(node):
         # An f-string: the literal parts are still the useful half of a URL.
         literal = "".join(p.value for p in node.values if isinstance(p, ast.Constant) and isinstance(p.value, str))
         return {"t": "str", "v": literal, "partial": True} if literal else {"t": "other"}
+    if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Mod):
+        # `URL % account_id` — printf formatting, still the oldest way to build a URL in
+        # Python. The left operand carries the address; the right carries the part that
+        # varies, which was never going to be readable anyway.
+        left = value_of(node.left)
+        if left.get("t") == "str":
+            return {"t": "str", "v": left["v"], "partial": True}
+        return left
     if isinstance(node, ast.Call):
         text = call_text(node)
         return {"t": "name", "v": text} if text else {"t": "other"}
@@ -227,11 +235,41 @@ def rejection_line(node):
         # Flask's `abort(401)` and Starlette's `return Response(status_code=403)`
         # reject without raising anything the AST calls an exception.
         elif isinstance(child, ast.Call):
-            callee = dotted(child.func) or ""
-            if callee.split(".")[-1] in ("abort", "Response", "JSONResponse", "HTTPException"):
-                if REJECT_STATUS.search(unparse(child) or ""):
-                    return child.lineno
+            if _rejecting_call(child):
+                return child.lineno
     return None
+
+
+# Responses that are a refusal by their own name, whatever arguments they carry.
+REJECT_CALLS = ("HttpResponseForbidden", "PermissionDenied", "NotAuthenticated", "AuthenticationFailed")
+
+# Ways to build a response that *may* be a refusal, decided by the status in it.
+RESPONSE_CALLS = ("abort", "Response", "JSONResponse", "JsonResponse", "HttpResponse", "HTTPException")
+
+
+def _rejecting_call(node):
+    """Whether this call turns an unauthenticated caller away.
+
+    Two readings, because a refusal is written two ways. A framework's own refusal is
+    known by name. Everything else is known by the *status*, and only when it was passed
+    as a number rather than mentioned in a sentence: healthchecks rejects with
+    `error("missing api key", 401)` through a helper it wrote itself, which no list of
+    framework names will ever contain, while `log("got a 401 back")` is a sentence about
+    a refusal and not one."""
+    callee = dotted(node.func) or ""
+    last = callee.split(".")[-1]
+    if last in REJECT_CALLS:
+        return True
+    if last in RESPONSE_CALLS and REJECT_STATUS.search(unparse(node) or ""):
+        return True
+    for arg in list(node.args) + [kw.value for kw in node.keywords]:
+        # `401` as an argument is a status code; "401" inside a message is not.
+        if isinstance(arg, ast.Constant) and arg.value in (401, 403) and isinstance(arg.value, int):
+            return True
+        # `status.HTTP_403_FORBIDDEN` — a name whose whole content is the status.
+        if isinstance(arg, (ast.Attribute, ast.Name)) and REJECT_STATUS.search(unparse(arg) or ""):
+            return True
+    return False
 
 
 def function_def(node, owner=None):
@@ -524,8 +562,15 @@ def prefix_of(keywords):
     return {"hasPrefix": False, "prefix": None, "prefixName": None}
 
 
-def path_constants(tree):
-    """Module- and class-level assignments of a string naming a path or a whole address.
+# An f-string that got as far as a whole hostname before its first placeholder.
+# `f"https://api.telegram.org/bot{token}/sendMessage"` leaves
+# `https://api.telegram.org/bot/sendMessage`, whose host is exactly right; a
+# `f"https://{host}/x"` leaves `https:///x` and is refused by the same pattern.
+WHOLE_HOST = re.compile(r"^https?://[^/\s{}:]+\.[^/\s{}:]+", re.I)
+
+
+def path_constants(tree, spans=None):
+    """Assignments of a string naming a path or a whole address.
 
     `API_V1_STR: str = "/api/v1"` on a settings class is how the most-used FastAPI
     template in existence writes its API prefix, and nothing else in the repo spells the
@@ -536,19 +581,37 @@ def path_constants(tree):
     Nothing else is collected. A name that was never an address is noise, and noise here
     turns into a collision that makes a real prefix unreadable — which is also why the
     two kinds stay distinguishable by their own text, and why each consumer filters for
-    the one it wants rather than trusting the list to hold only its own kind."""
+    the one it wants rather than trusting the list to hold only its own kind.
+
+    URLs are also collected *inside* functions, carrying the scope they were written in.
+    A route prefix is never local — it is module or class configuration — but an address
+    very often is: healthchecks reaches Opsgenie, Pushbullet and ntfy through a plain
+    `url = "https://…"` on the line above the request. The scope is what keeps two
+    functions that both spell it `url` from lending each other their addresses."""
     out = []
 
-    def take(stmt):
+    def take(stmt, scope=None, urls_only=False):
         targets = stmt.targets if isinstance(stmt, ast.Assign) else [stmt.target]
         if len(targets) != 1 or not isinstance(targets[0], ast.Name) or stmt.value is None:
             return
         value = value_of(stmt.value)
-        if value.get("t") != "str" or value.get("partial"):
+        # `url = self.URL % settings.TWILIO_ACCOUNT` — a local name standing in for an
+        # address declared a few lines up. Recorded as the link it is, for the Node side
+        # to follow once; the alternative is a whole constant-folding pass for a shape
+        # that only ever needs one hop.
+        if urls_only and value.get("t") == "name":
+            out.append({"name": targets[0].id, "value": "", "alias": value["v"], "line": stmt.lineno, "scope": scope})
+            return
+        if value.get("t") != "str":
             return
         text = value["v"]
-        if text.startswith("/") or text[:8].lower().startswith(("http://", "https://")):
-            out.append({"name": targets[0].id, "value": text, "line": stmt.lineno})
+        is_url = text[:8].lower().startswith(("http://", "https://"))
+        if value.get("partial") and not (is_url and WHOLE_HOST.match(text)):
+            return
+        if urls_only and not is_url:
+            return
+        if text.startswith("/") or is_url:
+            out.append({"name": targets[0].id, "value": text, "line": stmt.lineno, "scope": scope})
 
     for stmt in tree.body:
         if isinstance(stmt, (ast.Assign, ast.AnnAssign)):
@@ -556,7 +619,105 @@ def path_constants(tree):
         elif isinstance(stmt, ast.ClassDef):
             for member in stmt.body:
                 if isinstance(member, (ast.Assign, ast.AnnAssign)):
-                    take(member)
+                    # Scoped to the class. Four transports in one module each calling
+                    # their address `URL` is ordinary, and a flat namespace would hand
+                    # the first one's company to all four — a wrong name on a boundary
+                    # card, stated as a fact.
+                    take(member, stmt.name)
+
+    if spans is None:
+        return out
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.Assign, ast.AnnAssign)):
+            continue
+        scope = scope_at(spans, getattr(node, "lineno", 0))
+        if scope is not None:
+            take(node, scope, urls_only=True)
+    return out
+
+
+URLCONF_CALLS = ("path", "re_path", "url")
+
+
+def url_lists(tree):
+    """Django's URLconf, as a tree rather than a pile of `path()` calls.
+
+    Django assembles an address out of one segment per nesting level, and the nesting is
+    a *list literal*: `urlpatterns` holds `path("api/v1/", include(api_urls))`, and
+    `api_urls` holds `path("checks/", views.checks)`. Read flat, the second line says the
+    address is `/checks/` — which is not an address this app answers at, and reading it
+    out to somebody is worse than saying nothing.
+
+    So the shape is what gets recorded: which list an entry sits in, and for an
+    `include()`, which list or module it hands off to. `healthchecks` mounts one
+    fifteen-route list three times, under `api/v1/`, `api/v2/` and `api/v3/`; nothing in
+    the file holding those routes mentions any of it.
+
+    `urlpatterns += [...]` counts, because Django's own docs use it to bolt debug or
+    media routes onto a list already built.
+    """
+    out = []
+    by_var = {}
+
+    def entries_of(elts):
+        found = []
+        for element in elts:
+            if not isinstance(element, ast.Call):
+                continue
+            if not isinstance(element.func, ast.Name) or element.func.id not in URLCONF_CALLS:
+                continue
+            if not element.args:
+                continue
+            route = value_of(element.args[0])
+            entry = {
+                "line": getattr(element, "lineno", 0),
+                "call": element.func.id,
+                "route": route["v"] if route.get("t") == "str" else None,
+                # `path(prefix, include(...))` — the segment is a name. Worth carrying:
+                # the repo may declare it as a path constant somewhere we can read.
+                "routeName": route["v"] if route.get("t") == "name" else None,
+                # An f-string prefix gave us its literal half and hid the rest. Saying so
+                # keeps the gap visible instead of composing a confident wrong address.
+                "partial": bool(route.get("partial")),
+                "includeList": None,
+                "includeModule": None,
+                "isInclude": False,
+                # `views.checks` — the one lead from a URLconf to the code that answers,
+                # and the only way a decorator two files away can ever be read.
+                "view": None,
+            }
+            target = element.args[1] if len(element.args) > 1 else None
+            if target is not None and not isinstance(target, ast.Call):
+                entry["view"] = dotted(target)
+            if isinstance(target, ast.Call) and (dotted(target.func) or "").split(".")[-1] == "include":
+                entry["isInclude"] = True
+                if target.args:
+                    inner = target.args[0]
+                    if isinstance(inner, ast.Constant) and isinstance(inner.value, str):
+                        entry["includeModule"] = inner.value
+                    elif isinstance(inner, ast.Name):
+                        entry["includeList"] = inner.id
+            found.append(entry)
+        return found
+
+    def take(name, line, value):
+        if not isinstance(value, (ast.List, ast.Tuple)):
+            return
+        found = entries_of(value.elts)
+        if not found:
+            return
+        if name in by_var:
+            by_var[name]["entries"].extend(found)
+            return
+        record = {"var": name, "line": line, "entries": found}
+        by_var[name] = record
+        out.append(record)
+
+    for stmt in tree.body:
+        if isinstance(stmt, ast.Assign) and len(stmt.targets) == 1 and isinstance(stmt.targets[0], ast.Name):
+            take(stmt.targets[0].id, stmt.lineno, stmt.value)
+        elif isinstance(stmt, ast.AugAssign) and isinstance(stmt.target, ast.Name):
+            take(stmt.target.id, stmt.lineno, stmt.value)
     return out
 
 
@@ -605,7 +766,8 @@ def analyze_source(text):
         "aliases": dependency_aliases(tree),
         "bindings": call_bindings(tree),
         "routers": router_variables(tree),
-        "constants": path_constants(tree),
+        "urlLists": url_lists(tree),
+        "constants": path_constants(tree, spans),
         "uses": sorted(module_uses),
         "main": main_guard_line(tree),
         "loc": text.count("\n") + (0 if text.endswith("\n") or not text else 1),
