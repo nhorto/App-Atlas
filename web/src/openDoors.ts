@@ -25,6 +25,7 @@ export const OPEN_LABELS: Record<OpenKind, string> = {
   unlinked: 'not followed',
   'declared-public': 'open on purpose',
   'in-test': 'declared in a test',
+  'identity-only': 'identity read, nobody refused',
 };
 
 /**
@@ -42,6 +43,10 @@ export const OPEN_TONES: Record<OpenKind, 'open' | 'unknown' | 'public'> = {
   unreadable: 'unknown',
   unlinked: 'unknown',
   'in-test': 'unknown',
+  // Red, deliberately. Something ran in front of this door and it let everybody
+  // through, which is the same exposure as nothing running at all — the row says what
+  // was there so a reader knows where to go, not that it is handled (#237).
+  'identity-only': 'open',
   page: 'public',
   'auth-mount': 'public',
   generated: 'public',

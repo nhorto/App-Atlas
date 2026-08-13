@@ -303,7 +303,8 @@ export type OpenKind =
   | 'generated'
   | 'unlinked'
   | 'declared-public'
-  | 'in-test';
+  | 'in-test'
+  | 'identity-only';
 
 export interface OpenVerdict {
   kind: OpenKind;
@@ -428,6 +429,20 @@ export interface EndpointMeta {
    * what it leaves is the sentence about how many doors were judged.
    */
   declaredInTest?: boolean;
+  /**
+   * A middleware named like a check stood in front of this door and refuses nobody — it
+   * establishes who is calling and hands them on (#237). The name it was called by.
+   *
+   * directus's `authenticate` is the case: `app.use(authenticate)` covers 241 of its 253
+   * doors, the name is in `GUARD_NAMES`, and an anonymous caller passes straight through
+   * with the default accountability. Withdrawing the lock is right; withdrawing it and
+   * saying nothing turns 241 false greens into 241 identical reds, and a reader has no
+   * idea where to look. This is what was there, so they do.
+   *
+   * Never a lock, and it does not soften a single count. The door is unrefused and is
+   * reported unrefused; this only says what the empty column means.
+   */
+  identityOnly?: string;
   /** Cron expression, when a scheduler is what knocks. */
   schedule?: string;
   /** Only on the single `env` endpoint. */

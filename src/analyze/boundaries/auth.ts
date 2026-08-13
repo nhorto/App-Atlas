@@ -19,7 +19,17 @@ import type { CallExpression, ClassDeclaration, ObjectLiteralExpression, SourceF
 import type { GuardInfo } from '../../model/types.js';
 import { authEntryForCall, authProviderForPackage } from './catalog.js';
 import type { AuthEntryPoint } from './catalog.js';
-import { argAt, dottedName, literalString, looksLikeRouter, objectProp, permitsEverything, stringArray } from './ast.js';
+import {
+  alwaysContinues,
+  argAt,
+  dottedName,
+  functionBehind,
+  literalString,
+  looksLikeRouter,
+  objectProp,
+  permitsEverything,
+  stringArray,
+} from './ast.js';
 import type { BoundaryDetector, DetectorContext } from './types.js';
 
 /** Function names that exist to answer "is this person allowed in?". */
@@ -116,7 +126,34 @@ const NAMES_A_ROUTER = /(Router|Routers|Routes)$/;
  * Recognises a guard by the name it is called by. Exported so the route detectors can
  * label the middleware they see in a route's argument list.
  */
-export function guardFromName(dotted: string, ctx: DetectorContext): GuardInfo | null {
+export function guardFromName(dotted: string, ctx: DetectorContext, node?: Node): GuardInfo | null {
+  const exact = guardSpelling(dotted, ctx);
+  if (exact === null) return null;
+
+  // Everything above this line is spelling, and the file says so at the top. If the
+  // function the name stands for is in this project and every way out of it hands
+  // control on, the spelling was wrong and the name is withdrawn (#237).
+  //
+  // Asked here because this is the one place a name becomes a claim — five call sites
+  // reach it and all five carry the same risk. It only ever *removes*: a body that
+  // cannot be found, or cannot be decided, leaves the answer exactly as it was.
+  if (node && readsIdentityWithoutRefusing(node)) return null;
+
+  return {
+    name: dotted,
+    how: 'call',
+    provider: providerFor(dotted.split('.')[0], ctx),
+    path: ctx.ref.relPath,
+    line: null,
+    confidence: exact ? 'certain' : 'likely',
+  };
+}
+
+/**
+ * Whether the *name* is a guard's, before anything has been read. `true` for a whole
+ * name, `false` for one that merely begins like one, `null` for neither.
+ */
+function guardSpelling(dotted: string, ctx: DetectorContext): boolean | null {
   const parts = dotted.split('.');
   const last = parts[parts.length - 1];
   const root = parts[0];
@@ -127,16 +164,29 @@ export function guardFromName(dotted: string, ctx: DetectorContext): GuardInfo |
     GUARD_DOTTED.some((pattern) => pattern.test(dotted)) ||
     (AMBIGUOUS_NAMES.has(last) && isAuthContext(root, ctx));
 
-  if (!exact && (!GUARD_PREFIX.test(last) || NAMES_A_ROUTER.test(last))) return null;
+  if (exact) return true;
+  if (!GUARD_PREFIX.test(last) || NAMES_A_ROUTER.test(last)) return null;
+  return false;
+}
 
-  return {
-    name: dotted,
-    how: 'call',
-    provider: providerFor(root, ctx),
-    path: ctx.ref.relPath,
-    line: null,
-    confidence: exact ? 'certain' : 'likely',
-  };
+function readsIdentityWithoutRefusing(node: Node): boolean {
+  const body = functionBehind(node);
+  return body !== null && alwaysContinues(body);
+}
+
+/**
+ * A middleware named like a check, which establishes who is calling and then lets them
+ * through — the fact that replaces the lock this used to report (#237).
+ *
+ * Withdrawing directus's `authenticate` is right and, on its own, is 241 doors going
+ * from a false green to an undifferentiated red. `exposure.ts` opens by saying why that
+ * is its own kind of failure: a number people learn to scroll past is worse than no
+ * number. The door is genuinely unrefused and stays in the count — but it stops being
+ * silent about *what was there*, which is the one thing a reader needs to know to go
+ * look in the right place. The refusal, if there is one, is further in.
+ */
+export function identityParserName(dotted: string, ctx: DetectorContext, node: Node): string | null {
+  return guardSpelling(dotted, ctx) !== null && readsIdentityWithoutRefusing(node) ? dotted : null;
 }
 
 /**
@@ -254,7 +304,7 @@ export const authDetector: BoundaryDetector = {
     const dotted = dottedName(node.getExpression());
     if (!dotted) return;
 
-    const guard = guardFromName(dotted, ctx);
+    const guard = guardFromName(dotted, ctx, node.getExpression());
     if (guard) {
       ctx.emit({
         type: 'guard',
@@ -338,14 +388,42 @@ function routerMiddleware(call: CallExpression, dotted: string, ctx: DetectorCon
   for (const arg of candidates) {
     const name = dottedName(Node.isCallExpression(arg) ? arg.getExpression() : arg);
     if (!name) continue;
-    const guard = guardFromName(name, ctx);
-    if (!guard) continue;
+    const target = Node.isCallExpression(arg) ? arg.getExpression() : arg;
+    const guard = guardFromName(name, ctx, target);
+    const matchers = [prefix ? `${prefix.replace(/\/$/, '')}/:path*` : '/:path*'];
+    if (!guard) {
+      // Named like a check and demonstrably not one. It reached every door this
+      // registration covers, so those doors are told what stood in front of them rather
+      // than nothing at all (#237).
+      const parser = identityParserName(name, ctx, target);
+      if (parser) {
+        ctx.emit({
+          type: 'guard',
+          guard: {
+            name: parser,
+            how: 'middleware',
+            provider: 'custom',
+            path: ctx.ref.relPath,
+            line: call.getStartLineNumber(),
+            confidence: 'likely',
+          },
+          scope: 'matcher',
+          nodeId: null,
+          matchers,
+          routerVar: hostVar,
+          coversFrom: { path: ctx.ref.relPath, line: call.getStartLineNumber() },
+          parsesOnly: true,
+          sourceId: ctx.fileId,
+        });
+      }
+      continue;
+    }
     ctx.emit({
       type: 'guard',
       guard: { ...guard, how: 'middleware', line: call.getStartLineNumber(), confidence: 'likely' },
       scope: 'matcher',
       nodeId: null,
-      matchers: [prefix ? `${prefix.replace(/\/$/, '')}/:path*` : '/:path*'],
+      matchers,
       routerVar: hostVar,
       coversFrom: { path: ctx.ref.relPath, line: call.getStartLineNumber() },
       sourceId: ctx.fileId,

@@ -280,3 +280,133 @@ export function permitsEverything(arg: Node): boolean {
   }
   return false;
 }
+
+/**
+ * Whether every way out of this middleware hands control on — a session parser wearing
+ * the name of a check (#237).
+ *
+ * directus puts `app.use(authenticate)` in front of 241 of its 253 doors, and
+ * `authenticate` is in `GUARD_NAMES`, so all 241 were reported locked. Its own docstring
+ * says what it does: *"Verify the passed JWT and assign the user ID and role to `req`"*.
+ * An anonymous caller carries no token, `getAccountabilityForToken` skips its whole
+ * verification block on `if (token)`, the request keeps the default accountability —
+ * `{ role: null, user: null, admin: false }` — and the middleware calls `next()`. It
+ * refuses nobody. That is NodeBB's `authenticateRequest` (#229) in a second framework,
+ * and it was the largest false lock in the corpus.
+ *
+ * ## Only ever asked in one direction
+ *
+ * This proves *always continues*. It is never read backwards as "no proof of continuing,
+ * therefore a check", and the reason is NodeBB's `authenticateRequest`: it has a bare
+ * `return;` — reached only when a plugin has already responded — so it is structurally
+ * indistinguishable from a refusal and is not one. Answering "is this a refusal" from
+ * shape alone would claim it, and it stands on `/login`.
+ *
+ * So the absence of an answer here changes nothing, which is what makes the rule safe:
+ * it can only ever withdraw a claim somebody's *spelling* earned, and a withdrawn lock
+ * reports a door as open. That is the recoverable direction.
+ *
+ * ## What counts as handing control on
+ *
+ * Every `return` in this function's own body mentions the continuation, no `throw`
+ * escapes except a re-throw from inside a `catch`, and the continuation is used
+ * somewhere. `setImmediate(next)` and `return next()` both count — passing it anywhere
+ * is enough, because this is asking whether the door stays shut, not how it opens.
+ *
+ * A re-throw from a `catch` is not a refusal for the same reason `rejectionOutsideCatch`
+ * already says so: it is how a handler reports a failure it was given, not a decision it
+ * made about a caller. directus's is `catch (err) { …; throw err }`, reached only when a
+ * token was supplied *and* was invalid — never by the anonymous caller this is about.
+ */
+export function alwaysContinues(fn: Node): boolean {
+  if (!Node.isFunctionDeclaration(fn) && !Node.isFunctionExpression(fn) && !Node.isArrowFunction(fn)) {
+    return false;
+  }
+  // Express hands the continuation in third. Fewer parameters than that and this is not
+  // the shape being reasoned about, so it gets no answer.
+  const params = fn.getParameters();
+  if (params.length < 3) return false;
+  const next = params[2].getName();
+  if (!/^_?next$/.test(next)) return false;
+
+  const body = fn.getBody();
+  if (!body || !Node.isBlock(body)) return false;
+
+  const mine = (node: Node): boolean => enclosingFunctionOf(node) === fn;
+  const mentionsNext = (node: Node): boolean =>
+    node.getDescendantsOfKind(SyntaxKind.Identifier).some((id) => id.getText() === next);
+
+  for (const ret of body.getDescendantsOfKind(SyntaxKind.ReturnStatement)) {
+    if (mine(ret) && !mentionsNext(ret)) return false;
+  }
+  for (const thrown of body.getDescendantsOfKind(SyntaxKind.ThrowStatement)) {
+    if (mine(thrown) && !thrown.getFirstAncestorByKind(SyntaxKind.CatchClause)) return false;
+  }
+  // Falling off the end only continues if something passed the continuation on.
+  return mentionsNext(body);
+}
+
+function enclosingFunctionOf(node: Node): Node | undefined {
+  return node.getFirstAncestor(
+    (a) =>
+      Node.isFunctionDeclaration(a) ||
+      Node.isFunctionExpression(a) ||
+      Node.isArrowFunction(a) ||
+      Node.isMethodDeclaration(a),
+  );
+}
+
+/**
+ * The function a name stands for, followed through the spellings middleware is written
+ * in — so `alwaysContinues` has a body to read.
+ *
+ * Following the alias is the whole difference between this working and silently never
+ * firing, which is #152's lesson written down twice in this file. Wrappers are unwrapped
+ * for the same reason: directus exports `asyncHandler(handler)` and NodeBB writes
+ * `helpers.try(async (req, res, next) => …)`, so the function that decides is an
+ * argument rather than the export.
+ */
+export function functionBehind(node: Node, depth = 0): Node | null {
+  if (depth > 3) return null;
+  if (Node.isFunctionDeclaration(node) || Node.isFunctionExpression(node) || Node.isArrowFunction(node)) {
+    return node;
+  }
+  if (Node.isCallExpression(node)) {
+    const inner = node
+      .getArguments()
+      .find((arg) => Node.isArrowFunction(arg) || Node.isFunctionExpression(arg) || Node.isIdentifier(arg));
+    return inner ? functionBehind(inner, depth + 1) : null;
+  }
+
+  const symbol = node.getSymbol();
+  if (!symbol) return null;
+  let aliased;
+  try {
+    aliased = symbol.getAliasedSymbol();
+  } catch {
+    aliased = undefined;
+  }
+  for (const declaration of (aliased ?? symbol).getDeclarations() ?? []) {
+    if (declaration === node) continue;
+    if (
+      Node.isFunctionDeclaration(declaration) ||
+      Node.isFunctionExpression(declaration) ||
+      Node.isArrowFunction(declaration)
+    ) {
+      return declaration;
+    }
+    const initializer =
+      Node.isVariableDeclaration(declaration) || Node.isPropertyAssignment(declaration)
+        ? declaration.getInitializer()
+        : Node.isExportAssignment(declaration)
+          ? declaration.getExpression()
+          : Node.isBinaryExpression(declaration)
+            ? declaration.getRight()
+            : undefined;
+    if (initializer) {
+      const found = functionBehind(initializer, depth + 1);
+      if (found) return found;
+    }
+  }
+  return null;
+}

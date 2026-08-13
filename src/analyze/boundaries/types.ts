@@ -221,6 +221,12 @@ export interface GuardFinding {
    * its check in a module-scope call, and that reference disappears with the wiring.
    */
   definitionSite?: boolean;
+  /**
+   * Named like a check and read to be none of one — it establishes who is calling and
+   * hands them on (#237). Not a guard: the merge writes it on the door as the fact that
+   * explains an empty lock column, and never as a lock.
+   */
+  parsesOnly?: boolean;
   /** The atlas node that implements the check, for the `protected-by` edge. */
   sourceId: string;
 }
