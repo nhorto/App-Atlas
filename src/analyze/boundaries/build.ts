@@ -241,6 +241,45 @@ function describesTheApp(): (finding: BoundaryFinding) => boolean {
   };
 }
 
+/**
+ * Whether the code that declared this door is the app's test suite rather than the app
+ * (#247).
+ *
+ * The rule above exempts doors from its filter, and that exemption was right and
+ * incomplete. Right, because a door must never be dropped for where its file sits —
+ * dub serves `POST /api/stripe/integration/webhook/test`, a live endpoint Stripe posts
+ * to, from `app/(ee)/api/stripe/integration/webhook/test/route.ts`, and "test" there is
+ * Stripe's *test mode*. Incomplete, because the guards and the router wiring around a
+ * test-declared door are filtered while the door itself survives, so sails reported
+ * `GET /res_sending_back_a_boolean/1` beside its real routes, with nothing checking it.
+ * Twenty-nine of its thirty doors were that, and all twenty-nine were the whole of the
+ * screen that exists to find open ones.
+ *
+ * So this decides a *fact written on the door*, never whether the door exists. It is the
+ * same set-aside #132 made for an unreadable file — a check for a production route does
+ * not live in a fixture — arriving at the doors, which were left behind.
+ *
+ * The address is the whole of the difference, and the question is asked of it in exactly
+ * the words it was asked of the path: **would this address, read as a path, be a test
+ * file?** dub's is `/api/stripe/integration/webhook/test`, which reads as one, so the
+ * word that made the file look like a test is a URL somebody types and is evidence about
+ * nothing. Sails' is `/res_redirect/1`, which does not, so `test/` there is a location on
+ * disk. That symmetry is what makes this safe for a framework whose filename *is* its
+ * address — Remix's `routes/api.test.ts` serves `/api/test` and answers the question the
+ * same way, with no knowledge of Remix anywhere in here.
+ *
+ * `classifyZone` is asked both times rather than a word list being restated, for the
+ * reason `compose.ts` gives: a reader should be able to guess why, and there is only one
+ * place to change it. The extension is fixed at `.ts` because the question is about the
+ * directory words, which every language table in `zones.ts` spells the same way.
+ */
+function declaredInTest(finding: EndpointFinding): boolean {
+  if (classifyZone(finding.site.path) !== 'test') return false;
+  const route = finding.route;
+  if (route === null || route === '') return true;
+  return classifyZone(`${route}/x.ts`) !== 'test';
+}
+
 function pathOf(finding: BoundaryFinding): string {
   if ('site' in finding && finding.site) return finding.site.path;
   if ('path' in finding && typeof finding.path === 'string') return finding.path;
@@ -467,6 +506,10 @@ function collectEndpoints(input: BuildInput): Map<string, MergedEndpoint> {
     const id = makeEndpointId(finding.endpointKind, finding.key);
     const existing = merged.get(id);
     if (existing) {
+      // One declaration outside the suite is the whole answer: an address the app serves
+      // and a test re-declares is served, and a fact that says otherwise would take a
+      // real door off the count. The flag only survives while every site agrees.
+      if (!declaredInTest(finding)) delete existing.meta.declaredInTest;
       existing.meta.sites.push(finding.site);
       existing.meta.writes = existing.meta.writes || finding.writes;
       for (const guard of finding.guards) existing.meta.guards.push(guard);
@@ -494,6 +537,7 @@ function collectEndpoints(input: BuildInput): Map<string, MergedEndpoint> {
         ...(finding.generatedEntry ? { generatedEntry: true } : {}),
         ...(finding.handlerUnlinked ? { handlerUnlinked: true } : {}),
         ...(finding.declaredPublic ? { declaredPublic: true } : {}),
+        ...(declaredInTest(finding) ? { declaredInTest: true } : {}),
         sites: [finding.site],
       },
       handlerIds: new Set(finding.handlerId ? [finding.handlerId] : []),

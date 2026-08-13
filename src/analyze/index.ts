@@ -789,6 +789,7 @@ export function computeStats(nodes: AtlasNode[], edges: AtlasEdge[]): AtlasStats
   let endpoints = 0;
   let routes = 0;
   let likelyOnlyRoutes = 0;
+  let testRoutes = 0;
   let unreadFiles = 0;
   let unreadTestFiles = 0;
   let services = 0;
@@ -839,10 +840,25 @@ export function computeStats(nodes: AtlasNode[], edges: AtlasEdge[]): AtlasStats
         else endpoints++;
         if (isAuthRelevant(meta)) {
           routes++;
+          // Counted here rather than off the open-door tally, because that tally only
+          // ever sees doors with no guard on them. directus's mock license server checks
+          // a key on all five of its routes — a real check, on a server that exists for
+          // the length of an e2e run — and a denominator built from verdicts would keep
+          // all five while a denominator built from doors drops them (#247).
+          if (meta.declaredInTest) testRoutes++;
           // A door with guards, none of which the analyzer could prove. Counted here so
-          // the headline can carry the grade its cards already carry (#116).
+          // the headline can carry the grade its cards already carry (#116) — over the
+          // doors that headline is about, which is why a test route is not one of them:
+          // "20 of the checks were matched rather than proven" has to be 20 out of a
+          // number the reader can see, and a set-aside route is in none of them.
           const guards = meta.guards ?? [];
-          if (guards.length > 0 && guards.every((guard) => guard.confidence !== 'certain')) likelyOnlyRoutes++;
+          if (
+            !meta.declaredInTest &&
+            guards.length > 0 &&
+            guards.every((guard) => guard.confidence !== 'certain')
+          ) {
+            likelyOnlyRoutes++;
+          }
         }
         break;
       }
@@ -894,6 +910,7 @@ export function computeStats(nodes: AtlasNode[], edges: AtlasEdge[]): AtlasStats
     publicRoutes: open.page + open.authMount + open.generated + open.declaredPublic,
     unreadableRoutes: open.unreadable,
     unlinkedRoutes: open.unlinked,
+    testRoutes,
     unreadFiles,
     unreadTestFiles,
     services,
