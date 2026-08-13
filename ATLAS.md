@@ -8,7 +8,7 @@ Not recorded here. This file is committed, and what changed since the last run i
 
 ## By the numbers
 
-- 197 files · 62,256 lines · 20 folders · 1,449 functions · 444 types
+- 206 files · 65,519 lines · 20 folders · 1,491 functions · 455 types
 - 2 ways in · 0 outside services · 2 data stores · 9 env vars
 - Built with React, Vite
 - 99% of files carry a docstring App Atlas reads verbatim
@@ -27,7 +27,7 @@ Not recorded here. This file is committed, and what changed since the last run i
 
 - `scripts` (3 files, logic)
 - `src` (104 files, logic)
-- `test` (67 files, test)
+- `test` (76 files, test)
 - `web/src` (21 files, ui)
 
 ## Files nothing else imports
@@ -36,31 +36,31 @@ Every one of the 112 source files here is imported by something else in the app,
 
 ## Key types
 
-- **AtlasNode** (interface, `src/model/types.ts`) — used in 284 places — id, kind, name, label, parentId, language, path, startLine, endLine, zone, summary, summarySource
+- **AtlasNode** (interface, `src/model/types.ts`) — used in 288 places — id, kind, name, label, parentId, language, path, startLine, endLine, zone, summary, summarySource
 - **AtlasEdge** (interface, `src/model/types.ts`) — used in 94 places — id, kind, fromId, toId, weight, confidence, provenance, meta
-- **AtlasGraph** (class, `src/model/graph.ts`) — used in 91 places — meta, rootId, nodes, children, relations, incoming, outgoing, pathCache, pathIndex
-- **DetectorContext** (interface, `src/analyze/boundaries/types.ts`) — used in 85 places — ref, sf, fileId, project, signals, imports, packages, locals
-- **BoundaryFinding** (type-alias, `src/analyze/boundaries/types.ts`) — used in 87 places — | EndpointFinding | ServiceFinding | StoreFinding | EnvFinding | GuardFinding | SignInCallFinding | WebhookFinding | ClientExportFinding | WrapperCallFinding | UrlSinkFinding | Ur…
-- **CodeSite** (interface, `src/model/types.ts`) — used in 75 places — path, line, nodeId, snippet?
+- **AtlasGraph** (class, `src/model/graph.ts`) — used in 94 places — meta, rootId, nodes, children, relations, incoming, outgoing, pathCache, pathIndex
+- **DetectorContext** (interface, `src/analyze/boundaries/types.ts`) — used in 89 places — ref, sf, fileId, project, signals, imports, packages, locals
+- **BoundaryFinding** (type-alias, `src/analyze/boundaries/types.ts`) — used in 92 places — | EndpointFinding | ServiceFinding | StoreFinding | EnvFinding | GuardFinding | SignInCallFinding | WebhookFinding | ClientExportFinding | WrapperCallFinding | UrlSinkFinding | Ur…
+- **CodeSite** (interface, `src/model/types.ts`) — used in 77 places — path, line, nodeId, snippet?
+- **GuardInfo** (interface, `src/model/types.ts`) — used in 63 places — name, how, provider, path, line, confidence
 - **EndpointMeta** (interface, `src/model/types.ts`) — used in 61 places — endpointKind, method, route, framework, guards, writes, sites, open?, signInCall?, verified?, generatedEntry?, handlerUnlinked?
-- **GuardInfo** (interface, `src/model/types.ts`) — used in 58 places — name, how, provider, path, line, confidence
 - **Zone** (type-alias, `src/model/types.ts`) — used in 53 places — 'ui' | 'api' | 'logic' | 'data' | 'config' | 'test' | 'unknown'
 - **GenericFile** (interface, `src/analyze/generic/ir.ts`) — used in 45 places — path, language, ok, error, doc, loc, namespace, imports, defs, calls, bindings, constants
 - **AtlasNode** (interface, `web/src/types.ts`) — used in 44 places — id, kind, name, label, parentId, language, path, startLine, endLine, zone, summary, summarySource
-- **GCall** (interface, `src/analyze/generic/ir.ts`) — used in 41 places — callee, method, receiver, args, line, scope, startIndex, endIndex
+- **GCall** (interface, `src/analyze/generic/ir.ts`) — used in 44 places — callee, method, receiver, args, line, scope, startIndex, endIndex
 - **SourceFileRef** (interface, `src/analyze/project.ts`) — used in 41 places — absPath, relPath, zone
 - **Atlas** (interface, `src/model/types.ts`) — used in 38 places — meta, nodes, edges
+- **AtlasApp** (interface, `src/mcp/atlas.ts`) — used in 29 places — id, name, dir
+- **BoundaryDetector** (interface, `src/analyze/boundaries/types.ts`) — used in 27 places — id
 - **EnrichBackend** (interface, `src/enrich/types.ts`) — used in 27 places — id, label, billing, pricing?, model?, concurrency
-- **BoundaryDetector** (interface, `src/analyze/boundaries/types.ts`) — used in 26 places — id
-- **AtlasApp** (interface, `src/mcp/atlas.ts`) — used in 25 places — id, name, dir
-- **GDef** (interface, `src/analyze/generic/ir.ts`) — used in 24 places — kind, name, owner, line, endLine, startIndex, endIndex, doc, params, returns, exported, decorators
+- **GDef** (interface, `src/analyze/generic/ir.ts`) — used in 25 places — kind, name, owner, line, endLine, startIndex, endIndex, doc, params, returns, exported, decorators
 - **BoundaryInput** (interface, `src/analyze/generic/languages.ts`) — used in 23 places — file, fileId, signals
 - **Dialect** (interface, `src/analyze/generic/dialect.ts`) — used in 23 places — id, displayName, extensions, skip?, strings, numbers, names, identifiers, qualified, functions, calls, comment
+- **PythonBoundaryInput** (interface, `src/analyze/py/boundaries.ts`) — used in 22 places — file, fileId, nodeIdForScope, packages, resolveImport?
 - **Zone** (type-alias, `web/src/types.ts`) — used in 25 places — 'ui' | 'api' | 'logic' | 'data' | 'config' | 'test' | 'unknown'
 - **Confidence** (type-alias, `src/model/types.ts`) — used in 23 places — 'certain' | 'likely' | 'possible'
 - **IgnoreMatcher** (interface, `src/analyze/ignores.ts`) — used in 19 places — patterns
-- **Scope** (interface, `src/analyze/workspace.ts`) — used in 19 places — id, name, dir, kind
-- …and 420 more types.
+- …and 431 more types.
 
 ## Environment variables
 
