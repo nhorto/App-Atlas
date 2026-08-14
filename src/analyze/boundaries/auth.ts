@@ -19,10 +19,13 @@ import type { CallExpression, ClassDeclaration, ObjectLiteralExpression, SourceF
 import type { GuardInfo } from '../../model/types.js';
 import { authEntryForCall, authProviderForPackage } from './catalog.js';
 import type { AuthEntryPoint } from './catalog.js';
+import path from 'node:path';
+import { toPosix } from '../../util/paths.js';
 import {
   alwaysContinues,
   argAt,
   dottedName,
+  enclosingFunctionOf,
   functionBehind,
   literalString,
   looksLikeRouter,
@@ -128,7 +131,10 @@ const NAMES_A_ROUTER = /(Router|Routers|Routes)$/;
  */
 export function guardFromName(dotted: string, ctx: DetectorContext, node?: Node): GuardInfo | null {
   const exact = guardSpelling(dotted, ctx);
-  if (exact === null) return null;
+  // A name that spells out nothing is not the end of the question. The function behind it
+  // may turn a caller away in so many words, and reading that is the difference between a
+  // lock this tool recognises and one it has read the code for (#261).
+  if (exact === null) return node ? refusalBehindTheName(dotted, ctx, node) : null;
 
   // Everything above this line is spelling, and the file says so at the top. If the
   // function the name stands for is in this project and every way out of it hands
@@ -147,6 +153,25 @@ export function guardFromName(dotted: string, ctx: DetectorContext, node?: Node)
     line: null,
     confidence: exact ? 'certain' : 'likely',
   };
+}
+
+/**
+ * Where to point at a check that was found in a registration — the argument list, the
+ * `.use`, the decorator.
+ *
+ * Every one of those sites used to overwrite the line unconditionally, and that was
+ * right while every guard came back carrying `path: ctx.ref.relPath` and no line: the
+ * registration was the only site anybody had, so pointing there was pointing at the only
+ * evidence there was.
+ *
+ * `refusalBehindTheName` breaks that, because the evidence it found is a refusal in
+ * another file. Overwriting its line while keeping its path produces a link to whatever
+ * happens to sit on line 126 of `middlewares.js` — a citation that is worse than none,
+ * because it looks checkable and is wrong. So a guard that brought its own site keeps it,
+ * and only a guard that brought none is given the registration's (#261).
+ */
+export function guardAt(guard: GuardInfo, line: number): GuardInfo {
+  return guard.line === null ? { ...guard, line } : guard;
 }
 
 /**
@@ -172,6 +197,149 @@ function guardSpelling(dotted: string, ctx: DetectorContext): boolean | null {
 function readsIdentityWithoutRefusing(node: Node): boolean {
   const body = functionBehind(node);
   return body !== null && alwaysContinues(body);
+}
+
+/**
+ * The check whose name says nothing, found by reading what it does instead (#261).
+ *
+ * Everything above this point is spelling, and the top of this file explains why that is
+ * the safe way round. But spelling has a floor, and #256 found it: parse-server puts
+ * `Middlewares.handleParseHeaders` in the argument list of `POST /files/:filename` and
+ * `DELETE /files/*filepath`, and those two doors report no check at all. The name begins
+ * with `handle`. No list of nouns was ever going to catch it — `GUARD_NAMES` is thirty
+ * entries and adding a thirty-first is the move this file has already refused twice,
+ * because middleware is named after *what it does to the request*, not after guarding.
+ *
+ * So the road `readsIdentityWithoutRefusing` opened runs both ways. That rule opens the
+ * function behind a name to *withdraw* a lock the spelling earned; this one opens the
+ * same function to grant a lock the spelling missed. The asymmetry was the whole of #261.
+ *
+ * ## Why one hop, and not zero
+ *
+ * `handleParseHeaders` contains no 401 and no 403. It calls `invalidRequest(req, res)`
+ * nine times, and *that* function, 750 lines down the same file, is the refusal:
+ *
+ * ```js
+ * function invalidRequest(req, res) { res.status(403); res.end('{"error":"unauthorized"}'); }
+ * ```
+ *
+ * A body read alone reaches nothing here, which is what the first attempt at this issue
+ * measured. One hop is where it stops, for the reason `functionRefusalDetector` gives
+ * about its own reach: a claim that follows calls forever eventually finds a 401 in
+ * something's error formatter and puts it on a door nobody checks.
+ *
+ * ## Whose refusal it is
+ *
+ * `own` on both scans is the hard half, and it is not a tidiness measure. cjsauth's
+ * `createSessionFromToken` is a middleware *factory* — the 401 sits in the function it
+ * returns — and `forEachDescendant` walks straight into it, so an unfiltered read grants
+ * a lock from a function that has never turned anybody away. That mistake breaks four
+ * tests, two of them deliberate under-claims this project argued itself into. A refusal
+ * one function further down belongs to whatever this one produced, not to this one.
+ *
+ * Same reason the hop resolves the callee rather than trusting the call: `next()` and
+ * `res.status(401)` are both calls in the body, and only a function this project declares
+ * gets read (see `ownRefusal`).
+ *
+ * `likely`, never `certain` — #148. And the site is the refusal itself, in the file that
+ * holds it, so the evidence link lands on the line that proves the claim rather than on
+ * the argument list that merely names it.
+ */
+function refusalBehindTheName(dotted: string, ctx: DetectorContext, node: Node): GuardInfo | null {
+  // A name this file got from a package resolves into `node_modules`, where `ownRefusal`
+  // declines to read anyway — so answer that from the import table rather than paying for
+  // the symbol lookup first. Most of what sits in a registration is `bodyParser.json`,
+  // `express.static`, `cors()`, and this is what keeps reading the rest affordable.
+  if (ctx.imports.get(dotted.split('.')[0])?.external) return null;
+
+  const fn = functionBehind(node);
+  if (fn === null) return null;
+
+  const refusal = ownRefusal(fn) ?? refusalOneCallAway(fn);
+  if (refusal === null) return null;
+
+  return {
+    name: dotted,
+    how: 'call',
+    // The body is the evidence. No library blessed this, so naming one would be a guess.
+    provider: 'custom',
+    path: toPosix(path.relative(ctx.project.root, refusal.file)),
+    line: refusal.line,
+    confidence: 'likely',
+  };
+}
+
+/** Where a refusal was found: the file that holds it, and the line. */
+interface Refusal {
+  file: string;
+  line: number;
+}
+
+/**
+ * This function's own refusal, if it has one.
+ *
+ * Two gates before the walk, and both are about not reading code this project did not
+ * write. A dependency's internals are the catalog's business, and `.d.ts` files carry no
+ * bodies to read — scanning either would cost a regex over megabytes to learn nothing.
+ *
+ * Memoised on both, because this runs on every middleware name in every registration in
+ * the repo and the same functions come back over and over: parse-server names
+ * `promiseEnforceMasterKeyAccess` at 47 call sites and Ghost has one file of middleware
+ * that most of its 261 admin routes reach. Un-memoised it cost a fifth of the analysis.
+ */
+const fileMightRefuse = new WeakMap<SourceFile, boolean>();
+const ownRefusals = new WeakMap<Node, Refusal | null>();
+
+function ownRefusal(fn: Node): Refusal | null {
+  const remembered = ownRefusals.get(fn);
+  if (remembered !== undefined) return remembered;
+
+  const sf = fn.getSourceFile();
+  let readable = fileMightRefuse.get(sf);
+  if (readable === undefined) {
+    readable =
+      !sf.isDeclarationFile() &&
+      !/[\\/]node_modules[\\/]/.test(sf.getFilePath()) &&
+      REJECT_STATUS.test(sf.getFullText());
+    fileMightRefuse.set(sf, readable);
+  }
+
+  const line = readable ? rejectionOutsideCatch(fn, fn) : null;
+  const refusal = line === null ? null : { file: sf.getFilePath(), line };
+  ownRefusals.set(fn, refusal);
+  return refusal;
+}
+
+/**
+ * The refusal in something this function calls — one hop, and no further.
+ *
+ * Bounded three ways, because `guardFromName` runs on every middleware name in every
+ * registration in the repo and a name that resolves to a two-hundred-line function must
+ * not cost two hundred symbol lookups to find out it is not a check:
+ *
+ * - Only calls this function makes itself. A call inside a nested function is that
+ *   function's business, for the reason `own` exists at all.
+ * - Only a bare name. `res.status(...)`, `Promise.resolve()` and `req.get(...)` are most
+ *   of the calls in any body and none of them can resolve to a function this project
+ *   declares, so resolving them buys nothing. parse-server's refusal is
+ *   `invalidRequest(req, res)` — a name this module declares, which is the whole shape
+ *   being looked for.
+ * - A budget, which is a floor under the worst case rather than a considered number.
+ */
+function refusalOneCallAway(fn: Node): Refusal | null {
+  let found: Refusal | null = null;
+  let budget = 40;
+  fn.forEachDescendant((child) => {
+    if (found !== null || budget <= 0) return;
+    if (!Node.isCallExpression(child) || enclosingFunctionOf(child) !== fn) return;
+    const callee = child.getExpression();
+    if (!Node.isIdentifier(callee)) return;
+    budget -= 1;
+    const called = functionBehind(callee);
+    if (called === null || called === fn) return;
+    found = ownRefusal(called);
+  });
+  return found;
 }
 
 /**
@@ -308,7 +476,7 @@ export const authDetector: BoundaryDetector = {
     if (guard) {
       ctx.emit({
         type: 'guard',
-        guard: { ...guard, line: node.getStartLineNumber() },
+        guard: guardAt(guard, node.getStartLineNumber()),
         scope: 'node',
         nodeId: ctx.enclosing(node),
         matchers: [],
@@ -420,7 +588,7 @@ function routerMiddleware(call: CallExpression, dotted: string, ctx: DetectorCon
     }
     ctx.emit({
       type: 'guard',
-      guard: { ...guard, how: 'middleware', line: call.getStartLineNumber(), confidence: 'likely' },
+      guard: { ...guardAt(guard, call.getStartLineNumber()), how: 'middleware', confidence: 'likely' },
       scope: 'matcher',
       nodeId: null,
       matchers,
@@ -687,11 +855,20 @@ function topLevelFunctions(sf: SourceFile): TopLevelFn[] {
   return out;
 }
 
-/** `rejectionLine`, minus anything a catch block says. */
-function rejectionOutsideCatch(node: Node): number | null {
+/**
+ * `rejectionLine`, minus anything a catch block says.
+ *
+ * `own`, when given, narrows the walk to that function's own statements — a refusal in a
+ * function nested inside it is that function's, not this one's. `functionRefusalDetector`
+ * leaves it off because it already scans every top-level function separately, so a nested
+ * refusal would be found again on its own terms; `refusalBehindTheName` needs it, because
+ * a middleware factory is exactly a function whose product refuses (#261).
+ */
+function rejectionOutsideCatch(node: Node, own?: Node): number | null {
   let line: number | null = null;
   node.forEachDescendant((child) => {
     if (line !== null) return;
+    if (own && enclosingFunctionOf(child) !== own) return;
     if (child.getFirstAncestor((a) => Node.isCatchClause(a))) return;
     if (Node.isThrowStatement(child)) {
       if (REJECT_STATUS.test(child.getText())) line = child.getStartLineNumber();
