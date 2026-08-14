@@ -94,3 +94,17 @@ test('a realtime door keeps the older reading, on purpose', () => {
   // inconsistency reads as a decision and not an oversight.
   assert.deepEqual(guardsOn('connection'), ['authorizeListAccess']);
 });
+
+test('a module-scope door still reads its own file, weakly and on purpose', () => {
+  // The guardrail for the rule *underneath* the one this file is about. `/reports` is
+  // registered at module scope, so its id is the file — a scope too, and marked as one.
+  // The weak rule reads it anyway and grades `likely`, because "the check and the door
+  // are in one file" is poor evidence rather than none.
+  //
+  // Without this, narrowing that rule to the same set the strong one uses passes the
+  // whole suite while silently dropping this check: the set empties, `[].every(…)` is
+  // true, and `handlerIds.size > 0` is back to guarding nothing — which is exactly how
+  // `expvar.Handler()` came to be reported as protected.
+  assert.deepEqual(guardsOn('GET /reports'), ['gateKeeper']);
+  assert.equal(doors.get('GET /reports')?.meta.guards[0].confidence, 'likely');
+});
