@@ -38,6 +38,7 @@ import { markGeneratedFiles } from './generated.js';
 import { markRetiredFiles } from './retired.js';
 import { buildMarkupNodes, readMarkupFiles } from './markup.js';
 import type { ProjectInfo } from './project.js';
+import { frameworksWithoutRouteReader } from './routereaders.js';
 import { genericPlugins } from './generic/index.js';
 import { pythonPlugin } from './py/index.js';
 import { typescriptPlugin } from './ts/index.js';
@@ -501,6 +502,11 @@ export async function analyzeProject(rootDir: string, options: AnalyzeOptions = 
   // stale, and never a stale one look fresh.
   const commit = headCommit(project.root);
 
+  // A fact about this codebase, not about the repo being read: which of the frameworks
+  // we just named on the map have a route reader behind them, and which are only a
+  // label. Computed once here so the archetype and the auth sentence cannot disagree.
+  const unreadFrameworks = frameworksWithoutRouteReader(project.frameworks);
+
   const atlas: Atlas = {
     meta: {
       formatVersion: FORMAT_VERSION,
@@ -517,6 +523,9 @@ export async function analyzeProject(rootDir: string, options: AnalyzeOptions = 
         // Stamped from discovery rather than computed from nodes, because the whole
         // point is the files that never became nodes (#171).
         ...(project.unreadLanguages.length > 0 ? { unreadLanguages: project.unreadLanguages } : {}),
+        // Read off the manifest for the same reason: no node was ever built for these
+        // routes, so nothing downstream can recover the fact that they exist (#257).
+        ...(unreadFrameworks.length > 0 ? { unreadFrameworks } : {}),
       },
       incremental: { reused, analyzed },
       // Written down rather than inferred later, because every one of these facts is

@@ -389,6 +389,22 @@ export function authHeadline(stats: AtlasStats): AuthHeadline | null {
         hedged: false,
       };
     }
+    // The same not-seeing, one step in from the language level. These files parsed, so
+    // `unread` is zero and the sentence above never fires — but no reader ran for the
+    // framework they use, so the auth question was not asked of a single route. This
+    // returned `null` before, and a null headline is how a password server with 305
+    // Rocket routes got no auth sentence at all rather than a caveat (#257).
+    const unreadFrameworks = stats.unreadFrameworks ?? [];
+    if (unreadFrameworks.length > 0) {
+      return {
+        tone: 'warn',
+        headline:
+          `this project declares ${unreadFrameworks.join(', ')}, whose routes App Atlas does not read — ` +
+          'whether anything answers a URL was never in view',
+        caveats: [],
+        hedged: false,
+      };
+    }
     if (unread === 0) return null;
     return {
       tone: 'warn',

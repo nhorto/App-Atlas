@@ -22,6 +22,7 @@
 import { backbonePhrase, unreadBackbone } from '../model/coverage.js';
 import type { Archetype, ArchetypeVerdict, AtlasNode, EndpointMeta } from '../model/types.js';
 import type { ProjectInfo } from './project.js';
+import { frameworksWithoutRouteReader } from './routereaders.js';
 
 /** Doors a stranger on a network can knock on. */
 const NETWORK_DOORS = new Set(['http-route', 'server-action', 'webhook', 'realtime']);
@@ -94,6 +95,18 @@ export function classifyArchetype({ project, nodes }: ArchetypeInput): Archetype
 
   const because: string[] = [];
 
+  // Every branch below that finds no network door ends its reasoning with the same
+  // clause, and that clause is a claim. It is only earned when somebody looked: a crate
+  // declaring Rocket has not been shown to answer no URL, it has been not-asked, and
+  // the difference is the whole of #257. The archetype itself is unchanged — a crate
+  // that builds an executable is still something you run — because the evidence for
+  // *that* is Cargo's own and does not depend on the route question at all.
+  const unreadFrameworks = frameworksWithoutRouteReader(project.frameworks);
+  const noUrl =
+    unreadFrameworks.length > 0
+      ? `${unreadFrameworks.join(', ')} declared, whose routes App Atlas does not read`
+      : 'nothing answers a URL';
+
   // A screen is a way a person gets in, so a file-routed native app counts here even
   // though nothing in it answers a URL.
   if (doors.network > 0 || doors.screen > 0) {
@@ -163,13 +176,13 @@ export function classifyArchetype({ project, nodes }: ArchetypeInput): Archetype
       );
     }
     if (doors.scheduled > 0) because.push(plural(doors.scheduled, 'scheduled job'));
-    because.push('nothing answers a URL');
+    because.push(noUrl);
     return verdict('pipeline', 'Something you run', because);
   }
 
   if (doors.scheduled > 0) {
     because.push(plural(doors.scheduled, 'scheduled job'));
-    because.push('nothing answers a URL');
+    because.push(noUrl);
     return verdict('pipeline', 'Something you run', because);
   }
 
@@ -180,7 +193,7 @@ export function classifyArchetype({ project, nodes }: ArchetypeInput): Archetype
   // idiom. Without one, a folder of runnable scripts is exactly what this is.
   if (doors.runnableFiles > 0 && !project.signals.declaresAPackage) {
     because.push(plural(doors.runnableFiles, 'file you run directly', 'files you run directly'));
-    because.push('nothing answers a URL');
+    because.push(noUrl);
     return verdict('pipeline', 'Something you run', because);
   }
 
@@ -206,7 +219,7 @@ export function classifyArchetype({ project, nodes }: ArchetypeInput): Archetype
     if (doors.runnableFiles > 0) because.push(plural(doors.runnableFiles, 'file you can also run directly', 'files you can also run directly'));
     // Not "no doors of any kind": a library's exported names *become* doors a moment
     // from now, and the screen that says so is the same screen this sentence sits on.
-    because.push('nothing answers a URL');
+    because.push(noUrl);
     return verdict('library', 'Code other code imports', because);
   }
 

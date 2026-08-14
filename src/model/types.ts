@@ -611,6 +611,16 @@ export interface AtlasStats {
    * summary, the archetype and the auth headline must not present a sliver as the app.
    */
   unreadLanguages?: { ext: string; count: number }[];
+  /**
+   * Web frameworks the manifest declares and no route reader here reads (#257).
+   *
+   * The sibling of `unreadLanguages`, for the case it cannot catch. That one fires on
+   * files nothing parses; these files parse fine, and the framework is detected and
+   * named at the top of the map — there is simply no reader for its routes. Without
+   * this, zero doors on a Rocket crate was indistinguishable from zero doors on a crate
+   * that answers no URL, and every surface confidently reported the second.
+   */
+  unreadFrameworks?: string[];
   services: number;
   externalServices: number;
   stores: number;
