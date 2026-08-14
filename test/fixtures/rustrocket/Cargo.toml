@@ -1,0 +1,10 @@
+[package]
+name = "rustrocket"
+version = "0.1.0"
+edition = "2021"
+
+# vaultwarden's shape, cut to the two crates that matter: a web framework this tool
+# names on the map, and an ORM beside it. Neither has a route reader (#257).
+[dependencies]
+rocket = { version = "0.5.1" }
+diesel = { version = "2.3.7" }
