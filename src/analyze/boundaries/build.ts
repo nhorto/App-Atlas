@@ -1122,6 +1122,7 @@ function applyGuards(
   }
 
   const above = registeredAboveTheGate(mountedAt, builds, handoffs);
+  const onRouter = onTheGatesRouter(mountedAt);
 
   for (const endpoint of endpoints.values()) {
     const route = endpoint.meta.route;
@@ -1134,9 +1135,10 @@ function applyGuards(
     // behind its global AuthGuard as the 224 readable ones. HTTP routes only —
     // a server action or an IPC channel is not what a route middleware serves.
     const covers = (guard: GuardFinding): boolean =>
-      addressable
+      onRouter(endpoint, guard) &&
+      (addressable
         ? guard.matchers.some((matcher) => matcherMatches(matcher, route as string) || isCatchAllMatcher(matcher))
-        : endpoint.kind === 'http-route' && guard.matchers.some(isCatchAllMatcher);
+        : endpoint.kind === 'http-route' && guard.matchers.some(isCatchAllMatcher));
 
     // Asked once, and answered for the whole endpoint rather than for one of the ways
     // its check reaches it. `app.use(requireAuth)` in the file that also *defines*
@@ -1319,6 +1321,81 @@ function applyHandlerDecorators(endpoints: Map<string, MergedEndpoint>, guards: 
  * a whole application rather than one door. Under-claiming one door is recoverable;
  * under-claiming all of them is not.
  */
+/**
+ * Is this door even on the router the gate was written on?
+ *
+ * `routerMiddleware` emits a gate with `matchers: [prefix ? `${prefix}/:path*` :
+ * '/:path*']` — the prefix of the `.use` that registered the *middleware*. Mounted with
+ * a prefix that is a real pattern and matches the right doors. Mounted bare —
+ * `app.use(api)` — it is the catch-all `/:path*`, and a catch-all matches every address
+ * in the program by design (#172, which is right for a NestJS `APP_GUARD`).
+ *
+ * So a gate on a sub-router covered the parent app's own routes, including ones
+ * registered above the mount, which Express never runs it for. Four lines reproduce it:
+ * `api.use(requireSession)` then `app.use(api)`, and `/favicon.ico` and `/metrics` on
+ * the bare `app` both come out locked with `unprotected: 0` (#260). A false green, and
+ * mastodon is one dictionary entry away from it — `streaming/index.js` has exactly this
+ * shape and stays quiet today only because `authenticationMiddleware` matches no name.
+ *
+ * The ordering rule does not catch it: `registeredAboveTheGate` compares a door and a
+ * gate on the *same* router, and here the door's is `app` while the gate's is `api`, so
+ * it answers false and suppresses nothing.
+ *
+ * The missing fact is the one the mount already knows, and it was being carried and not
+ * consulted. A gate reaches its own router and everything mounted beneath it, and
+ * nothing else. Walking down is what keeps the ordinary case working: `app.use(auth)`
+ * followed by `app.use('/api', api)` still covers every door on `api`, because `api`'s
+ * chain of mounts arrives at `app`.
+ *
+ * Two deliberate abstentions, both toward keeping a check rather than dropping one:
+ *
+ *   - **No `coversFrom`, or no `routerVar`.** Not an Express `.use` gate at all. A
+ *     NestJS `APP_GUARD` covers what its module serves however the file is ordered and
+ *     leaves `coversFrom` unset, so #172 is untouched here by construction.
+ *   - **A door on no known router.** Nothing to disprove the gate with, so the gate
+ *     stands. Turning "we could not tell" into "unprotected" is the false alarm this
+ *     project spends its credibility on, and a door whose router never resolved is
+ *     already the case every other rule here treats as unknown rather than open.
+ */
+function onTheGatesRouter(
+  mountedAt: Map<string, RouterMountFinding[]>,
+): (endpoint: MergedEndpoint, guard: GuardFinding) => boolean {
+  return (endpoint, guard) => {
+    const gate = guard.coversFrom;
+    const host = guard.routerVar;
+    if (!gate || !host) return true;
+    if (endpoint.routers.size === 0) return true;
+
+    const gateKey = moduleRouterKey(moduleOf(gate.path), host);
+    const seen = new Set<string>();
+    // Upward from the door: a router reaches the gate when the gate's router is itself
+    // or any host it is mounted onto. `seen` is not an optimization — a router mounted
+    // into something that is mounted back into it is a cycle, and this walk would not
+    // terminate on one.
+    const reaches = (key: string): boolean => {
+      if (key === gateKey) return true;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      for (const mount of mountedAt.get(key) ?? []) {
+        if (reaches(moduleRouterKey(moduleOf(mount.path), mount.hostVar))) return true;
+      }
+      return false;
+    };
+
+    return [...endpoint.routers].some((key) => {
+      // Same variable, another module. `reports.ts` does `import { app }` and registers
+      // a route on it; `cjsorder` is handed the same app as an argument. It is one
+      // router in both cases, and a `module\0var` key cannot tell that apart from a
+      // second router that happens to share a name — so this abstains and the gate
+      // stands, which is the rule #201 already settled for a position that cannot be
+      // read. Denying here is what blanked three doors on the first attempt.
+      const doorVar = key.slice(key.indexOf('\0') + 1);
+      if (doorVar === host) return true;
+      return reaches(byModule(key));
+    });
+  };
+}
+
 function registeredAboveTheGate(
   mountedAt: Map<string, RouterMountFinding[]>,
   builds: RouterBuildFinding[],
