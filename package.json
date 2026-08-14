@@ -1,6 +1,6 @@
 {
   "name": "@app-atlas/cli",
-  "version": "0.27.0",
+  "version": "0.28.0",
   "description": "Understand any app - including the one your AI built. An interactive, always-accurate atlas of your application.",
   "license": "MIT",
   "author": "nhorto",

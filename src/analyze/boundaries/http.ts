@@ -34,7 +34,7 @@ import {
   permitsEverything,
 } from './ast.js';
 import { unreadHead } from './address.js';
-import { guardFromName } from './auth.js';
+import { guardAt, guardFromName } from './auth.js';
 import type {
   ArgPosition,
   BoundaryDetector,
@@ -638,7 +638,7 @@ function helperGuards(call: CallExpression, ctx: DetectorContext): GuardInfo[] {
     if (!name || seen.has(name)) return;
     seen.add(name);
     const guard = guardFromName(name, ctx, Node.isCallExpression(node) ? node.getExpression() : node);
-    if (guard) guards.push({ ...guard, how: 'middleware', line: call.getStartLineNumber() });
+    if (guard) guards.push({ ...guardAt(guard, call.getStartLineNumber()), how: 'middleware' });
   };
 
   const expand = (node: Node, depth: number): void => {
@@ -1499,7 +1499,7 @@ function middlewareGuards(call: CallExpression, ctx: DetectorContext): GuardInfo
     const name = dottedName(Node.isCallExpression(arg) ? arg.getExpression() : arg);
     if (!name) continue;
     const guard = guardFromName(name, ctx, Node.isCallExpression(arg) ? arg.getExpression() : arg);
-    if (guard) guards.push({ ...guard, how: 'middleware', line: call.getStartLineNumber() });
+    if (guard) guards.push({ ...guardAt(guard, call.getStartLineNumber()), how: 'middleware' });
   }
   return guards;
 }

@@ -346,7 +346,15 @@ export function alwaysContinues(fn: Node): boolean {
   return mentionsNext(body);
 }
 
-function enclosingFunctionOf(node: Node): Node | undefined {
+/**
+ * The function a node is written inside — its *own* function, not any it is nested in.
+ *
+ * Exported because two rules turn on the same distinction and it is the harder half of
+ * both: `alwaysContinues` asks whether *this* function hands control on, and the refusal
+ * reader asks whether *this* function turns a caller away. A `return` or a `401` one
+ * function further down belongs to something this one merely produced (#261).
+ */
+export function enclosingFunctionOf(node: Node): Node | undefined {
   return node.getFirstAncestor(
     (a) =>
       Node.isFunctionDeclaration(a) ||

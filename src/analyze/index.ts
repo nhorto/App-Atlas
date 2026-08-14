@@ -190,7 +190,30 @@ import { dominantZone } from './zones.js';
  * route was registered in rather than its handler (#255) — though that one, too, ends a
  * false green, on `GET /metrics` in mastodon among others.
  */
-export const TOOL_VERSION = '0.27.0';
+/*
+ * 0.28.0 is one change, and it moves the number for the reason the whole of this comment
+ * exists: a 0.27.0 cache holds an answer this build now knows to be wrong.
+ *
+ * A check whose name spells out nothing is read from what it does instead — the refusal
+ * in its own body, or one call further in (#261). On parse-server that is 35 doors, and
+ * `unprotectedRoutes` falls from 80 to 46. Every one of those 34 is a door reported as
+ * having nothing in front of it that has `promiseEnforceMasterKeyAccess` or
+ * `handleParseHeaders` standing there, so the direction is a false red going quiet, which
+ * is the recoverable one — but a count read by somebody deciding where to look is exactly
+ * the number this project says has to be true or stop being read.
+ *
+ * Measured rather than assumed, because the instinct has now been wrong in both
+ * directions twice. #260 changed guard *attribution* in `build.ts`, which is re-derived
+ * from cached findings on every run, so a stale cache reached the corrected answer on its
+ * own and the number rightly stayed put. This one changes a *detector*: the guard list is
+ * part of what gets written per file. Replaying it proves the difference — a cache
+ * populated by the previous build reuses all 374 files and still reports 80.
+ *
+ * Two other changes have landed since 0.27.0 shipped and neither needed this, by the same
+ * test: unread Rust frameworks (#257) reads from stats rather than from any cached
+ * finding, and the bare-mount gate (#260) is the `build.ts` case described above.
+ */
+export const TOOL_VERSION = '0.28.0';
 
 export interface AnalyzeOptions {
   maxFiles?: number;
