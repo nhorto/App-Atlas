@@ -65,11 +65,21 @@ function copyOf(fixture) {
   return root;
 }
 
+/**
+ * The CLI's output as a reader sees it, with the colour taken back out.
+ *
+ * picocolors reads `CI` as a colour-capable terminal, so the same run that is plain text
+ * on a laptop arrives here as `\x1B[1m2\x1B[22m packages in this workspace` on every CI
+ * leg — and a test asserting on the words fails for a reason that has nothing to do with
+ * the words. Stripped rather than suppressed, so this asserts on the string the yellow is
+ * actually wrapped around.
+ */
 function runTheCli(root, ...args) {
-  return execFileSync(process.execPath, [CLI, 'analyze', root, '--no-ai', ...args], {
+  const output = execFileSync(process.execPath, [CLI, 'analyze', root, '--no-ai', ...args], {
     stdio: 'pipe',
     encoding: 'utf8',
   });
+  return output.replace(/\x1B\[[0-9;]*m/g, '');
 }
 
 const workspace = runTheCli(copyOf('rubybackbone'));
