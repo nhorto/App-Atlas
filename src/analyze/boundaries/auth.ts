@@ -255,7 +255,7 @@ function refusalBehindTheName(dotted: string, ctx: DetectorContext, node: Node):
   const fn = functionBehind(node);
   if (fn === null) return null;
 
-  const refusal = ownRefusal(fn) ?? refusalOneCallAway(fn);
+  const refusal = ownRefusal(fn) ?? refusalOneCallAway(fn) ?? refusalInWhatItBuilds(fn, node);
   if (refusal === null) return null;
 
   return {
@@ -267,6 +267,53 @@ function refusalBehindTheName(dotted: string, ctx: DetectorContext, node: Node):
     line: refusal.line,
     confidence: 'likely',
   };
+}
+
+/**
+ * The refusal inside what a factory *builds* — but only where the registration built it.
+ *
+ * #261 pinned both of its scans to a function's own statements so that a middleware
+ * factory could not lend its product's lock to a bare name, and that rule stands: a
+ * reference to `createSessionFromToken` proves nothing about any door.
+ *
+ * `auth()` is not that. The parentheses are in the registration, so the function this
+ * returns *is* the middleware standing on that route — outline writes
+ *
+ * ```ts
+ * router.post("documents.list", rateLimiter(…), auth(), pagination(), handler);
+ * ```
+ *
+ * on 185 of its 226 routes, and every one of them reported no check at all. Reading the
+ * product of a call somebody wrote is a different claim from reading a nested function of
+ * a name somebody mentioned, and the parentheses are what tell them apart.
+ *
+ * Narrow deliberately: one returned function, from this factory's own body, and the same
+ * two refusal tests applied to it — no deeper than a middleware written out in full would
+ * have been read. A factory returning a factory is not followed.
+ */
+function refusalInWhatItBuilds(fn: Node, node: Node): Refusal | null {
+  // Was it called here? `auth()` in an argument list arrives as the *expression* of a
+  // call, and a bare `auth` does not. Nothing else distinguishes them, and everything
+  // downstream depends on the difference.
+  const parent = node.getParent();
+  if (!parent || !Node.isCallExpression(parent) || parent.getExpression() !== node) return null;
+
+  const built = returnedFunctionOf(fn);
+  return built === null ? null : (ownRefusal(built) ?? refusalOneCallAway(built));
+}
+
+/** The function a factory hands back, if its own body hands back exactly one. */
+function returnedFunctionOf(fn: Node): Node | null {
+  const body = (fn as Node & { getBody?(): Node | undefined }).getBody?.();
+  if (!body) return null;
+  let found: Node | null = null;
+  body.forEachDescendant((child) => {
+    if (found !== null) return;
+    if (!Node.isReturnStatement(child) || enclosingFunctionOf(child) !== fn) return;
+    const value = child.getExpression();
+    if (value && (Node.isArrowFunction(value) || Node.isFunctionExpression(value))) found = value;
+  });
+  return found;
 }
 
 /** Where a refusal was found: the file that holds it, and the line. */
@@ -287,6 +334,20 @@ interface Refusal {
  * `promiseEnforceMasterKeyAccess` at 47 call sites and Ghost has one file of middleware
  * that most of its 261 admin routes reach. Un-memoised it cost a fifth of the analysis.
  */
+/**
+ * A file that raises a *type* rather than a status, so the cheap gate below cannot ask
+ * for a number that is by construction somewhere else (#265).
+ *
+ * outline's `authentication.ts` — the middleware standing on 185 of its routes — contains
+ * **no** 401 and no 403; all nine are in `errors.ts`, where `AuthenticationError` is
+ * declared. Gating on a status alone therefore skipped the one file the rule exists for,
+ * which is how the first build of this measured zero changed doors.
+ *
+ * Still a cheap test on cached text, and still narrow: a capitalised thing being thrown,
+ * or constructed inside a rejection. Most files match neither.
+ */
+const RAISES_A_TYPE = /\bthrow\s+(new\s+)?[A-Z]|\breject\(\s*new\s+[A-Z]/;
+
 const fileMightRefuse = new WeakMap<SourceFile, boolean>();
 const ownRefusals = new WeakMap<Node, Refusal | null>();
 
@@ -297,10 +358,11 @@ function ownRefusal(fn: Node): Refusal | null {
   const sf = fn.getSourceFile();
   let readable = fileMightRefuse.get(sf);
   if (readable === undefined) {
+    const text = sf.getFullText();
     readable =
       !sf.isDeclarationFile() &&
       !/[\\/]node_modules[\\/]/.test(sf.getFilePath()) &&
-      REJECT_STATUS.test(sf.getFullText());
+      (REJECT_STATUS.test(text) || RAISES_A_TYPE.test(text));
     fileMightRefuse.set(sf, readable);
   }
 
@@ -619,6 +681,81 @@ const REJECT_CALLS = new Set(['status', 'sendStatus', 'json', 'send', 'abort', '
 /** The methods a framework calls to ask "may this request proceed?". */
 const CHECK_CONTRACTS = new Set(['use', 'canActivate']);
 
+/**
+ * A refusal written as a type rather than a status code (#265).
+ *
+ * Two applications refuse this way and neither writes a number where the reader looks:
+ *
+ * ```ts
+ * throw AuthenticationError("Authentication required");        // outline
+ * reject(new AuthenticationError('Missing access token'));     // mastodon
+ * ```
+ *
+ * The original filing said the answer was only worth having if the mapping to a status
+ * turned out to be findable, because otherwise the evidence is a class *name* — and a
+ * name is what this file spends its first hundred lines warning about. It is findable, in
+ * both, and both are one hop from the raise:
+ *
+ * ```ts
+ * export function AuthenticationError(message = "Authentication required", …) {
+ *   return httpErrors(401, message, { … });                    // outline/server/errors.ts:10
+ * }
+ *
+ * export class AuthenticationError extends Error {             // mastodon/streaming/errors.js:37
+ *   constructor(message) { super(message); this.status = 401; }
+ * }
+ * ```
+ *
+ * So the question asked is the one the code can answer — *does the thing being raised
+ * carry a 401 or a 403* — and never *is it called something authentication-shaped*.
+ * `RequestError` sits in the same mastodon file, is spelled the same way, and sets
+ * `this.status = 400`; it is not a refusal and this declines it for the only reason that
+ * holds up.
+ *
+ * One hop, no further, for the reason `functionRefusalDetector` bounds its own reach:
+ * following a chain until a 401 turns up eventually finds one in an error formatter.
+ * Project code only — a status inside a dependency's own error classes says nothing
+ * about this door.
+ */
+function raisesARefusingType(raise: Node): boolean {
+  const thrown = raisedValue(raise);
+  if (thrown === null) return false;
+
+  const target = Node.isNewExpression(thrown) || Node.isCallExpression(thrown) ? thrown.getExpression() : thrown;
+  if (!Node.isIdentifier(target) && !Node.isPropertyAccessExpression(target)) return false;
+
+  for (const declaration of declarationsOf(target)) {
+    const sf = declaration.getSourceFile();
+    if (sf.isDeclarationFile() || /[\\/]node_modules[\\/]/.test(sf.getFilePath())) continue;
+    // The declaration's own text, not a walk: a class constructor assigning
+    // `this.status = 401` and a function returning `httpErrors(401, …)` are both right
+    // here, and anything deeper is the chain this deliberately does not follow.
+    if (REJECT_STATUS.test(declaration.getText())) return true;
+  }
+  return false;
+}
+
+/** What a `throw` throws, or what a rejection-shaped call was handed. */
+function raisedValue(raise: Node): Node | null {
+  if (Node.isThrowStatement(raise)) return raise.getExpression() ?? null;
+  if (!Node.isCallExpression(raise)) return null;
+  const [first] = raise.getArguments();
+  return first ?? null;
+}
+
+/** Every declaration a name resolves to, following an import to what it names. */
+function declarationsOf(node: Node): Node[] {
+  const symbol = node.getSymbol();
+  if (!symbol) return [];
+  let aliased;
+  try {
+    aliased = symbol.getAliasedSymbol();
+  } catch {
+    aliased = undefined;
+  }
+  return (aliased ?? symbol).getDeclarations() ?? [];
+}
+
 /** The line where this body turns an unauthenticated caller away, if it does. */
 function rejectionLine(node: Node): number | null {
   let line: number | null = null;
@@ -871,13 +1008,13 @@ function rejectionOutsideCatch(node: Node, own?: Node): number | null {
     if (own && enclosingFunctionOf(child) !== own) return;
     if (child.getFirstAncestor((a) => Node.isCatchClause(a))) return;
     if (Node.isThrowStatement(child)) {
-      if (REJECT_STATUS.test(child.getText())) line = child.getStartLineNumber();
+      if (REJECT_STATUS.test(child.getText()) || raisesARefusingType(child)) line = child.getStartLineNumber();
       return;
     }
     if (!Node.isCallExpression(child)) return;
     const callee = dottedName(child.getExpression())?.split('.').pop();
     if (!callee || !REJECT_CALLS.has(callee)) return;
-    if (REJECT_STATUS.test(child.getText())) line = child.getStartLineNumber();
+    if (REJECT_STATUS.test(child.getText()) || raisesARefusingType(child)) line = child.getStartLineNumber();
   });
   return line;
 }

@@ -1,0 +1,1981 @@
+import { makeFunctionId, makeTypeId } from '../../model/types.js';
+import { engineForDatabaseUrl, isInternalHost, serviceForHost, serviceForPythonModule, storeForPythonModule, } from '../boundaries/catalog.js';
+import { readSqlStatement } from '../sql.js';
+import { appendAll } from '../../util/append.js';
+/** Decorator suffixes that open an HTTP route, by the framework that spells them. */
+const ROUTE_METHODS = new Set(['get', 'post', 'put', 'patch', 'delete', 'head', 'options']);
+/** Decorators that say "somebody must be signed in", and the name to show. */
+const GUARD_DECORATORS = {
+    login_required: 'Django login_required',
+    staff_member_required: 'Django staff_member_required',
+    permission_required: 'Django permission_required',
+    jwt_required: 'Flask-JWT',
+    token_required: 'token check',
+    requires_auth: 'auth check',
+    authenticated: 'auth check',
+    auth_required: 'auth check',
+};
+/**
+ * Function names that, when a route depends on one, are checking the caller rather
+ * than fetching it a resource. `get_db` and `get_session` are deliberately outside
+ * this: a database handle is not a lock, and calling one would be the sort of
+ * rounding-up that makes the whole security screen worthless.
+ */
+const GUARD_HINTS = /^((get_|require_|verify_|check_|ensure_)?(current_)?(active_)?(user|superuser|admin|auth|token|principal|identity)|authenticated_user|auth_user)$/;
+const HTTP_CLIENTS = new Set(['requests', 'httpx', 'aiohttp', 'urllib']);
+/**
+ * Libraries that, imported by a file exposing request-shaped functions, make that file
+ * this project's own HTTP client.
+ *
+ * `pycurl` is here and not in `HTTP_CLIENTS` on purpose: nobody calls it with a URL in
+ * the first argument, so it is no use as a call-site signal, and it is the strongest
+ * possible evidence about the file that imports it.
+ */
+const HTTP_LIBS = new Set(['requests', 'httpx', 'aiohttp', 'urllib', 'urllib3', 'pycurl', 'http']);
+/** Function names that make a request when a wrapper module exposes them. */
+const REQUEST_NAMES = new Set(['get', 'post', 'put', 'patch', 'delete', 'head', 'options', 'request', 'send']);
+const WRITE_METHODS = new Set(['post', 'put', 'patch', 'delete', 'send', 'stream']);
+/** SQLAlchemy and friends: the call that means the database was touched. */
+const READ_CALLS = new Set(['query', 'get', 'scalar', 'scalars', 'first', 'all', 'select', 'filter', 'fetch', 'find', 'find_one', 'aggregate']);
+const WRITE_CALLS = new Set(['add', 'add_all', 'commit', 'delete', 'insert', 'update', 'merge', 'bulk_save_objects', 'create', 'save', 'insert_one', 'insert_many', 'update_one', 'delete_one']);
+export function detectPythonBoundaries(input) {
+    const { file } = input;
+    if (!file.ok)
+        return [];
+    const findings = [];
+    const modules = importedModules(file.imports ?? []);
+    const has = (name) => modules.has(name) || input.packages.has(name);
+    const site = (line, snippet) => ({
+        path: file.path,
+        line,
+        nodeId: input.fileId,
+        snippet,
+    });
+    detectRoutes(input, modules, findings, site);
+    if (has('django')) {
+        detectDjangoRoutes(input, findings, site);
+        detectHandlerDecorators(input, findings);
+        detectViewClassGuards(input, findings);
+    }
+    if (modules.has('rest_framework'))
+        detectDrfRouters(input, findings, site);
+    detectTasks(input, has, findings, site);
+    detectEnv(input, findings, site);
+    detectHttpWrapper(input, modules, findings);
+    detectOutbound(input, modules, findings, site);
+    detectStores(input, modules, has, findings, site);
+    detectServices(input, findings, site);
+    detectGuards(input, findings);
+    detectAuthAliases(input, findings);
+    detectCli(input, has, findings, site);
+    return findings;
+}
+/** Top-level import names: `from sqlalchemy.orm import Session` counts as sqlalchemy. */
+function importedModules(imports) {
+    const out = new Set();
+    for (const imp of imports) {
+        if (imp.level > 0 || !imp.module)
+            continue;
+        out.add(imp.module.split('.')[0]);
+        out.add(imp.module);
+    }
+    return out;
+}
+function strArg(value) {
+    return value && value.t === 'str' ? value.v : null;
+}
+function nameArg(value) {
+    return value && value.t === 'name' ? value.v : null;
+}
+/**
+ * The first argument of a decorator, exactly as it was written (#142).
+ *
+ * Read off `decorator.text` rather than off the parsed value, because the parse throws
+ * away the part a reader needs. `org_scoped_rule("/login")` reduces to the value
+ * `org_scoped_rule()` — correct for a *callee*, and useless as a label, since the whole
+ * of what distinguishes this route from the twenty-two beside it is the string inside
+ * the parentheses.
+ *
+ * Returns null when there is no argument at all, which is what keeps `@property` and
+ * every other bare decorator out.
+ */
+function writtenFirstArg(text) {
+    if (!text)
+        return null;
+    const open = text.indexOf('(');
+    if (open < 0)
+        return null;
+    let depth = 0;
+    let quote = null;
+    for (let i = open; i < text.length; i++) {
+        const ch = text[i];
+        if (quote) {
+            if (ch === '\\')
+                i++;
+            else if (ch === quote)
+                quote = null;
+            continue;
+        }
+        if (ch === '"' || ch === "'")
+            quote = ch;
+        else if (ch === '(' || ch === '[' || ch === '{')
+            depth++;
+        else if (ch === ')' || ch === ']' || ch === '}') {
+            depth--;
+            // The decorator's own closing bracket: one argument, and this is the end of it.
+            if (depth === 0)
+                return trimmedArg(text.slice(open + 1, i));
+        }
+        else if (ch === ',' && depth === 1) {
+            return trimmedArg(text.slice(open + 1, i));
+        }
+    }
+    return null;
+}
+function trimmedArg(raw) {
+    const arg = raw.trim();
+    // A keyword argument is not the path — `@app.route(methods=["GET"])` has no address.
+    if (arg === '' || /^[A-Za-z_][A-Za-z0-9_]*\s*=/.test(arg))
+        return null;
+    return arg;
+}
+/** Every function and method, flattened, with the scope name the extractor used. */
+function everyDef(file) {
+    const out = [];
+    for (const def of file.defs ?? []) {
+        if (def.kind === 'function')
+            out.push({ def, scope: def.name });
+        for (const method of def.methods ?? [])
+            out.push({ def: method, scope: `${def.name}.${method.name}` });
+    }
+    return out;
+}
+/**
+ * FastAPI, Flask and their routers all spell a route the same way: a decorator whose
+ * last segment is an HTTP verb, or a `.route(...)` with the methods listed separately.
+ */
+function detectRoutes(input, modules, findings, site) {
+    const framework = modules.has('fastapi')
+        ? 'FastAPI'
+        : modules.has('flask')
+            ? 'Flask'
+            : modules.has('quart')
+                ? 'Quart'
+                : modules.has('sanic')
+                    ? 'Sanic'
+                    : null;
+    if (!framework)
+        return;
+    for (const { def, scope } of everyDef(input.file)) {
+        for (const decorator of def.decorators) {
+            const parts = decorator.callee.split('.');
+            const last = parts[parts.length - 1];
+            const route = strArg(decorator.args[0]);
+            // A path the source computes — `@routes.route(org_scoped_rule("/login"))`. The
+            // address is genuinely unknowable from here and guessing one would be worse, but
+            // dropping the door is not the neutral choice it looks like: it says this handler
+            // answers no URL, which is false. redash writes 23 of its 28 route decorators this
+            // way, and `/login`, `/forgot` and `/reset/<token>` were all absent while the
+            // summary said `4 of 5 routes` in the type it uses when the denominator is right
+            // (#142). Same trade the sqlx reader already makes: a call whose SQL is built
+            // elsewhere still proves the database is used, and only the arrow is missing.
+            const computed = route === null ? writtenFirstArg(decorator.text) : null;
+            if (route === null && computed === null)
+                continue;
+            let methods = [];
+            if (ROUTE_METHODS.has(last)) {
+                methods = [last.toUpperCase()];
+            }
+            else if (last === 'route') {
+                const listed = decorator.kwargs.methods;
+                methods =
+                    listed && listed.t === 'list'
+                        ? listed.items.map((item) => strArg(item)).filter((m) => Boolean(m))
+                        : ['GET'];
+            }
+            else {
+                continue;
+            }
+            for (const method of methods) {
+                findings.push({
+                    type: 'endpoint',
+                    // Always a route here. Whether it is really a webhook is decided once, in the
+                    // merge, on the address after its prefixes are composed — a handler spelled
+                    // `@router.post("/")` under `prefix="/webhooks"` cannot know its own name.
+                    endpointKind: 'http-route',
+                    // The expression as the author wrote it when there is no literal to show. Not
+                    // a URL and not pretending to be one: `POST org_scoped_rule('/login')` sits
+                    // where the address goes and a reader recognises their own line in it. The
+                    // alternative — reconstructing `/login` from inside the call — would be
+                    // inventing an address, since the helper is a prefix and the real path is not
+                    // the one in the parentheses.
+                    //
+                    // For a literal, the key IS the address, so `GET /health` in two files is one
+                    // door — that merge is the point. For a computed one, identical text is not an
+                    // identical address: two blueprints with different url_prefixes both write
+                    // `make_rule("/list")`, and merging them put one file's login_required on the
+                    // other's open route (#160). The file and the callee — which carries the
+                    // blueprint variable — are the identity the text alone doesn't have.
+                    key: route !== null ? `${method} ${route}` : `${method} ${input.file.path}#${decorator.callee}(${computed})`,
+                    name: `${method} ${route ?? computed}`,
+                    method,
+                    // Null, because nothing downstream may treat this as an address it can match
+                    // a prefix or a webhook pattern against.
+                    route,
+                    framework,
+                    writes: method !== 'GET' && method !== 'HEAD',
+                    guards: guardsFor(def, input.file.path),
+                    site: site(decorator.line, decorator.text),
+                    handlerId: input.nodeIdForScope(scope),
+                    // The signature is where FastAPI declares a route's dependencies, and an
+                    // alias imported from `deps.py` is unresolvable from here.
+                    //
+                    // …and so is the decorator, which was read by nothing until #136. A handler
+                    // that never touches the user object takes no `CurrentUser` parameter, so
+                    // `dependencies=[Depends(get_current_active_superuser)]` is the only place its
+                    // lock is written down — the spelling FastAPI's own template uses for every
+                    // administrator-only route, and five of them read as doors nobody checks.
+                    // Both halves go into the same list because whether a dependency is a *check*
+                    // is decided once, in build.ts, against the checkers the project defines.
+                    paramTypes: [...paramTypeNames(def), ...decoratorDepends(decorator)],
+                    routerVar: parts.length > 1 ? parts[0] : null,
+                    // `AdminBackupController.get_all` — the class is where a class-based view
+                    // keeps the dependencies it injects into every route on it.
+                    handlerOwner: def.owner ?? null,
+                });
+            }
+        }
+    }
+}
+/**
+ * Django keeps its routes in a list rather than on the handler.
+ *
+ * Its own function, and called unconditionally, because for two releases this lived at
+ * the bottom of `detectRoutes` — below the `if (!framework) return` that picks between
+ * FastAPI, Flask, Quart and Sanic. A Django `urls.py` imports `django.urls` and none of
+ * those, so the gate returned first and this was unreachable: netbox-community/netbox,
+ * 1,266 files and several hundred routes, mapped as twelve ways in and not one of them
+ * HTTP (#139). Adding `import flask` to a `urls.py` made every route appear, which is
+ * how the gate was identified as the cause rather than the reader.
+ *
+ * The gate that belongs here is the manifest, not the file's imports: `path()` inside a
+ * file named `urls.py` is already specific enough that only Django's presence needs
+ * confirming.
+ */
+function detectDjangoRoutes(input, findings, site) {
+    if (!/(^|\/)urls\.py$/.test(input.file.path))
+        return;
+    // Every URLconf list is a router, and `include()` is how one gets mounted on another.
+    // Saying it in that vocabulary is what lets Django's addresses be assembled by the
+    // same code that assembles FastAPI's and Express's, prefix constants and all.
+    const structured = new Set();
+    for (const list of input.file.urlLists ?? []) {
+        findings.push({
+            type: 'router-build',
+            routerName: 'urlpatterns',
+            varName: list.var,
+            path: input.file.path,
+            line: list.line,
+            hasPrefix: false,
+        });
+        for (const entry of list.entries) {
+            structured.add(entry.line);
+            if (entry.isInclude) {
+                findings.push({
+                    type: 'router-mount',
+                    path: input.file.path,
+                    hostVar: list.var,
+                    // `include("hc.front.urls")` names a module and always means its
+                    // `urlpatterns`; `include(api_urls)` names a list in this same file.
+                    childModule: entry.includeModule ? entry.includeModule.replace(/\./g, '/') : null,
+                    childVar: entry.includeModule ? 'urlpatterns' : entry.includeList,
+                    hasPrefix: entry.route !== '',
+                    // The same anchors `pushDjangoRoute` takes off a leaf, taken off a segment.
+                    // `re_path(r"^api/", include([…]))` contributes `api/` to everything under it,
+                    // and carrying the `^` through composed `/^api/^documents/post_document/` —
+                    // an address that is wrong in a way that looks like a bug in the tool rather
+                    // than a fact about the app, which is at least the recoverable direction.
+                    prefix: entry.route === null ? null : djangoSegment(entry.call, entry.route),
+                    prefixName: entry.routeName,
+                    // `path(prefix, include("hc.accounts.urls"))` is how a Django app offers to be
+                    // served under a configured sub-path, and `prefix` is `""` in every deployment
+                    // that has not set one. Treating a name we cannot read as a segment would put
+                    // an ellipsis in front of all 179 of healthchecks' addresses to describe a
+                    // prefix that is usually empty — so the name is followed if the repo declares
+                    // it, and otherwise the address it already had is left alone.
+                    prefixOnlyIfNamed: entry.routeName !== null,
+                    line: entry.line,
+                });
+                continue;
+            }
+            pushDjangoRoute(input, findings, site, entry.line, entry.call, entry.route, list.var, entry.view, entry.viewIsClass);
+        }
+    }
+    // Anything the URLconf reader could not see as a list entry — a `path()` built inside
+    // a function, or handed to `urlpatterns` through a helper. Read flat, exactly as
+    // before, so no repo loses the routes it already had.
+    for (const call of input.file.calls ?? []) {
+        if (call.callee !== 'path' && call.callee !== 're_path' && call.callee !== 'url')
+            continue;
+        if (structured.has(call.line))
+            continue;
+        const route = strArg(call.args[0]);
+        if (route === null)
+            continue;
+        const view = nameArg(call.args[1]);
+        // `path('providers/', include(...))` mounts another URLconf: a prefix, not an
+        // endpoint. netbox writes 290 of its 377 `path()` calls this way, so counting them
+        // would trade an undercount for an overcount — and every one of those prefixes
+        // would be a door with no handler and therefore no visible auth.
+        if (view !== null && /^include\(/.test(view))
+            continue;
+        pushDjangoRoute(input, findings, site, call.line, call.callee, route, null, view);
+    }
+}
+/**
+ * One Django route, relative to the list it was written in.
+ *
+ * The address stays a fragment on purpose: `composeRoutePrefixes` puts the `include()`
+ * chain in front of it, and it is the only thing that can, because the segments live in
+ * files this one never mentions.
+ */
+/**
+ * Every decorator on every module-level function, keyed by the function's atlas node.
+ *
+ * Reported without deciding anything: whether `@authorize` is a lock is a fact about
+ * wherever `authorize` is defined, which is not this file, and `build.ts` already
+ * settles exactly that question for FastAPI's dependencies. The ones this tool knows by
+ * name — Django's own `login_required` and friends — arrive with their verdict attached,
+ * because no other file has anything to add about them.
+ *
+ * Django only. Every other framework in this reader writes the route on the handler, so
+ * the two halves are already in one place and this would be noise.
+ */
+function detectHandlerDecorators(input, findings) {
+    for (const def of input.file.defs ?? []) {
+        if (def.kind !== 'function')
+            continue;
+        const nodeId = makeFunctionId(input.file.path, def.name);
+        // A Django view often locks its own front door rather than wearing a decorator:
+        // `if not request.user.is_authenticated: return HttpResponseForbidden()` is the
+        // first two lines of healthchecks' `log_events`. Never better than `likely` — the
+        // function refuses *somebody* somewhere, and a handler that answers a wrong
+        // password with a 401 is doing its job rather than guarding a door (#147).
+        if (typeof def.rejects === 'number') {
+            findings.push({
+                type: 'handler-decorator',
+                nodeId,
+                name: def.name,
+                guard: {
+                    // Named after the function, the way `auth-checker` names one, so a chain
+                    // through it reads `checks → authorize` rather than repeating itself.
+                    name: def.name,
+                    how: 'call',
+                    provider: 'custom',
+                    path: input.file.path,
+                    line: def.rejects,
+                    confidence: 'likely',
+                },
+            });
+        }
+        if (def.decorators.length === 0)
+            continue;
+        for (const decorator of def.decorators) {
+            const name = decorator.callee.split('.').pop() ?? '';
+            if (!name)
+                continue;
+            const label = GUARD_DECORATORS[name];
+            findings.push({
+                type: 'handler-decorator',
+                nodeId,
+                name,
+                guard: label
+                    ? {
+                        name,
+                        how: 'decorator',
+                        provider: label,
+                        path: input.file.path,
+                        line: decorator.line,
+                        confidence: 'certain',
+                    }
+                    : null,
+            });
+        }
+    }
+}
+/**
+ * The atlas node for `views.checks`, given a `urls.py` that says `from hc.front import
+ * views` somewhere above.
+ *
+ * This is the hop the Security page was missing on every Django repo. `urls.py` names
+ * the view and nothing else about it; the decorator that keeps strangers out —
+ * `@login_required` on eighty-one of healthchecks' views — is in the file this resolves
+ * to. Without it every Django door reads "not examined", which is honest and worth
+ * nothing.
+ *
+ * Only an import this project answers for. A view that resolves to no file in the repo
+ * stays unlinked, because a handler we cannot open is a handler whose checks we have
+ * not read.
+ */
+function djangoHandlerId(input, view, isClass = false) {
+    if (!view || !input.resolveImport)
+        return null;
+    const parts = view.split('.');
+    const name = parts.pop();
+    if (!name || !/^[A-Za-z_]\w*$/.test(name))
+        return null;
+    // A class-based view is a type node, not a function node — `MyView.as_view()` and
+    // `views.checks` land in different halves of the atlas, and asking for the wrong one
+    // returns an id nothing answers to, which reads exactly like an unlinked handler.
+    const idFor = isClass ? makeTypeId : makeFunctionId;
+    const wanted = isClass ? 'class' : 'function';
+    // `views.checks` — the module is however `views` got into this file. A bare
+    // `checks` is defined here, and needs no import to find.
+    if (parts.length === 0) {
+        if (input.file.defs?.some((def) => def.kind === wanted && def.name === name)) {
+            return idFor(input.file.path, name);
+        }
+        // `from documents.views import PostDocumentView` — the name is bound to a *symbol*,
+        // not to a module, so the module resolver above asks for a module called
+        // `documents.views.PostDocumentView` and is told there is none. healthchecks writes
+        // `from hc.front import views` and never needed this; paperless-ngx imports all 32
+        // of its view classes by name and so resolved none of them.
+        const owner = resolveSymbolModule(input, name);
+        return owner ? idFor(owner, name) : null;
+    }
+    const target = resolveBoundModule(input, parts[parts.length - 1]);
+    return target ? idFor(target, name) : null;
+}
+/** The file that exported a name this one imported directly: `from x.y import Thing`. */
+function resolveSymbolModule(input, name) {
+    if (!input.resolveImport)
+        return null;
+    for (const entry of input.file.imports ?? []) {
+        if (!(entry.names ?? []).some(([, local]) => local === name))
+            continue;
+        const target = input.resolveImport(entry.module, entry.level);
+        if (target)
+            return target;
+    }
+    return null;
+}
+/**
+ * A check a class-based view declares on itself (item 44, second half).
+ *
+ * Django and DRF put the check in a class attribute or a base class rather than in a
+ * decorator, so `detectHandlerDecorators` — which walks functions — sees nothing:
+ *
+ *   class DocumentViewSet(ModelViewSet):
+ *       permission_classes = (IsAuthenticated, PaperlessObjectPermissions)
+ *
+ *   class SettingsView(LoginRequiredMixin, TemplateView):
+ *
+ * `paperless-ngx` reached an auth verdict on **none** of its 74 routes for this reason,
+ * against 178 of 179 on healthchecks, which uses function views throughout — which is
+ * exactly why all five of the healthchecks fixes looked complete on it.
+ *
+ * The two are not equally strong evidence and are not reported as such. A mixin in the
+ * base list is `certain`: it is the documented way to say "signed in only", and it has
+ * no other meaning. `permission_classes` is read by name against the same table, so
+ * `IsAuthenticated` is a lock and DRF's own `AllowAny` is a door held open on purpose —
+ * and a name in neither list is carried without a verdict, for `build.ts` to settle the
+ * way it settles a FastAPI dependency.
+ */
+function detectViewClassGuards(input, findings) {
+    const classes = new Map();
+    for (const def of input.file.defs ?? [])
+        if (def.kind === 'class')
+            classes.set(def.name, def);
+    for (const def of classes.values()) {
+        const nodeId = makeTypeId(input.file.path, def.name);
+        const family = inheritanceChain(def, classes);
+        // Whether this class said anything at all about who may call it, which decides
+        // only whether the DRF blank below applies.
+        let speaks = false;
+        for (const relative of family) {
+            for (const base of relative.bases ?? []) {
+                const name = baseName(base);
+                const label = GUARD_MIXINS[name];
+                if (!label)
+                    continue;
+                const guard = {
+                    // Named with the class it came from when that is not this one, because the
+                    // reader's next question about an inherited check is always *inherited from
+                    // where*, and the chain is the answer. Written here rather than left to the
+                    // reference walk to discover, which is where #147 keeps coming from: a
+                    // reference edge between two classes means "mentions", and an open login page
+                    // mentioning a locked view is the commonest shape in a Django app.
+                    name: relative === def ? name : `${relative.name} → ${name}`,
+                    how: 'decorator',
+                    provider: label,
+                    path: input.file.path,
+                    line: relative.line,
+                    confidence: 'certain',
+                };
+                findings.push({ type: 'handler-decorator', nodeId, name, guard });
+                speaks = true;
+            }
+        }
+        // `@method_decorator(login_required, name="dispatch")` — the only way to put a
+        // plain view decorator on a class, and Django's documented one. `method_decorator`
+        // is the adapter; the lock is the name inside the parentheses. Read off the methods
+        // too, because the same decorator is as often written on `dispatch` directly.
+        for (const relative of family) {
+            const written = [...relative.decorators, ...(relative.methods ?? []).flatMap((m) => m.decorators)];
+            for (const decorator of written) {
+                const called = decorator.callee.split('.').pop() ?? '';
+                const names = called === 'method_decorator'
+                    ? decorator.args.flatMap((arg) => (arg && arg.t === 'name' ? [arg.v.replace(/\(.*$/, '')] : []))
+                    : [called];
+                for (const each of names) {
+                    const name = each.split('.').pop() ?? '';
+                    const label = GUARD_DECORATORS[name];
+                    if (!label)
+                        continue;
+                    const guard = {
+                        name: relative === def ? name : `${relative.name} → ${name}`,
+                        how: 'decorator',
+                        provider: label,
+                        path: input.file.path,
+                        line: decorator.line,
+                        confidence: 'certain',
+                    };
+                    findings.push({ type: 'handler-decorator', nodeId, name, guard });
+                    speaks = true;
+                }
+            }
+        }
+        // The class turning callers away in its own `dispatch`, which is where a view that
+        // wants a condition no mixin covers puts it. Same rule and same reason as a function
+        // that does it: never better than `likely`, because a method answering a bad request
+        // with a 403 is doing its job rather than guarding a door (#147).
+        const gate = (def.methods ?? []).find((m) => m.name === 'dispatch' && typeof m.rejects === 'number');
+        if (gate) {
+            const guard = {
+                name: def.name,
+                how: 'call',
+                provider: 'custom',
+                path: input.file.path,
+                line: gate.rejects,
+                confidence: 'likely',
+            };
+            findings.push({ type: 'handler-decorator', nodeId, name: def.name, guard });
+            speaks = true;
+        }
+        // The nearest declaration wins, which is what Python does: a subclass setting
+        // `permission_classes` replaces its parent's rather than adding to it.
+        const owner = family.find((relative) => permissionNames(relative).length > 0);
+        // A DRF view that named no permission of its own has not said it is open. DRF falls
+        // back to `DEFAULT_PERMISSION_CLASSES` in settings, which this reader has not read,
+        // so "no auth check App Atlas can see" would report our blind spot as the
+        // application's. paperless-ngx's `/api/remote_version/` is the case.
+        if (!owner && !speaks && (def.bases ?? []).some((base) => DRF_VIEW_BASES.test(baseName(base)))) {
+            findings.push({
+                type: 'handler-blind',
+                nodeId,
+                why: `\`${def.name}\` declares no permission_classes — a DRF view without one answers to DEFAULT_PERMISSION_CLASSES in your settings, which App Atlas has not read`,
+            });
+        }
+        for (const name of owner ? permissionNames(owner) : []) {
+            // `AllowAny` is somebody writing down that this door is open, which is a fact and
+            // not a lock — the same distinction #152 draws for a NestJS guard that permits
+            // everything. Recorded as a non-guard so the door reads examined-and-open rather
+            // than never-examined.
+            if (OPEN_PERMISSIONS.has(name)) {
+                findings.push({ type: 'handler-decorator', nodeId, name, guard: null });
+                continue;
+            }
+            const label = GUARD_PERMISSIONS[name];
+            const guard = label
+                ? {
+                    name: owner === def ? name : `${owner.name} → ${name}`,
+                    how: 'config',
+                    provider: label,
+                    path: input.file.path,
+                    line: owner.line,
+                    confidence: 'certain',
+                }
+                : null;
+            findings.push({ type: 'handler-decorator', nodeId, name, guard });
+            // Also registered as a check in its own right, so the *name* resolves wherever the
+            // merge meets it. A DRF registration hands its door the class rather than the
+            // handler — `api_router.register(r"documents", DocumentViewSet)` — and the owner
+            // chain that resolves it looks names up in the checker table, not in the node ids
+            // these findings are keyed on (#241).
+            if (guard)
+                findings.push({ type: 'auth-checker', name, guard });
+        }
+    }
+}
+/**
+ * A base class reduced to the name it is known by: `rest_framework.GenericAPIView[Any]`
+ * is `GenericAPIView`.
+ *
+ * The subscript is the part that bites. paperless-ngx types every DRF base it inherits
+ * — `GenericViewSet[Document]`, `ModelViewSet[ApplicationConfiguration]`,
+ * `GenericAPIView[Any]` — and with the brackets left on, none of them matched anything,
+ * so `RemoteVersionView` was read as a plain class with no check rather than as a DRF
+ * view whose permissions live in settings. Reported open, and it is not.
+ */
+function baseName(base) {
+    return (base.split('.').pop() ?? base).replace(/[[(].*$/, '').trim();
+}
+/**
+ * Base classes that make a class a Django REST Framework view.
+ *
+ * Worth naming because DRF's permissions have a *project-wide* default, so silence on
+ * one of these classes is a question this reader has not answered rather than an open
+ * door — see the `handler-blind` finding above.
+ */
+const DRF_VIEW_BASES = /^(APIView|GenericAPIView|(ReadOnly)?ModelViewSet|GenericViewSet|ViewSet|ViewSetMixin|(List|Create|Retrieve|Update|Destroy|ListCreate|RetrieveUpdate|RetrieveDestroy|RetrieveUpdateDestroy)APIView)$/;
+/**
+ * The permission classes a view declares, as bare names.
+ *
+ * `permission_classes = (IsAuthenticated, PaperlessObjectPermissions)` arrives as the
+ * unparsed right-hand side, so the brackets and the module prefixes come off here.
+ */
+function permissionNames(def) {
+    const declared = (def.fields ?? []).find((field) => field.name === 'permission_classes');
+    if (!declared)
+        return [];
+    return declared.type
+        .split(',')
+        .map((raw) => raw.replace(/[()[\]\s]/g, '').split('.').pop() ?? '')
+        .filter(Boolean);
+}
+/**
+ * A class and everything it inherits from *in this file*, nearest first.
+ *
+ * `class BulkEditView(DocumentOperationPermissionMixin)` declares no policy of its own —
+ * the mixin one level up holds `permission_classes = (IsAuthenticated,)`, and eleven of
+ * paperless-ngx's doors get their only real check that way. Reading a class's own fields
+ * and stopping there left those doors looking unexamined.
+ *
+ * Same file only, which is honest rather than complete: a base imported from elsewhere is
+ * a fact in another file, and this reader sees one file at a time. In practice a project
+ * keeps a view and its view mixins together, and paperless does.
+ */
+function inheritanceChain(def, classes) {
+    const chain = [];
+    const seen = new Set();
+    const queue = [def];
+    while (queue.length > 0) {
+        const current = queue.shift();
+        if (seen.has(current.name))
+            continue;
+        seen.add(current.name);
+        chain.push(current);
+        for (const base of current.bases ?? []) {
+            const parent = classes.get(baseName(base));
+            if (parent)
+                queue.push(parent);
+        }
+    }
+    return chain;
+}
+/** Base classes whose whole purpose is to refuse a caller who is not signed in. */
+const GUARD_MIXINS = {
+    LoginRequiredMixin: 'Django LoginRequiredMixin',
+    PermissionRequiredMixin: 'Django PermissionRequiredMixin',
+    UserPassesTestMixin: 'Django UserPassesTestMixin',
+    AccessMixin: 'Django AccessMixin',
+};
+/** DRF permission classes that refuse somebody, by the names DRF ships. */
+const GUARD_PERMISSIONS = {
+    IsAuthenticated: 'DRF IsAuthenticated',
+    IsAdminUser: 'DRF IsAdminUser',
+    IsAuthenticatedOrReadOnly: 'DRF IsAuthenticatedOrReadOnly',
+    DjangoModelPermissions: 'DRF DjangoModelPermissions',
+    DjangoObjectPermissions: 'DRF DjangoObjectPermissions',
+    DjangoModelPermissionsOrAnonReadOnly: 'DRF DjangoModelPermissions',
+};
+/** DRF's way of writing down that a door is open on purpose. */
+const OPEN_PERMISSIONS = new Set(['AllowAny']);
+/**
+ * The file behind a name an import bound to a module: `views`, `curl`, `client`.
+ *
+ * Null for anything that is not a module of this project, which is what keeps
+ * `requests.post` and `os.path` out of every reading built on top of it.
+ */
+function resolveBoundModule(input, bound) {
+    if (!input.resolveImport)
+        return null;
+    for (const entry of input.file.imports ?? []) {
+        // `from hc.lib import curl` binds `curl`, and `… import curl as c` binds the same
+        // module under another name — so the module is the *exported* half of the pair,
+        // never the local one. `import hc.lib.curl as curl` binds through the alias, where
+        // the module is already whole. A relative `from . import views` is the ordinary
+        // spelling inside a Django app: its module is empty and the dots ride in `level`,
+        // so joining onto nothing would ask the resolver for `.views`.
+        const exported = (entry.names ?? []).find(([, local]) => local === bound)?.[0];
+        const module = exported
+            ? entry.module
+                ? `${entry.module}.${exported}`
+                : exported
+            : entry.alias === bound
+                ? entry.module
+                : null;
+        if (module === null)
+            continue;
+        const target = input.resolveImport(module, entry.level);
+        if (target)
+            return target;
+    }
+    return null;
+}
+/**
+ * One segment of a Django address, with the regex punctuation taken off.
+ *
+ * `re_path(r'^legacy/widgets/$', …)` serves `/legacy/widgets/`. The anchors are regex
+ * syntax, not part of the address, and leaving them in prints a URL nobody can visit.
+ * Only the anchors come off: the rest of the pattern is left exactly as written, because
+ * a capture group is a real part of the route and rewriting it into something prettier
+ * would be inventing an address. `path()` is not a regex at all, so it is untouched.
+ */
+function djangoSegment(callee, route) {
+    return callee === 'path' ? route : route.replace(/^\^/, '').replace(/\$$/, '');
+}
+function pushDjangoRoute(input, findings, site, line, callee, 
+// An f-string route hands over its literal half — `f"{prefix}admin/"` gives `admin/`,
+// the address in every deployment that leaves the sub-path unset.
+route, routerVar, view, viewIsClass = false) {
+    if (route === null)
+        return;
+    const handlerId = djangoHandlerId(input, view, viewIsClass);
+    // `re_path(r'^legacy/widgets/$', …)` serves `/legacy/widgets/`. The anchors are
+    // regex punctuation, not part of the address, and leaving them in prints a URL
+    // nobody can visit. Only the anchors come off: the rest of the pattern is left
+    // exactly as written, because a capture group is a real part of the route and
+    // rewriting it into something prettier would be inventing an address.
+    const shown = `/${djangoSegment(callee, route)}`.replace(/\/+/g, '/');
+    findings.push({
+        type: 'endpoint',
+        endpointKind: 'http-route',
+        key: `GET ${shown}`,
+        // Django does not declare the method here; the view decides. Saying GET would
+        // be a guess, so the name says what is actually known: a URL is served.
+        name: shown,
+        method: null,
+        route: shown,
+        framework: 'Django',
+        writes: false,
+        guards: [],
+        site: site(line, view ? `${callee}("${route}", ${view})` : undefined),
+        handlerId,
+        routerVar,
+        // Only when the view could not be found. A door whose handler we located is a door
+        // whose checks we have read — see EndpointMeta.handlerUnlinked.
+        ...(handlerId === null ? { handlerUnlinked: true } : {}),
+    });
+}
+/**
+ * A DRF router's register() table, which is the whole API (#170).
+ *
+ * `api_router.register(r"documents", DocumentViewSet)` is Django REST Framework's way
+ * of declaring an entire REST resource — and paperless-ngx writes twenty of them in
+ * `urls.py`, spliced into the URL tree as `*api_router.urls`, covering documents,
+ * tags, saved views and tasks. Every one produced zero doors, so the map said "83
+ * ways in" about the application while missing its primary surface completely. Same
+ * registration-table shape #142 noted in redash's Flask-RESTful `add_org_resource`,
+ * in the ecosystem's most canonical spelling.
+ *
+ * What is claimed is the under-claiming floor: ONE door per registration, method
+ * unknown. DRF derives list/detail/extra-action URLs from the class body — a
+ * ReadOnlyModelViewSet has no POST — so claiming the generated set without reading
+ * the class would invent doors. The mount prefix lives wherever the router's urls
+ * were spliced, usually another expression entirely, so the address wears #153's
+ * ellipsis and `route` stays null. The ViewSet's name is the way back to the code
+ * and travels as handlerOwner, so a class-level check the owner chain can read
+ * still reaches the door.
+ *
+ * Gated on the file importing rest_framework, so somebody's own `.register(...)`
+ * in an unrelated codebase proves nothing. The first argument must be a string:
+ * `admin.site.register(Document)` registers a model, not a route, and has no
+ * prefix to read.
+ */
+function detectDrfRouters(input, findings, site) {
+    for (const call of input.file.calls ?? []) {
+        if (!call.callee.endsWith('.register'))
+            continue;
+        const prefix = strArg(call.args[0]);
+        if (prefix === null)
+            continue;
+        const view = nameArg(call.args[1]);
+        if (view === null)
+            continue;
+        const shown = `/${prefix}`.replace(/\/+/g, '/');
+        findings.push({
+            type: 'endpoint',
+            endpointKind: 'http-route',
+            key: `ANY ${input.file.path}#${call.callee}(${prefix})`,
+            name: `…${shown} (${view})`,
+            // The ViewSet decides which verbs exist, so claiming one would be a guess.
+            method: null,
+            route: null,
+            framework: 'Django REST Framework',
+            writes: false,
+            guards: [],
+            site: site(call.line, `${call.callee}("${prefix}", ${view})`),
+            handlerId: null,
+            handlerOwner: view.split('.').pop() ?? view,
+            handlerUnlinked: true,
+        });
+    }
+}
+/** Auth that is visible on the handler itself: a decorator, or an injected dependency. */
+function guardsFor(def, path) {
+    const guards = [];
+    for (const decorator of def.decorators) {
+        const last = decorator.callee.split('.').pop() ?? '';
+        const label = GUARD_DECORATORS[last];
+        // The decorator is written on the handler, so it can only be guarding that handler.
+        if (label) {
+            guards.push({
+                name: last,
+                how: 'decorator',
+                provider: label,
+                path,
+                line: decorator.line,
+                confidence: 'certain',
+            });
+        }
+    }
+    // A `Depends(...)` in the signature is not read here. Whether the thing depended on
+    // is a *check* is a fact about that function, usually in another file, so it is
+    // decided once in `build.ts` against every checker the project defines — which also
+    // keeps one route from collecting two names for the same lock.
+    return guards;
+}
+/**
+ * The `Depends(...)` targets written on the route decorator itself (#136).
+ *
+ * `@router.get("/", dependencies=[Depends(get_current_active_superuser)])` is how
+ * FastAPI guards a route whose handler has no use for the user object, and it is the
+ * only place that lock appears — the signature has nothing in it to find. Reusing
+ * `dependsTargets` rather than re-reading the list keeps this the same idea as the one
+ * already applied to `APIRouter(...)` and `include_router(...)`.
+ */
+function decoratorDepends(decorator) {
+    const listed = decorator.kwargs.dependencies;
+    if (!listed)
+        return [];
+    return dependsTargets({ ...decorator, args: [listed], kwargs: {} });
+}
+/** Every bare name a signature's annotations mention, alias candidates included. */
+function paramTypeNames(def) {
+    const names = new Set();
+    for (const param of def.params ?? []) {
+        for (const match of `${param.type} ${param.default ?? ''}`.matchAll(/[A-Za-z_]\w*/g)) {
+            names.add(match[0]);
+        }
+    }
+    return [...names];
+}
+/**
+ * The two halves of Python's "auth lives in the signature" idiom, each reported by the
+ * file that can see it and joined in `build.ts`:
+ *
+ *   - a function that rejects strangers with a 401 or a 403, which is what makes a
+ *     dependency a check;
+ *   - `CurrentUser = Annotated[User, Depends(get_current_user)]`, a name that carries
+ *     that check wherever it is used as a type.
+ *
+ * The first is decided by what the function does. The second only records what it
+ * depends on — whether that dependency checks anything is not this file's business,
+ * and it is usually not even this file.
+ */
+function detectAuthAliases(input, findings) {
+    for (const { def } of everyDef(input.file)) {
+        // A route handler that returns 403 to the wrong user is doing its job, not
+        // offering itself as a dependency. Only things other code can depend on count.
+        if (def.decorators.some((d) => ROUTE_METHODS.has(d.callee.split('.').pop() ?? '')))
+            continue;
+        // A name that looks like a check is a weak second signal, kept because plenty of
+        // guards delegate the actual 401 to a library we never see. Both stay `likely`.
+        const rejects = typeof def.rejects === 'number';
+        if (!rejects && !GUARD_HINTS.test(def.name))
+            continue;
+        findings.push({
+            type: 'auth-checker',
+            name: def.name,
+            guard: {
+                name: def.name,
+                how: 'call',
+                provider: 'custom',
+                path: input.file.path,
+                line: rejects ? def.rejects : def.line,
+                confidence: 'likely',
+            },
+        });
+    }
+    // A class is named by what it is, and the rejection is inside a method — so nothing
+    // the caller writes (`add_middleware(AuthMiddleware)`, `Depends(AdminOnly())`) can be
+    // matched against the method that does the work. Only the two methods that *are* the
+    // contract count: `dispatch` for a Starlette middleware, `__call__` for a raw ASGI
+    // one or a dependency class. A service class with a method that happens to raise 403
+    // is not offering itself as a lock, and treating it as one would put a check on every
+    // handler that takes it as an argument.
+    for (const def of input.file.defs ?? []) {
+        if (def.kind !== 'class')
+            continue;
+        const contract = (def.methods ?? []).find((method) => (method.name === 'dispatch' || method.name === '__call__') && typeof method.rejects === 'number');
+        if (!contract)
+            continue;
+        findings.push({
+            type: 'auth-checker',
+            name: def.name,
+            guard: {
+                name: def.name,
+                how: 'middleware',
+                provider: 'custom',
+                path: input.file.path,
+                line: contract.rejects,
+                confidence: 'likely',
+            },
+        });
+    }
+    // Plenty of dependencies are somebody else's: `Depends(fastapi_users.current_user)`
+    // has no definition in this repo to read a 401 out of. There the name is all there
+    // is, so it is accepted as the weaker signal it is — still only ever `likely`.
+    for (const call of input.file.calls ?? []) {
+        for (const target of dependsTargets(call)) {
+            if (!GUARD_HINTS.test(target))
+                continue;
+            findings.push({
+                type: 'auth-checker',
+                name: target,
+                guard: {
+                    name: `Depends(${target})`,
+                    how: 'call',
+                    provider: 'custom',
+                    path: input.file.path,
+                    line: call.line,
+                    confidence: 'likely',
+                },
+            });
+        }
+    }
+    for (const alias of input.file.aliases ?? []) {
+        findings.push({
+            type: 'auth-alias',
+            name: alias.name,
+            depends: alias.depends.map((name) => name.split('.').pop() ?? name),
+            path: input.file.path,
+            line: alias.line,
+        });
+    }
+    // The same idea wearing a class, twice over.
+    //
+    // A router subclass bakes the dependency into its constructor:
+    // `class UserAPIRouter(APIRouter)` calling `super().__init__(dependencies=[…])`.
+    // A class-based view puts it on the class the handlers are methods of:
+    // `class BaseUserController: user: PrivateUser = Depends(get_current_user)`, and the
+    // controller that inherits it three levels down declares routes that mention nobody.
+    //
+    // A class with no dependency of its own is still recorded — with parents because it
+    // is a link in the chain (`class Reporting(SignedIn): ...` carries nothing and
+    // decides everything), and without them because its *declaration* is the fact that
+    // protects its namesakes. The merge trusts a name only while exactly one class
+    // declares it, and a guardless class that stayed silent made its guarded namesake in
+    // another file look unique — which lent that lock to doors it was never written on
+    // (#162).
+    for (const def of input.file.defs ?? []) {
+        if (def.kind !== 'class')
+            continue;
+        const bases = (def.bases ?? []).map(baseName).filter(Boolean);
+        // `permission_classes` is the same statement as a `Depends(…)` in a class body —
+        // "nobody reaches these handlers without passing this" — so it travels the same way.
+        // Routing it through the alias rather than only onto the class's node id is what
+        // lets a DRF registration find it, and it inherits **across files** for free: the
+        // merge already joins a class to its parents by name, which this reader cannot do
+        // because it sees one file at a time (#241).
+        const own = (def.depends ?? []).map((name) => name.split('.').pop() ?? name);
+        const permissions = permissionNames(def).filter((name) => !OPEN_PERMISSIONS.has(name));
+        findings.push({
+            type: 'auth-alias',
+            name: def.name,
+            depends: [...own, ...permissions],
+            // Named after the statement the reader will actually find in the file. `Depends` is
+            // FastAPI's word and would send somebody looking for the wrong line.
+            ...(own.length === 0 && permissions.length > 0 ? { binds: 'permission_classes' } : {}),
+            bases,
+            path: input.file.path,
+            line: def.line,
+        });
+    }
+    // …and the other half: which variable in this file was built out of what.
+    const here = modulePath(input.file.path);
+    for (const router of input.file.routers ?? []) {
+        findings.push({
+            type: 'router-build',
+            routerName: router.callee.split('.').pop() ?? router.callee,
+            varName: router.var,
+            path: input.file.path,
+            line: router.line,
+            hasPrefix: router.hasPrefix ?? false,
+            prefix: router.prefix ?? null,
+            prefixName: router.prefixName ?? null,
+            // `APIRouter(dependencies=[Depends(get_current_user)])`. The router build and the
+            // call that made it are the same line of source, reported twice because one pass
+            // reads assignments and the other reads calls.
+            dependencies: dependsOnLine(input.file, router.line),
+        });
+    }
+    for (const constant of input.file.constants ?? []) {
+        // The extractor collects addresses of both kinds — route prefixes and whole URLs
+        // (#89). A prefix is the one that starts with a slash; `https://updates.example/…`
+        // is somewhere else's address and would only collide with a real one here.
+        if (!constant.value.startsWith('/'))
+            continue;
+        findings.push({
+            type: 'path-constant',
+            name: constant.name,
+            value: constant.value,
+            path: input.file.path,
+            line: constant.line,
+        });
+    }
+    detectRouterMounts(input, here, findings);
+}
+/**
+ * `api_router.include_router(items.router, prefix="/x")` — one router hung off another.
+ *
+ * Resolved to a module here rather than in the merge layer because this is the only
+ * place that can see the file's own imports: `items` is a name, and which file it names
+ * depends on a `from … import …` twenty lines above.
+ */
+const MOUNT_CALLS = new Set(['include_router', 'register_blueprint', 'mount']);
+function detectRouterMounts(input, here, findings) {
+    for (const call of input.file.calls ?? []) {
+        const parts = call.callee.split('.');
+        const method = parts.pop();
+        if (!MOUNT_CALLS.has(method ?? '') || parts.length === 0)
+            continue;
+        // `app.mount("/api/v1", app=api)` puts the path first and the thing being mounted
+        // second; the router spellings put the router first and name the path.
+        const child = method === 'mount' ? (call.args[1] ?? call.kwargs.app) : call.args[0];
+        if (!child || child.t !== 'name')
+            continue;
+        const segments = child.v.split('.');
+        const name = segments.pop();
+        // `include_router(items.router)` names a module then a variable inside it;
+        // `include_router(router)` names a variable that some import brought in whole.
+        const target = segments.length > 0
+            ? { module: childModulePath(input.file, segments), varName: name }
+            : localRouter(input.file, name, here);
+        findings.push({
+            type: 'router-mount',
+            path: input.file.path,
+            // `a.b.include_router(...)` is a mount onto `b`; the route decorator that has to
+            // match it will have written `b` too.
+            hostVar: parts[parts.length - 1],
+            childModule: target.module,
+            childVar: target.varName,
+            overridesPrefix: method === 'register_blueprint',
+            // The check written on the mount rather than on the router:
+            // `api_router.include_router(everything_else, dependencies=[Depends(get_current_user)])`.
+            // One line, and the only record that a hundred and sixty routes are locked.
+            dependencies: dependsTargets(call),
+            ...prefixArgs(call, method === 'mount'),
+        });
+    }
+}
+/** The `Depends(...)` targets of whichever call was written on this line. */
+function dependsOnLine(file, line) {
+    const out = [];
+    for (const call of file.calls ?? []) {
+        if (call.line === line)
+            appendAll(out, dependsTargets(call));
+    }
+    return out;
+}
+/** A bare `include_router(router)`: either imported from somewhere, or built here. */
+function localRouter(file, name, here) {
+    const found = importBinding(file, name);
+    return found ? { module: found.base, varName: found.exported } : { module: here, varName: name };
+}
+function prefixArgs(call, positional) {
+    const value = positional ? call.args[0] : (call.kwargs.prefix ?? call.kwargs.url_prefix);
+    if (!value)
+        return { hasPrefix: false, prefix: null, prefixName: null, line: call.line };
+    if (value.t === 'str' && !value.partial) {
+        return { hasPrefix: true, prefix: value.v, prefixName: null, line: call.line };
+    }
+    return { hasPrefix: true, prefix: null, prefixName: value.t === 'name' ? value.v : null, line: call.line };
+}
+/**
+ * `items` in `include_router(items.router)` → `app/api/routes/items`, by way of the
+ * `from app.api.routes import items` that introduced the name.
+ *
+ * Left absolute-ish on purpose: the dotted name in the source is relative to whatever
+ * directory the app is started from, which nothing in the repo records. The merge layer
+ * matches on the tail, so `app/api/routes/items` still finds
+ * `backend/app/api/routes/items.py`.
+ */
+function childModulePath(file, segments) {
+    const [head, ...rest] = segments;
+    const found = importBinding(file, head);
+    // Here the imported name is itself a module — `from app.api.routes import items`.
+    if (found)
+        return found.base === null ? null : [found.base, found.exported, ...rest].filter(Boolean).join('/');
+    // `import app.api.routes` binds only `app`, and the expression that follows spells
+    // the rest of the module out itself — so the dotted name *is* the path.
+    for (const imp of file.imports ?? []) {
+        if (imp.level !== 0 || imp.names.length > 0 || imp.alias !== null)
+            continue;
+        const declared = imp.module.split('.');
+        if (declared[0] === head && declared.every((part, i) => segments[i] === part)) {
+            return segments.join('/');
+        }
+    }
+    return null;
+}
+/**
+ * The import that introduced a local name, split into the module it came from and the
+ * name that module knows it by.
+ *
+ * Kept split because `from mealie.routes import router` is genuinely ambiguous — it is
+ * either a variable in `mealie/routes/__init__.py` or a `mealie/routes/router.py` — and
+ * which one it is depends on how the name is then used.
+ */
+function importBinding(file, local) {
+    for (const imp of file.imports ?? []) {
+        if (imp.alias === local && imp.level === 0) {
+            const parts = imp.module.split('.');
+            return { base: parts.slice(0, -1).join('/'), exported: parts[parts.length - 1] };
+        }
+        for (const [exported, bound] of imp.names) {
+            if (bound === local)
+                return { base: importBase(file.path, imp), exported };
+        }
+    }
+    return null;
+}
+/** The directory part of an import, with relative dots climbed. */
+function importBase(fromPath, imp) {
+    if (imp.level === 0)
+        return imp.module.split('.').join('/');
+    // One dot means the file's own package; each extra dot climbs one more. A file that
+    // is not an `__init__` is one level below its package to begin with.
+    const parts = modulePath(fromPath).split('/');
+    const keep = parts.length - (imp.level - 1) - (isPackageInit(fromPath) ? 0 : 1);
+    if (keep < 0)
+        return null;
+    return [...parts.slice(0, keep), ...(imp.module ? imp.module.split('.') : [])].join('/');
+}
+function isPackageInit(relPath) {
+    return /(^|\/)__init__\.pyi?$/.test(relPath);
+}
+/** A file as another file would import it: no extension, no `__init__`. */
+function modulePath(relPath) {
+    const withoutExt = relPath.replace(/\.pyi?$/, '');
+    return isPackageInit(relPath) ? withoutExt.replace(/\/?__init__$/, '') : withoutExt;
+}
+function isRouterName(name) {
+    return /Router$/.test(name.split('.').pop() ?? '');
+}
+/** The functions a `Depends(...)` anywhere in this call hands off to. */
+function dependsTargets(call) {
+    const out = [];
+    for (const value of [...call.args, ...Object.values(call.kwargs)]) {
+        const items = value.t === 'list' ? value.items : [value];
+        for (const item of items) {
+            const text = item.t === 'name' ? item.v : null;
+            const match = text ? /^Depends\((.+)\)$/.exec(text) : null;
+            if (match)
+                out.push(match[1].split('.').pop() ?? match[1]);
+        }
+    }
+    if (call.callee.split('.').pop() === 'Depends') {
+        for (const arg of call.args) {
+            if (arg.t === 'name')
+                out.push(arg.v.split('.').pop() ?? arg.v);
+        }
+    }
+    return out;
+}
+/** Celery tasks and scheduled jobs: code that runs without anyone knocking. */
+function detectTasks(input, has, findings, site) {
+    for (const { def, scope } of everyDef(input.file)) {
+        for (const decorator of def.decorators) {
+            const last = decorator.callee.split('.').pop() ?? '';
+            const isCelery = (last === 'task' || last === 'shared_task') && (has('celery') || has('shared_task'));
+            const isRq = last === 'job' && has('rq');
+            const isScheduled = last === 'scheduled_job' || last === 'scheduled';
+            if (!isCelery && !isRq && !isScheduled)
+                continue;
+            findings.push({
+                type: 'endpoint',
+                endpointKind: isScheduled ? 'cron' : 'queue',
+                key: `task ${def.name}`,
+                name: def.name,
+                method: null,
+                route: null,
+                framework: isCelery ? 'Celery' : isRq ? 'RQ' : 'scheduler',
+                writes: true,
+                guards: [],
+                site: site(decorator.line, decorator.text),
+                handlerId: input.nodeIdForScope(scope),
+            });
+        }
+    }
+}
+/** Every environment variable the file reads, however it spells the read. */
+function detectEnv(input, findings, site) {
+    for (const sub of input.file.subscripts ?? []) {
+        if (sub.base === 'os.environ' || sub.base === 'environ') {
+            findings.push({ type: 'env', name: sub.key, site: site(sub.line, `os.environ["${sub.key}"]`) });
+        }
+    }
+    for (const call of input.file.calls ?? []) {
+        const callee = call.callee;
+        const isGet = callee === 'os.getenv' || callee === 'getenv' || callee === 'os.environ.get' || callee === 'environ.get';
+        if (!isGet)
+            continue;
+        const name = strArg(call.args[0]);
+        if (name)
+            findings.push({ type: 'env', name, site: site(call.line, `${callee}("${name}")`) });
+    }
+}
+/**
+ * Whether this file is the project's own front door onto the network.
+ *
+ * Two things together, and neither on its own: it imports somebody's HTTP library, and
+ * it exposes functions named after HTTP verbs. A module that merely imports `requests`
+ * is a caller; a module with a `post` and no client is a mailbox or a queue. The pair is
+ * what makes `hc/lib/curl.py` — "requests-like interface for PycURL" — the thing every
+ * `curl.post(...)` in the repo is actually calling.
+ */
+function detectHttpWrapper(input, modules, findings) {
+    let wraps = false;
+    for (const module of modules) {
+        if (HTTP_LIBS.has(module.split('.')[0]))
+            wraps = true;
+    }
+    if (!wraps)
+        return;
+    const names = (input.file.defs ?? [])
+        .filter((def) => def.kind === 'function' && REQUEST_NAMES.has(def.name))
+        .map((def) => def.name);
+    if (names.length === 0)
+        return;
+    findings.push({ type: 'http-wrapper', path: input.file.path, names });
+}
+/** Calls that leave the machine, and the company on the other end when we can tell. */
+function detectOutbound(input, modules, findings, site) {
+    // `FEED = "https://…"` at the top of the file, `requests.get(FEED)` further down —
+    // the same fact written the way people write it (#89). Same file only: Python's
+    // detectors read one file at a time and there is no import graph here to follow a
+    // constant across, so a URL defined in `config.py` and used in `client.py` is still
+    // missed. Said plainly rather than papered over.
+    const constants = new Map();
+    /** `scope\0name` → the address that function gave it. Beats the file-wide answer. */
+    const local = new Map();
+    /** `scope\0name` → the name it stands for, resolved once the addresses are in. */
+    const aliases = [];
+    for (const constant of input.file.constants ?? []) {
+        const key = constant.scope ? `${constant.scope}\0${constant.name}` : constant.name;
+        if (constant.alias) {
+            if (constant.scope)
+                aliases.push({ key, alias: constant.alias });
+            continue;
+        }
+        if (!/^https?:\/\//i.test(constant.value))
+            continue;
+        // First assignment wins. `url = "https://api.opsgenie.com/…"` followed by a
+        // conditional `url = "https://api.eu.opsgenie.com/…"` is a default and an override,
+        // and the default is the one that describes the deployment nobody configured.
+        const into = constant.scope ? local : constants;
+        if (!into.has(key))
+            into.set(key, constant.value);
+    }
+    // One hop, after everything declared is known: `url = self.URL % account` where
+    // `URL` is the class constant above it — looked up in that class first, because four
+    // transports in one module each calling their address `URL` is ordinary.
+    for (const { key, alias } of aliases) {
+        if (local.has(key))
+            continue;
+        const bare = alias.replace(/^(self|cls)\./, '');
+        const owner = key.split('\0')[0].split('.')[0];
+        const value = local.get(`${owner}\0${bare}`) ?? constants.get(alias) ?? constants.get(bare);
+        if (value)
+            local.set(key, value);
+    }
+    // A name written inside a function means whatever that function said it means. Two
+    // transports in one module both spell it `url`, and swapping their addresses would
+    // put one company's name on another's traffic.
+    const inScope = (scope) => {
+        if (!scope || local.size === 0)
+            return constants;
+        const merged = new Map(constants);
+        // The class this method belongs to first, then the method itself — nearest
+        // declaration wins, the way the reader of the file would resolve it.
+        for (const prefix of [`${scope.split('.')[0]}\0`, `${scope}\0`]) {
+            for (const [key, value] of local) {
+                if (key.startsWith(prefix))
+                    merged.set(key.slice(prefix.length), value);
+            }
+        }
+        return merged;
+    };
+    for (const call of input.file.calls ?? []) {
+        const parts = call.callee.split('.');
+        const root = parts[0];
+        const method = parts[parts.length - 1].toLowerCase();
+        const viaClient = HTTP_CLIENTS.has(root) && modules.has(root);
+        // `client.post(...)` where the client came out of httpx or requests.
+        const viaLocal = /^(client|session|http|s)$/.test(root) && (modules.has('httpx') || modules.has('requests'));
+        // `self.post(self.URL, data=payload)` in a transport class. healthchecks sends
+        // every one of its notifications this way, through four layers of its own wrapper
+        // ending in PycURL, so neither a known client nor an address is visible where the
+        // call is written. What *is* visible is a hardcoded external address being handed
+        // to a method named after an HTTP verb, and the address is the whole question —
+        // the reader wants to know their monitoring tool talks to Pushover, not which
+        // library carries the bytes. Still nothing is invented: without a literal URL
+        // resolving to an outside host, this falls through like everything else.
+        const viaSelf = (root === 'self' || root === 'cls') && parts.length === 2;
+        if (!ROUTE_METHODS.has(method) && method !== 'request' && method !== 'send')
+            continue;
+        // `curl.post("https://slack.com/api/oauth.v2.access", data)` — a request shape
+        // aimed at a module of this project. Whether that module is an HTTP client is the
+        // other file's business, so this only records the pair for `build.ts` to join.
+        if (!viaClient && !viaLocal && !viaSelf && parts.length === 2) {
+            const modulePath = resolveBoundModule(input, root);
+            const target = modulePath ? firstUrl(call, inScope(call.scope)) : null;
+            if (modulePath && target) {
+                findings.push({
+                    type: 'wrapper-url-call',
+                    modulePath,
+                    name: method,
+                    url: target,
+                    writes: WRITE_METHODS.has(method),
+                    site: site(call.line, `${call.callee}("${target}")`),
+                });
+            }
+        }
+        if (!viaClient && !viaLocal && !viaSelf)
+            continue;
+        const url = firstUrl(call, inScope(call.scope));
+        const host = url ? hostOf(url) : null;
+        // No literal URL means no destination to name. `s.get(build_url())` tells us an
+        // HTTP call happens and nothing whatever about who answers it, and naming the box
+        // after the receiving variable is how `s call` and `session call` ended up on
+        // psf/requests' list of outside companies (#25). A blank costs the reader far
+        // less than a company that does not exist.
+        if (!host || isInternalHost(host))
+            continue;
+        const known = serviceForHost(host);
+        findings.push({
+            type: 'service',
+            name: known?.name ?? host,
+            category: known?.category ?? 'other',
+            // Evidence, so only the real import — `s` is a local variable, not a package.
+            package: viaClient ? root : null,
+            host,
+            external: true,
+            writes: WRITE_METHODS.has(method),
+            site: site(call.line, `${call.callee}("${url}")`),
+        });
+    }
+}
+function firstUrl(call, constants) {
+    const resolve = (value) => {
+        const text = strArg(value);
+        if (text && /^https?:\/\//i.test(text))
+            return text;
+        // A bare name, resolved against the constants this file declares. Nothing is
+        // inferred from the name itself — an unknown one gives back null, exactly as
+        // before, which is what keeps `s.get(build_url())` from naming a company.
+        const named = nameArg(value);
+        if (!named)
+            return null;
+        // `self.URL` is how a class refers to its own constant, and the constant is
+        // recorded under the bare name it was declared with.
+        return constants.get(named) ?? constants.get(named.replace(/^(self|cls)\./, '')) ?? null;
+    };
+    for (const arg of call.args) {
+        const url = resolve(arg);
+        if (url)
+            return url;
+    }
+    return resolve(call.kwargs.url);
+}
+function hostOf(url) {
+    try {
+        return new URL(url).hostname;
+    }
+    catch {
+        return null;
+    }
+}
+/**
+ * Where a Python project's data lives: databases, data files, and the disk.
+ *
+ * Three readings, strongest first. A database call is the strongest because the SQL or
+ * the client names itself; a `pd.read_csv` is next because the call says the format out
+ * loud; a bare `open()` is last because it says only that a file was touched. A line
+ * already read by a stronger rule is not read again — `pd.read_csv(open(path))` is one
+ * dataset being loaded, not a dataset and a file.
+ */
+function detectStores(input, modules, has, findings, site) {
+    const claimed = new Set();
+    for (const line of detectDatabases(input, modules, findings, site))
+        claimed.add(line);
+    for (const line of detectDataFiles(input, modules, has, findings, site, claimed))
+        claimed.add(line);
+    detectFiles(input, findings, site, claimed);
+}
+function targetFor(def, name) {
+    return { key: def.client.toLowerCase(), name: name ?? def.fallbackName, client: def.client, storeKind: def.storeKind };
+}
+/** A database we can prove was used but cannot name. Folded into the real one at merge. */
+const UNNAMED_SQL = { key: 'sql', name: 'Database', client: 'SQL', storeKind: 'sql', generic: true };
+/**
+ * Receivers that are conventionally a database handle.
+ *
+ * The point of the list is what it leaves out. `get` and `all` are ordinary English and
+ * ordinary method names, so "a call whose method is `get`" describes `os.environ.get`
+ * as exactly as it describes `session.get` — and one repo's MySQL box ended up citing
+ * eleven environment lines and not one line of database code. The conclusion was right
+ * and every piece of evidence for it was wrong, which is the failure a reader catches
+ * first and forgives last. On one FastAPI app the same rule counted `form_data.get`,
+ * `payload.get` and — the one that gives the game away — `router.get`, the decorator
+ * that declares an HTTP route.
+ *
+ * Matched a word at a time, because `db_session` is a session and `form_data` is not.
+ */
+const DB_RECEIVERS = /(^|_)(session|sess|db|database|conn|connection|cursor|cur|engine|collection|objects|query|pool|redis|cache|kv|tx|txn)(_|$)/i;
+/** Calls that hand back something you then run queries on. */
+const HANDLE_CALLS = /^(connect|connection|cursor|session|Session|begin|client|Client|collection|get_collection|database|get_database|create_engine|create_async_engine|sessionmaker|scoped_session|async_sessionmaker|MongoClient|AsyncIOMotorClient|Redis|StrictRedis|from_url|ConnectionPool|create_pool)$/;
+/** Opening a connection is not a read or a write; it is the database being declared. */
+const CONNECTION_CALLS = /^(connect|create_engine|create_async_engine|MongoClient|AsyncIOMotorClient|Redis|StrictRedis|from_url|create_pool|ConnectionPool)$/;
+/**
+ * asyncpg's `conn.fetchrow(sql)`, which carries its own query.
+ *
+ * DB-API's `fetchone`/`fetchall` are deliberately absent: they always follow an
+ * `execute`, so counting them would report every query in the repo twice.
+ */
+const FETCH_CALLS = new Set(['fetchval', 'fetchrow']);
+/** Redis verbs, used only once the store is already known to be a key–value one. */
+const KV_READS = new Set(['get', 'mget', 'hget', 'hgetall', 'hmget', 'exists', 'ttl', 'keys', 'scan', 'smembers', 'lrange', 'llen', 'zrange']);
+const KV_WRITES = new Set(['set', 'mset', 'setex', 'setnx', 'hset', 'hmset', 'expire', 'incr', 'incrby', 'decr', 'sadd', 'srem', 'lpush', 'rpush', 'zadd', 'flushall', 'flushdb']);
+function detectDatabases(input, modules, findings, site) {
+    const aliases = moduleAliases(input.file.imports ?? []);
+    const handles = storeHandles(input, aliases, findings, site);
+    const only = onlyStoreInFile(modules);
+    const lines = [];
+    const built = statementsBuiltHere(input.file.bindings ?? []);
+    const resolve = (parts) => {
+        const direct = handles.get(parts[0]);
+        if (direct)
+            return direct;
+        // Either end of the chain will do: `db.users.update(...)` is held by its root and
+        // `self.db_session.add(...)` by the segment before the verb.
+        const named = DB_RECEIVERS.test(parts[0]) || (parts.length >= 2 && DB_RECEIVERS.test(parts[parts.length - 2]));
+        // One client in the file makes a conventional receiver unambiguous. Two make it a
+        // coin toss, and the answer would be a real database with another's name on it.
+        return only && named ? only : null;
+    };
+    for (const call of input.file.calls ?? []) {
+        // `session.query(User).limit(n).all()` is one database read written as three
+        // chained calls. Only the first link has a plain name; counting the rest would
+        // triple every query in the app.
+        if (call.callee.includes('()'))
+            continue;
+        const parts = call.callee.split('.');
+        const method = parts[parts.length - 1];
+        if (parts.length < 2)
+            continue;
+        if (method === 'execute' || method === 'executemany') {
+            const statement = literalSql(call.args[0]);
+            const store = resolve(parts);
+            // A literal `SELECT` handed to `.execute()` is a database read whoever opened the
+            // connection. Scripts reach theirs through the project's own helper module, so
+            // requiring the import here would lose every query in the repo that has one.
+            if (!statement && !store)
+                continue;
+            findings.push({
+                type: 'store',
+                ...(store ?? UNNAMED_SQL),
+                table: statement?.table ?? null,
+                // The query built somewhere else: the call is evidence, the direction is not.
+                operation: statement?.operation ?? constructed(call.args[0], built),
+                site: site(call.line, callSnippet(call)),
+            });
+            lines.push(call.line);
+            continue;
+        }
+        // `pd.read_sql(query, conn)` and `df.to_sql("orders", engine)` are pandas calls that
+        // land in a database rather than a file.
+        if (method === 'read_sql' || method === 'read_sql_query' || method === 'read_sql_table' || method === 'to_sql') {
+            const writes = method === 'to_sql';
+            const connection = nameArg(call.args[1]);
+            const store = (connection ? handles.get(connection) : null) ?? only ?? UNNAMED_SQL;
+            findings.push({
+                type: 'store',
+                ...store,
+                table: writes ? strArg(call.args[0]) : (literalSql(call.args[0])?.table ?? null),
+                operation: writes ? 'write' : 'read',
+                site: site(call.line, callSnippet(call)),
+            });
+            lines.push(call.line);
+            continue;
+        }
+        const store = resolve(parts);
+        if (!store)
+            continue;
+        const kv = store.storeKind === 'kv';
+        const isRead = READ_CALLS.has(method) || FETCH_CALLS.has(method) || (kv && KV_READS.has(method));
+        const isWrite = WRITE_CALLS.has(method) || (kv && KV_WRITES.has(method));
+        if (!isRead && !isWrite)
+            continue;
+        // `User.objects.filter(...)` names its own table; SQLAlchemy names it in the call.
+        // Only a class-looking name counts: `session.add(order)` passes a variable, and
+        // listing `order` as a table would be a plain lie about the schema.
+        const objects = parts.indexOf('objects');
+        const djangoModel = objects > 0 ? parts[objects - 1] : null;
+        const table = djangoModel ?? nameArg(call.args[0]);
+        findings.push({
+            type: 'store',
+            ...store,
+            table: table && /^[A-Z][A-Za-z0-9_]*$/.test(table) ? table : null,
+            operation: isWrite ? 'write' : 'read',
+            site: site(call.line, callSnippet(call)),
+        });
+        lines.push(call.line);
+    }
+    return lines;
+}
+/**
+ * Every local name bound to a database handle, and the connections that opened them.
+ *
+ * Two passes so `cur = conn.cursor()` finds the `conn = pymysql.connect(...)` above it
+ * whichever order the file happens to declare them in.
+ */
+function storeHandles(input, aliases, findings, site) {
+    const handles = new Map();
+    const bindings = input.file.bindings ?? [];
+    const declared = new Set();
+    for (let pass = 0; pass < 3; pass++) {
+        let added = false;
+        for (const binding of bindings) {
+            if (handles.has(binding.name))
+                continue;
+            const parts = binding.callee.split('.');
+            const last = parts[parts.length - 1];
+            if (!HANDLE_CALLS.test(last))
+                continue;
+            const inherited = handles.get(parts[0]);
+            const module = aliases.get(parts[0]) ?? parts[0];
+            const def = storeForPythonModule(module);
+            const target = inherited ?? (def ? targetFor(def, engineName(binding, def)) : null);
+            if (!target)
+                continue;
+            handles.set(binding.name, target);
+            added = true;
+            // The connection itself. `sqlite3.connect("app.db")` may be the only line in the
+            // repo that says which database this is, and a store with no read and no write is
+            // still a truer answer than no store at all — the same reading a Worker binding
+            // gets from `wrangler.toml`.
+            if (!inherited && CONNECTION_CALLS.test(last) && !declared.has(binding.line)) {
+                declared.add(binding.line);
+                findings.push({
+                    type: 'store',
+                    ...target,
+                    table: null,
+                    operation: null,
+                    site: site(binding.line, `${binding.callee}(${openedWith(binding)})`),
+                });
+            }
+        }
+        if (!added)
+            break;
+    }
+    return handles;
+}
+/**
+ * The engine behind a SQLAlchemy connection, read from its URL.
+ *
+ * SQLAlchemy is the same import whichever database is underneath, so `create_engine`'s
+ * first argument is the only place the answer is written down.
+ */
+function engineName(binding, def) {
+    if (def.client !== 'SQLAlchemy' || !binding.arg)
+        return undefined;
+    return engineForDatabaseUrl(binding.arg) ?? undefined;
+}
+/**
+ * What to show inside a connection call.
+ *
+ * A path is worth showing — it names the database file. A URL is not: a connection
+ * string carries the password, and the atlas is a file people share.
+ */
+function openedWith(binding) {
+    const arg = binding.arg;
+    if (!arg || /:\/\//.test(arg))
+        return '…';
+    return `"${arg}"`;
+}
+/** The one store client this file imports, or nothing when it imports several. */
+function onlyStoreInFile(modules) {
+    const found = new Map();
+    for (const module of modules) {
+        const def = storeForPythonModule(module);
+        if (def)
+            found.set(def.client, def);
+    }
+    if (found.size !== 1)
+        return null;
+    return targetFor([...found.values()][0]);
+}
+/** Local name → the module it came from, for both `import x as y` and `from x import y`. */
+function moduleAliases(imports) {
+    const out = new Map();
+    for (const imp of imports) {
+        if (imp.level > 0 || !imp.module)
+            continue;
+        if (imp.alias)
+            out.set(imp.alias, imp.module);
+        else if (imp.names.length === 0)
+            out.set(imp.module.split('.')[0], imp.module);
+        for (const [, local] of imp.names)
+            out.set(local, imp.module);
+    }
+    return out;
+}
+/** SQLAlchemy 2.0 builds a statement before running it, and the builder names the verb. */
+const STATEMENT_BUILDERS = {
+    select: 'read',
+    insert: 'write',
+    update: 'write',
+    delete: 'write',
+};
+/**
+ * Which way `session.execute(stmt)` moved the data, when the query is not a string.
+ *
+ * Modern SQLAlchemy writes `select(User)` rather than `"SELECT …"`, so the verb is a
+ * function name — either inside the call, or one line up where `stmt = select(User)`
+ * bound it to a name.
+ */
+function constructed(value, built) {
+    if (!value || value.t !== 'name')
+        return null;
+    return builderVerb(value.v) ?? built.get(value.v) ?? null;
+}
+function statementsBuiltHere(bindings) {
+    const out = new Map();
+    for (const binding of bindings) {
+        const direction = builderVerb(binding.callee);
+        if (direction)
+            out.set(binding.name, direction);
+    }
+    return out;
+}
+/**
+ * The verb in `select`, `sa.select()` or `select().where` alike.
+ *
+ * A statement is almost always refined before it is run, and a call in the middle of a
+ * chain flattens to `select()` — so the trailing parentheses are the normal case here,
+ * not the exception.
+ */
+function builderVerb(callee) {
+    const bare = callee.endsWith('()') ? callee.slice(0, -2) : callee;
+    return STATEMENT_BUILDERS[bare.split('.').pop() ?? ''];
+}
+/** A query we can read, from an argument that is a string. An f-string counts too. */
+function literalSql(value) {
+    if (!value || value.t !== 'str')
+        return null;
+    return readSqlStatement(value.v, !value.partial);
+}
+// ---------------------------------------------------------------------------
+// Data files
+// ---------------------------------------------------------------------------
+/**
+ * File formats a library names in its own API, and the box each one becomes.
+ *
+ * The format comes from the call, never from the path: `open(out_path, "w")` and
+ * `open("report.json", "w")` are the same code written two ways, and splitting them
+ * into two boxes would let an inlined string decide what a reader sees.
+ */
+const FILE_FORMATS = {
+    csv: { key: 'csv-files', name: 'CSV files' },
+    excel: { key: 'excel-files', name: 'Excel files' },
+    parquet: { key: 'parquet-files', name: 'Parquet files' },
+    feather: { key: 'feather-files', name: 'Feather files' },
+    json: { key: 'json-files', name: 'JSON files' },
+    hdf: { key: 'hdf-files', name: 'HDF5 files' },
+    pickle: { key: 'pickle-files', name: 'Saved Python objects' },
+    numpy: { key: 'numpy-files', name: 'NumPy array files' },
+};
+/** pandas and polars: `pd.read_csv`, `df.to_parquet`, `df.write_csv`. */
+const FRAME_IO = /^(read|to|write)_(csv|excel|parquet|feather|json|hdf|pickle)$/;
+/** NumPy's file API, and the two libraries whose whole job is writing an object out. */
+const ARRAY_IO = {
+    save: { format: 'numpy', operation: 'write' },
+    savez: { format: 'numpy', operation: 'write' },
+    savez_compressed: { format: 'numpy', operation: 'write' },
+    savetxt: { format: 'numpy', operation: 'write' },
+    load: { format: 'numpy', operation: 'read' },
+    loadtxt: { format: 'numpy', operation: 'read' },
+    genfromtxt: { format: 'numpy', operation: 'read' },
+};
+function detectDataFiles(input, modules, has, findings, site, claimed) {
+    const frames = has('pandas') || has('polars');
+    const aliases = moduleAliases(input.file.imports ?? []);
+    const lines = [];
+    for (const call of input.file.calls ?? []) {
+        if (claimed.has(call.line))
+            continue;
+        const method = call.method ?? call.callee.split('.').pop() ?? '';
+        const root = call.callee.split('.')[0];
+        const module = aliases.get(root) ?? root;
+        let format = null;
+        let operation = 'read';
+        let client = '';
+        const frame = frames ? FRAME_IO.exec(method) : null;
+        if (frame) {
+            // `df.to_csv(path)` hangs off a DataFrame, whose name tells us nothing, so the
+            // dependency is the whole gate here.
+            format = frame[2];
+            operation = frame[1] === 'read' ? 'read' : 'write';
+            client = module === 'polars' || has('polars') ? 'polars' : 'pandas';
+        }
+        else if (module === 'numpy' && ARRAY_IO[method]) {
+            format = ARRAY_IO[method].format;
+            operation = ARRAY_IO[method].operation;
+            client = 'NumPy';
+        }
+        else if ((module === 'joblib' || module === 'torch' || module === 'pickle') && (method === 'dump' || method === 'load')) {
+            // `pickle.dump(obj, f)` is handed an already-open file, so the `open` beside it is
+            // the site; `joblib.dump(obj, "model.pkl")` names the path itself and is the site.
+            if (module === 'pickle')
+                continue;
+            format = 'pickle';
+            operation = method === 'dump' ? 'write' : 'read';
+            client = module === 'torch' ? 'PyTorch' : 'joblib';
+        }
+        if (!format)
+            continue;
+        const shape = FILE_FORMATS[format];
+        if (!shape)
+            continue;
+        findings.push({
+            type: 'store',
+            key: shape.key,
+            name: shape.name,
+            client,
+            storeKind: 'filesystem',
+            table: null,
+            operation,
+            site: site(call.line, callSnippet(call)),
+        });
+        lines.push(call.line);
+    }
+    return lines;
+}
+// ---------------------------------------------------------------------------
+// Plain files
+// ---------------------------------------------------------------------------
+/** pathlib's whole-file API — names distinctive enough to stand on their own. */
+const PATH_IO = {
+    read_text: 'read',
+    read_bytes: 'read',
+    write_text: 'write',
+    write_bytes: 'write',
+};
+/**
+ * `open(path, "w")` and `Path(path).read_text()`.
+ *
+ * No dependency gates this one, the same way browser storage gates nothing on the
+ * TypeScript side: an app whose data is a folder of files is still an app with data,
+ * and for a repo of scripts it is the entire story.
+ */
+function detectFiles(input, findings, site, claimed) {
+    for (const call of input.file.calls ?? []) {
+        if (claimed.has(call.line))
+            continue;
+        const method = call.method ?? '';
+        const builtin = call.callee === 'open';
+        const viaPath = call.callee === 'Path()' || call.callee.endsWith('.Path()');
+        let operation = null;
+        if (builtin)
+            operation = writesTo(strArg(call.args[1]) ?? strArg(call.kwargs.mode));
+        else if (PATH_IO[method])
+            operation = PATH_IO[method];
+        else if (method === 'open' && (viaPath || opensAFile(call))) {
+            // `Path.open` puts the mode first, where the builtin puts the path.
+            operation = writesTo(strArg(call.args[0]) ?? strArg(call.kwargs.mode));
+        }
+        if (!operation)
+            continue;
+        findings.push({
+            type: 'store',
+            key: 'filesystem',
+            name: 'Files on disk',
+            client: 'Python',
+            storeKind: 'filesystem',
+            table: null,
+            operation,
+            site: site(call.line, callSnippet(call)),
+        });
+    }
+}
+/** `open(p)` is a read; anything with `w`, `a`, `x` or `+` in its mode is a write. */
+function writesTo(mode) {
+    return mode && /[wax+]/.test(mode) ? 'write' : 'read';
+}
+/** A file mode as Python spells one: `r`, `wb`, `a+`, `rt`. */
+const FILE_MODE = /^(?=[rwxabt+]*[rwxa])[rwxabt+]{1,3}$/;
+/**
+ * Whether `something.open(...)` is a file being opened.
+ *
+ * The receiver's name is no help — a `Path`, a `ZipFile` and a `webbrowser` all spell
+ * it `open`, and only one of them is holding a file. The call's own shape decides it:
+ * a mode string or an `encoding=` is the file signature, and `webbrowser.open(url)` has
+ * neither.
+ */
+function opensAFile(call) {
+    if (call.kwargs.encoding || call.kwargs.mode)
+        return true;
+    const first = strArg(call.args[0]);
+    return first !== null && FILE_MODE.test(first);
+}
+/**
+ * The call as evidence: every argument in its place, the ones we can read quoted.
+ *
+ * Which argument the path was is part of what the reader is checking — `joblib.dump`
+ * takes the object first and the file second, and a snippet that showed only the file
+ * would look like a call that does not exist.
+ */
+function callSnippet(call) {
+    const shown = call.args.slice(0, 3).map((arg) => (arg.t === 'str' && !arg.partial ? `"${clip(arg.v)}"` : '…'));
+    // `Model.objects.filter(project=p)` passes everything by keyword, and rendering it as
+    // `filter()` would show a call that takes no arguments — which is a different call.
+    if (call.args.length > 3 || Object.keys(call.kwargs).length > 0)
+        shown.push('…');
+    return `${calleeText(call)}(${shown.join(', ')})`;
+}
+/** `Path()` is what a call in the middle of a chain flattens to; put the verb back. */
+function calleeText(call) {
+    if (!call.callee.endsWith('()'))
+        return call.callee;
+    const head = `${call.callee.slice(0, -2)}(…)`;
+    return call.method ? `${head}.${call.method}` : head;
+}
+function clip(text) {
+    const flat = text.replace(/\s+/g, ' ').trim();
+    return flat.length <= 48 ? flat : `${flat.slice(0, 47)}…`;
+}
+/** SDKs that are a company by themselves — importing `stripe` is the whole signal. */
+function detectServices(input, findings, site) {
+    for (const imp of input.file.imports ?? []) {
+        if (imp.level > 0 || !imp.module)
+            continue;
+        const known = serviceForPythonModule(imp.module);
+        if (!known)
+            continue;
+        findings.push({
+            type: 'service',
+            name: known.name,
+            category: known.category,
+            package: imp.module.split('.')[0],
+            host: null,
+            external: true,
+            writes: false,
+            site: site(imp.line, `import ${imp.module}`),
+        });
+    }
+}
+/**
+ * Auth attached to a whole application rather than to any route on it: an ASGI
+ * middleware.
+ *
+ * `app.add_middleware(AuthMiddleware)` and `@app.middleware("http")` are how a large
+ * Python service normally checks its callers, and neither leaves a mark in any of the
+ * files that declare the routes. What is recorded here is only *what was attached to
+ * which variable* — a middleware that gzips is written exactly like one that turns
+ * strangers away, and telling them apart means reading the thing named, which is
+ * usually in another file.
+ */
+function detectGuards(input, findings) {
+    for (const call of input.file.calls ?? []) {
+        const parts = call.callee.split('.');
+        if (parts.pop() !== 'add_middleware' || parts.length === 0)
+            continue;
+        const named = nameArg(call.args[0]);
+        if (!named)
+            continue;
+        findings.push({
+            type: 'router-guard',
+            varName: parts[parts.length - 1],
+            path: input.file.path,
+            names: [named.split('.').pop() ?? named],
+            how: 'middleware',
+            line: call.line,
+        });
+    }
+    // The decorator spelling of the same thing. The function underneath is right here,
+    // so this is the one case where the check can be read on the spot — but it is still
+    // resolved by name in the merge, so that both spellings answer the same question.
+    for (const { def } of everyDef(input.file)) {
+        for (const decorator of def.decorators) {
+            const parts = decorator.callee.split('.');
+            if (parts.pop() !== 'middleware' || parts.length === 0)
+                continue;
+            findings.push({
+                type: 'router-guard',
+                varName: parts[parts.length - 1],
+                path: input.file.path,
+                names: [def.name],
+                how: 'middleware',
+                line: def.line,
+            });
+        }
+    }
+}
+/** A command-line entry point is a way into the app too. */
+function detectCli(input, has, findings, site) {
+    for (const call of input.file.calls ?? []) {
+        const last = call.callee.split('.').pop() ?? '';
+        const isArgparse = call.callee === 'argparse.ArgumentParser' || call.callee === 'ArgumentParser';
+        const isClick = (last === 'command' || last === 'group') && has('click');
+        const isTyper = call.callee === 'typer.Typer' || call.callee === 'Typer';
+        if (!isArgparse && !isClick && !isTyper)
+            continue;
+        findings.push({
+            type: 'endpoint',
+            endpointKind: 'cli',
+            key: `cli ${input.file.path}`,
+            name: input.file.path,
+            method: null,
+            route: null,
+            framework: isArgparse ? 'argparse' : isClick ? 'Click' : 'Typer',
+            writes: false,
+            guards: [],
+            site: site(call.line),
+            handlerId: null,
+        });
+        return;
+    }
+    // No argument parser, but `if __name__ == "__main__":` still says this file is meant
+    // to be run rather than imported. It is the oldest and commonest way a Python script
+    // declares itself, and the only one a script that prompts for its input will have —
+    // without it, a folder of runnable scripts reads as a library nobody imports.
+    if (typeof input.file.main === 'number') {
+        findings.push({
+            type: 'endpoint',
+            endpointKind: 'cli',
+            key: `cli ${input.file.path}`,
+            name: input.file.path,
+            method: null,
+            route: null,
+            framework: '__main__',
+            writes: false,
+            guards: [],
+            site: site(input.file.main),
+            handlerId: null,
+        });
+    }
+}
+//# sourceMappingURL=boundaries.js.map
