@@ -1122,7 +1122,7 @@ function applyGuards(
   }
 
   const above = registeredAboveTheGate(mountedAt, builds, handoffs);
-  const onRouter = onTheGatesRouter(mountedAt);
+  const onRouter = onTheGatesRouter(mountedAt, builds);
 
   for (const endpoint of endpoints.values()) {
     const route = endpoint.meta.route;
@@ -1359,7 +1359,10 @@ function applyHandlerDecorators(endpoints: Map<string, MergedEndpoint>, guards: 
  */
 function onTheGatesRouter(
   mountedAt: Map<string, RouterMountFinding[]>,
+  builds: RouterBuildFinding[],
 ): (endpoint: MergedEndpoint, guard: GuardFinding) => boolean {
+  const builtAt = new Set(builds.map((build) => moduleRouterKey(moduleOf(build.path), build.varName)));
+
   return (endpoint, guard) => {
     const gate = guard.coversFrom;
     const host = guard.routerVar;
@@ -1389,8 +1392,21 @@ function onTheGatesRouter(
       // second router that happens to share a name — so this abstains and the gate
       // stands, which is the rule #201 already settled for a position that cannot be
       // read. Denying here is what blanked three doors on the first attempt.
+      //
+      // Unless the door's own module built one under that name, which settles it (#276).
+      // `const router = express.Router()` on both sides is two routers, and the name
+      // being equal is a coincidence of vocabulary rather than evidence of identity —
+      // `router` is not an incidental name, it is *the* name, and outline writes it in 60
+      // separate modules. So the abstention was firing on the commonest shape in the
+      // ecosystem: one file's `router.use(requireAuth)` reached every door in the repo,
+      // and `/sitemap.xml` and three unsubscribe links came back locked.
+      //
+      // This is the rule `registeredAboveTheGate` already keeps a few lines down — a
+      // router a module built is its own, whatever else that module was handed — asked
+      // here, where the question is identity rather than order. Where the door's module
+      // built nothing of that name, the alias is still live and the gate still stands.
       const doorVar = key.slice(key.indexOf('\0') + 1);
-      if (doorVar === host) return true;
+      if (doorVar === host && !builtAt.has(byModule(key))) return true;
       return reaches(byModule(key));
     });
   };
