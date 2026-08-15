@@ -26,6 +26,7 @@ import {
   argAt,
   dottedName,
   enclosingFunctionOf,
+  runsWhenCalled,
   functionBehind,
   literalString,
   looksLikeRouter,
@@ -287,6 +288,21 @@ interface Refusal {
  * `promiseEnforceMasterKeyAccess` at 47 call sites and Ghost has one file of middleware
  * that most of its 261 admin routes reach. Un-memoised it cost a fifth of the analysis.
  */
+/**
+ * A file that raises a *type* rather than a status, so the cheap gate below cannot ask
+ * for a number that is by construction somewhere else (#265).
+ *
+ * mastodon's `streaming/index.js` — the file holding the check on its streaming API —
+ * contains **zero** `401` and `403` literals. The status lives in `streaming/errors.js`,
+ * where `AuthenticationError` is declared. Gating on a status alone therefore skipped the
+ * one file the rule exists for.
+ *
+ * Still a cheap test on text already in memory, and still narrow: a capitalised thing
+ * being thrown, or constructed inside a rejection. Most files match neither, which is the
+ * property that makes the gate worth having at all.
+ */
+const RAISES_A_TYPE = /\bthrow\s+(new\s+)?[A-Z]|\breject\(\s*new\s+[A-Z]/;
+
 const fileMightRefuse = new WeakMap<SourceFile, boolean>();
 const ownRefusals = new WeakMap<Node, Refusal | null>();
 
@@ -297,10 +313,11 @@ function ownRefusal(fn: Node): Refusal | null {
   const sf = fn.getSourceFile();
   let readable = fileMightRefuse.get(sf);
   if (readable === undefined) {
+    const text = sf.getFullText();
     readable =
       !sf.isDeclarationFile() &&
       !/[\\/]node_modules[\\/]/.test(sf.getFilePath()) &&
-      REJECT_STATUS.test(sf.getFullText());
+      (REJECT_STATUS.test(text) || RAISES_A_TYPE.test(text));
     fileMightRefuse.set(sf, readable);
   }
 
@@ -613,11 +630,90 @@ function routerMiddleware(call: CallExpression, dotted: string, ctx: DetectorCon
  */
 const REJECT_STATUS = /\b(401|403|UNAUTHORIZED|FORBIDDEN)\b/;
 
-/** Calls that are a rejection rather than a mention: `res.status(401)`, `c.json(x, 403)`. */
-const REJECT_CALLS = new Set(['status', 'sendStatus', 'json', 'send', 'abort', 'createError', 'Response']);
+/**
+ * Calls that are a rejection rather than a mention: `res.status(401)`, `c.json(x, 403)`.
+ *
+ * `reject` joined them for #265. A promise settled with a 401-bearing value is a refusal
+ * in the same sense the rest of this set is — mastodon's streaming check is written
+ * `reject(new AuthenticationError(…))` and nothing else in that file says no. It is a
+ * common enough identifier to be worth stating why it is safe: membership here only
+ * decides whether the call is *looked at*, and it still has to carry a 401, a 403, or a
+ * type that resolves to one before it counts as anything.
+ */
+const REJECT_CALLS = new Set(['status', 'sendStatus', 'json', 'send', 'abort', 'createError', 'Response', 'reject']);
 
 /** The methods a framework calls to ask "may this request proceed?". */
 const CHECK_CONTRACTS = new Set(['use', 'canActivate']);
+
+/**
+ * A refusal written as a type rather than a status code (#265).
+ *
+ * mastodon's streaming API is guarded, and every rule in this file was blind to it,
+ * because `streaming/index.js` does not contain the digits `401` anywhere:
+ *
+ * ```js
+ * reject(new AuthenticationError('Missing access token'));   // streaming/index.js:408
+ * ```
+ *
+ * The original filing said this was only worth answering if the mapping to a status
+ * turned out to be findable — because otherwise the evidence is a class *name*, and a
+ * name is what this file spends its first hundred lines warning against. It is findable,
+ * and it is one hop from the raise:
+ *
+ * ```js
+ * export class AuthenticationError extends Error {           // streaming/errors.js:37
+ *   constructor(message) { super(message); this.status = 401; }
+ * }
+ * ```
+ *
+ * So the question asked is the one the code can answer — *does the thing being raised
+ * carry a 401 or a 403* — and never *is it called something authentication-shaped*.
+ * `RequestError` sits in the same file, is spelled the same way, and sets `this.status =
+ * 400`; it is not a refusal, and this declines it for the only reason that holds up.
+ *
+ * One hop and no further, for the reason every other reach in this file is bounded:
+ * following a chain until a 401 turns up eventually finds one in an error formatter.
+ * Project code only — a status inside a dependency's own error classes says nothing about
+ * this door.
+ */
+function raisesARefusingType(raise: Node): boolean {
+  const thrown = raisedValue(raise);
+  if (thrown === null) return false;
+
+  const target = Node.isNewExpression(thrown) || Node.isCallExpression(thrown) ? thrown.getExpression() : thrown;
+  if (!Node.isIdentifier(target) && !Node.isPropertyAccessExpression(target)) return false;
+
+  for (const declaration of declarationsOf(target)) {
+    const sf = declaration.getSourceFile();
+    if (sf.isDeclarationFile() || /[\\/]node_modules[\\/]/.test(sf.getFilePath())) continue;
+    // The declaration's own text, not a walk: a class constructor assigning
+    // `this.status = 401` and a function returning `httpErrors(401, …)` are both right
+    // here, and anything deeper is the chain this deliberately does not follow.
+    if (REJECT_STATUS.test(declaration.getText())) return true;
+  }
+  return false;
+}
+
+/** What a `throw` throws, or what a rejection-shaped call was handed. */
+function raisedValue(raise: Node): Node | null {
+  if (Node.isThrowStatement(raise)) return raise.getExpression() ?? null;
+  if (!Node.isCallExpression(raise)) return null;
+  const [first] = raise.getArguments();
+  return first ?? null;
+}
+
+/** Every declaration a name resolves to, following an import to what it names. */
+function declarationsOf(node: Node): Node[] {
+  const symbol = node.getSymbol();
+  if (!symbol) return [];
+  let aliased;
+  try {
+    aliased = symbol.getAliasedSymbol();
+  } catch {
+    aliased = undefined;
+  }
+  return (aliased ?? symbol).getDeclarations() ?? [];
+}
 
 /** The line where this body turns an unauthenticated caller away, if it does. */
 function rejectionLine(node: Node): number | null {
@@ -868,16 +964,16 @@ function rejectionOutsideCatch(node: Node, own?: Node): number | null {
   let line: number | null = null;
   node.forEachDescendant((child) => {
     if (line !== null) return;
-    if (own && enclosingFunctionOf(child) !== own) return;
+    if (own && !runsWhenCalled(child, own)) return;
     if (child.getFirstAncestor((a) => Node.isCatchClause(a))) return;
     if (Node.isThrowStatement(child)) {
-      if (REJECT_STATUS.test(child.getText())) line = child.getStartLineNumber();
+      if (REJECT_STATUS.test(child.getText()) || raisesARefusingType(child)) line = child.getStartLineNumber();
       return;
     }
     if (!Node.isCallExpression(child)) return;
     const callee = dottedName(child.getExpression())?.split('.').pop();
     if (!callee || !REJECT_CALLS.has(callee)) return;
-    if (REJECT_STATUS.test(child.getText())) line = child.getStartLineNumber();
+    if (REJECT_STATUS.test(child.getText()) || raisesARefusingType(child)) line = child.getStartLineNumber();
   });
   return line;
 }
