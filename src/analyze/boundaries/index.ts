@@ -126,9 +126,13 @@ export function detectBoundaries(input: BoundaryInput): BoundaryFinding[] {
  */
 function buildImports(sf: SourceFile): Map<string, ImportBinding> {
   const imports = new Map<string, ImportBinding>();
+  // Read off the project rather than threaded in: the ts-morph project is built from the
+  // repo's tsconfig, so it already holds the answer, and every caller of this would
+  // otherwise have to carry it (#274).
+  const aliases = pathAliasMatchers(sf.getProject().getCompilerOptions());
 
   const add = (local: string, specifier: string, imported: string) => {
-    const external = isBareSpecifier(specifier) && !isPathAlias(specifier);
+    const external = isBareSpecifier(specifier) && !isPathAlias(specifier, aliases);
     imports.set(local, {
       local,
       module: external ? packageRoot(specifier) : specifier,
@@ -285,7 +289,52 @@ function calleeThroughRequire(expression: Node): string | null {
   return `${specifier.getLiteralValue()}.${expression.getName()}`;
 }
 
-/** `@/lib/db` and `~/server/auth` are this repo's own code wearing a bare specifier. */
-function isPathAlias(specifier: string): boolean {
-  return specifier.startsWith('@/') || specifier.startsWith('~/') || specifier.startsWith('#');
+/**
+ * `@/lib/db` and `~/server/auth` are this repo's own code wearing a bare specifier.
+ *
+ * Three spellings were a guess at a convention, and the convention is wider than three:
+ * outline writes `@server/*` and `@shared/*`, and `@app/*`, `@lib/*` and `src/*` are all
+ * in the same family. Every one of them was read as an npm package, so a repository's own
+ * server directory came back `external: true` and `@server` was registered as a
+ * dependency it imports (#274).
+ *
+ * The project already knows. It is built from the tsconfig, so `compilerOptions.paths`
+ * is loaded and says exactly which bare specifiers this repo redirects to its own files.
+ *
+ * **Being in `paths` is not enough**, which is the trap. outline maps two entries straight
+ * into its dependencies:
+ *
+ * ```json
+ * "vite":                 ["./node_modules/vite/dist/node/index.d.ts"],
+ * "@vitejs/plugin-react": ["./node_modules/@vitejs/plugin-react/dist/index.d.ts"]
+ * ```
+ *
+ * Those are external and have to stay external, or a repo starts claiming its bundler as
+ * first-party code. So the question is where the alias *points*, and an alias resolving
+ * into `node_modules` is a dependency however it is spelled.
+ *
+ * The three literals stay as the fallback, for a repo with no tsconfig or no `paths` —
+ * which is most JavaScript, and where they were right all along.
+ */
+function isPathAlias(specifier: string, aliases: RegExp[]): boolean {
+  if (specifier.startsWith('@/') || specifier.startsWith('~/') || specifier.startsWith('#')) return true;
+  return aliases.some((alias) => alias.test(specifier));
+}
+
+/**
+ * The `paths` keys that redirect to this repo's own files, as matchers.
+ *
+ * A key is a glob with at most one `*`, so it becomes an anchored pattern rather than a
+ * prefix test: `plugins/*` must not claim `pluginsomething`, and a key with no star at
+ * all — `vite` — matches that one specifier and nothing under it.
+ */
+function pathAliasMatchers(options: { paths?: Record<string, string[]> }): RegExp[] {
+  const out: RegExp[] = [];
+  for (const [key, targets] of Object.entries(options.paths ?? {})) {
+    if (targets.some((target) => /(^|[\\/])node_modules[\\/]/.test(target))) continue;
+    const [head, tail = ''] = key.split('*');
+    const escape = (part: string) => part.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    out.push(new RegExp(key.includes('*') ? `^${escape(head)}.*${escape(tail)}$` : `^${escape(key)}$`));
+  }
+  return out;
 }
