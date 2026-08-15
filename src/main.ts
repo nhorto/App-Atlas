@@ -299,11 +299,17 @@ async function produceAtlas(
   // the nodes — which is why the one stat that is *about the files that never became
   // nodes* has to be carried over by hand, or the recount silently drops the backbone
   // hedge (#171): it did, and huginn printed its unhedged sliver again.
-  const unreadLanguages = atlas.meta.stats.unreadLanguages;
-  atlas.meta.stats = {
-    ...computeStats(atlas.nodes, atlas.edges),
-    ...(unreadLanguages && unreadLanguages.length > 0 ? { unreadLanguages } : {}),
+  // Both of them, and the second is here because the first's warning was not enough.
+  // #257 added `unreadFrameworks` — a stat about routes that never became nodes, for
+  // exactly the same reason — and this recount silently ate it, so every CLI run since
+  // #263 gave an Axum crate no auth sentence at all while its own archetype said the
+  // routes were unread. The suite stayed green because it asserted through
+  // `analyzeProject`, which was never the broken path (#270).
+  const carried = {
+    ...(atlas.meta.stats.unreadLanguages?.length ? { unreadLanguages: atlas.meta.stats.unreadLanguages } : {}),
+    ...(atlas.meta.stats.unreadFrameworks?.length ? { unreadFrameworks: atlas.meta.stats.unreadFrameworks } : {}),
   };
+  atlas.meta.stats = { ...computeStats(atlas.nodes, atlas.edges), ...carried };
 
   // Worked out here and stamped onto the atlas rather than recomputed by each screen,
   // because `export` and `serve` run in later processes by which time the baseline has
