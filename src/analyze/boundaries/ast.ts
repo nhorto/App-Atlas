@@ -365,6 +365,42 @@ export function enclosingFunctionOf(node: Node): Node | undefined {
 }
 
 /**
+ * The same question, asked as "does this run when that function is called?" (#265).
+ *
+ * `enclosingFunctionOf` reads the syntax, and for the rule it was written for that is
+ * exactly right: a body one function further down belongs to something this function
+ * merely *produced*, and lending its refusal back to the producer is how a factory's
+ * lock ends up on a door that never called it.
+ *
+ * A promise executor is not that. `new Promise((resolve, reject) => { … })` runs its
+ * argument *during* the call, synchronously, before the constructor returns — so a
+ * refusal in there is this function's refusal in every sense that matters. mastodon's
+ * streaming check is written exactly this way and nothing else in the file says no:
+ *
+ * ```js
+ * const accountFromRequest = (req) => new Promise((resolve, reject) => {
+ *   if (!authorization && !accessToken) {
+ *     reject(new AuthenticationError('Missing access token'));
+ * ```
+ *
+ * Only the executor, and only `new Promise`. `.then` and `.catch` callbacks are
+ * deliberately not included: they run later, and the one in this very file — `.catch(err
+ * => next(err))` — *forwards* a decision rather than making one, which is the distinction
+ * the issue turned on. A returned function is not included either, by construction: it is
+ * a `return`, not an argument, so nothing here can reach it and #261's rule stands.
+ */
+export function runsWhenCalled(node: Node, fn: Node): boolean {
+  let current = enclosingFunctionOf(node);
+  while (current !== undefined && current !== fn) {
+    const parent = current.getParent();
+    if (!parent || !Node.isNewExpression(parent)) return false;
+    if (parent.getExpression().getText() !== 'Promise') return false;
+    current = enclosingFunctionOf(current);
+  }
+  return current === fn;
+}
+
+/**
  * The function a name stands for, followed through the spellings middleware is written
  * in — so `alwaysContinues` has a body to read.
  *

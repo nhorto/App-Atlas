@@ -244,7 +244,21 @@ import { dominantZone } from './zones.js';
  * in the merge, re-derived every run, and a stale cache reaches its corrected answer on
  * its own.
  */
-export const TOOL_VERSION = '0.30.0';
+/*
+ * 0.31.0 moves for one door, which is the smallest thing that has ever justified this and
+ * is worth saying plainly.
+ *
+ * A refusal written as a thrown type is read (#265). The guard list is part of what a
+ * detector writes per file, so a cache holding mastodon's streaming door says it has no
+ * check at all — and the replay confirms it rather than assuming: the previous build's
+ * cache, read by this one, still reports no guard on the fixture.
+ *
+ * The count is small and the direction is the expensive one. Everything else this release
+ * touches is a door going from open to locked, which is the claim this project spends its
+ * credibility on, so a stale cache disagreeing with a fresh one is not a difference worth
+ * leaving in the world.
+ */
+export const TOOL_VERSION = '0.31.0';
 
 export interface AnalyzeOptions {
   maxFiles?: number;
