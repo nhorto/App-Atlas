@@ -509,6 +509,29 @@ export function authHeadline(stats: AtlasStats): AuthHeadline | null {
   }
 
   const caveats: string[] = [];
+  // First, because it is the only caveat that is *inside* the headline's number rather
+  // than beside it, and a reader who has just read "245 of 253 have no auth check" is
+  // owed the 219 before anything else (#284).
+  //
+  // "more" is deliberately absent — every other caveat here adds doors the headline left
+  // out, and this one subdivides the ones it counted. Saying "219 more" would put the
+  // total past the denominator.
+  //
+  // Named, not just counted. `authenticate` sends somebody to a file; "a middleware"
+  // sends them looking. Two at most, like the backbone phrase, because a list of six is
+  // a list nobody reads.
+  const identityOnly = open > 0 ? (stats.identityOnlyRoutes ?? 0) : 0;
+  if (identityOnly > 0) {
+    const named = (stats.identityOnlyGuards ?? []).slice(0, 2).join(' and ');
+    const subject = named ? `${named} ${(stats.identityOnlyGuards ?? []).length > 1 ? 'run' : 'runs'}` : 'something runs';
+    caveats.push(
+      identityOnly === open
+        ? `all of them have ${named ? `${named} in front` : 'something in front'} that reads who is calling and refuses nobody — ` +
+          'whatever decides what they may do is further in'
+        : `${identityOnly} of those are not bare: ${subject} in front of them and refuses nobody — ` +
+          'it reads who is calling and hands them on',
+    );
+  }
   if (open > 0 && unknown > 0) {
     caveats.push(
       `${unknown} more lean on a file App Atlas could not read — the check may well be in there`,

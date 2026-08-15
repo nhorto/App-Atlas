@@ -593,6 +593,31 @@ export interface AtlasStats {
    */
   testRoutes?: number;
   /**
+   * Unprotected routes that do have something in front of them — a middleware that reads
+   * who is calling and refuses nobody (#237, #284).
+   *
+   * Inside `unprotectedRoutes`, not beside it. A door nothing refuses is unprotected
+   * whether or not its cookie was read, and shrinking the number on the strength of a
+   * middleware that admits everyone is the false comfort #237 exists to refuse.
+   *
+   * Carried anyway, because on directus it is **219 of the 245**: one `app.use(authenticate)`
+   * ahead of forty routers, reading the token and handing the public role on. Every one
+   * of those doors already stores the name and the sentence; the count was folded into
+   * the total and dropped, so the headline could not reach the thing 89% of it was made
+   * of. Third time in this family after #257 and #270 — a distinction the analyzer makes,
+   * lost between the tally and the stats bag.
+   */
+  identityOnlyRoutes?: number;
+  /**
+   * What those middlewares are called, commonest first — `['authenticate']`.
+   *
+   * A name, because the caveat is worth nothing without one. "Something reads who is
+   * calling" sends a reader looking; "`authenticate` reads who is calling" sends them to
+   * a file. Spelled like `unreadFrameworks` for the same reason: a count alone is a
+   * fact nobody can act on.
+   */
+  identityOnlyGuards?: string[];
+  /**
    * Guarded routes whose every guard is below `certain` — a check matched through a
    * pattern, a policy read out of a migration, a filter reached one hop away.
    *
