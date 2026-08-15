@@ -172,6 +172,10 @@ const FRAMEWORK_SIGNALS: Record<string, string> = {
   express: 'Express',
   fastify: 'Fastify',
   hono: 'Hono',
+  // Absent until #269, which is why outline — a Koa server with `koa` and `koa-router`
+  // both declared — had its frameworks read `React · Vite`. The server was the half of
+  // that repository the line was there to describe.
+  koa: 'Koa',
   '@nestjs/core': 'NestJS',
   '@trpc/server': 'tRPC',
   '@prisma/client': 'Prisma',

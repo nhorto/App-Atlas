@@ -229,7 +229,22 @@ import { dominantZone } from './zones.js';
  * are never in view" — is withdrawn. Leaving that in would be the same false claim as
  * "nothing answers a URL", pointing the other way.
  */
-export const TOOL_VERSION = '0.29.0';
+/*
+ * 0.30.0 is the same shape as 0.29.0's case: not a door described wrongly, but an API
+ * that is not in the table at all.
+ *
+ * Koa's relative route paths are read (#269). outline holds a cache saying it has 29 ways
+ * in; it has 226, and the 197 missing ones are its entire RPC-style API. A cached absence
+ * is the thing a re-derivation can never recover, and the replay says so directly: the new
+ * build reuses the fixture's cache and still reports one route out of five.
+ *
+ * Two things travel with it. `koa` joins the framework table, so a Koa server stops being
+ * described as `React · Vite` — cheap, and cached in `meta.frameworks` all the same. And
+ * the router-name collision (#276) rides along unbumped by its own test: it is attribution
+ * in the merge, re-derived every run, and a stale cache reaches its corrected answer on
+ * its own.
+ */
+export const TOOL_VERSION = '0.30.0';
 
 export interface AnalyzeOptions {
   maxFiles?: number;
