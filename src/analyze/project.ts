@@ -326,6 +326,56 @@ export async function discoverProject(rootInput: string, options: DiscoverOption
   };
 }
 
+/**
+ * What the whole repository is written in, for a workspace that has no scope to say it
+ * from (#273).
+ *
+ * The backbone hedge is computed per map, and a map is one scope. discourse declares 52
+ * npm packages, every one of them under `frontend/` or `plugins/`, and its Rails
+ * application — 7,153 `.rb` files, `config/routes.rb` alone 1,993 lines — is in none of
+ * them. So there was no map for the sentence to appear on and the hedge that exists for
+ * exactly this case could not fire: 52 packages listed, 2,227 ways in counted, and
+ * nowhere in the output the word Ruby.
+ *
+ * The root-scope rule (#185) is the other thing that should have caught it and cannot,
+ * for a reason worth writing down: `measure()` weighs scopes by files matching
+ * `SOURCE_GLOB`, so discourse's root owns **146** files to `frontend/discourse`'s 2,067
+ * and loses by fourteen to one, while owning 7,153 unread ones the count never sees. The
+ * language App Atlas cannot read is structurally the one guaranteed to lose the scope
+ * that would have hedged for it. Fixing it there was the wrong lever anyway — a root
+ * scope on discourse is a second analysis of all 52 packages merged into one map, ~100s
+ * of work to deliver a single sentence, and the hairball SPEC 5.6 exists to avoid.
+ *
+ * So the sentence is said once, at the level it is true of, the way `repoPublishedPorts`
+ * says the repo's own ports. Counted honestly — same globs, same ignores, same
+ * `.gitignore` as `discoverProject` — because it is printed, and a number printed beside
+ * numbers from a different measure is the kind of small dishonesty this tool cannot
+ * afford.
+ */
+export async function countRepoLanguages(
+  root: string,
+  extraIgnores: string[] = [],
+): Promise<{ read: number; unreadLanguages: { ext: string; count: number }[] }> {
+  const ignores = buildIgnoreMatcher(root, extraIgnores);
+  const scan = async (glob: string): Promise<string[]> => {
+    const found = await fg(glob, {
+      cwd: root,
+      absolute: false,
+      dot: false,
+      onlyFiles: true,
+      followSymbolicLinks: false,
+      suppressErrors: true,
+      ignore: ignores.patterns,
+    });
+    return applyGitignore(root, found.map(toPosix));
+  };
+
+  return {
+    read: (await scan(SOURCE_GLOB)).length,
+    unreadLanguages: countByExtension(await scan(UNREAD_LANGUAGE_GLOB)),
+  };
+}
+
 /** `['a.vue', 'b.vue', 'c.svelte']` → `[{ ext: '.vue', count: 2 }, …]`, commonest first. */
 function countByExtension(relPaths: string[]): { ext: string; count: number }[] {
   const counts = new Map<string, number>();

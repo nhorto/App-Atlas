@@ -26,6 +26,7 @@ import { backbonePhrase, unreadBackbone } from './model/coverage.js';
 import { analyzeProject, computeStats, TOOL_VERSION } from './analyze/index.js';
 import { readComposePorts } from './analyze/boundaries/compose.js';
 import { buildIgnoreMatcher } from './analyze/ignores.js';
+import { countRepoLanguages } from './analyze/project.js';
 import type { PublishedPort } from './analyze/signals.js';
 import { findWorkspace } from './analyze/workspace.js';
 import type { Scope } from './analyze/workspace.js';
@@ -421,9 +422,28 @@ async function runSingleAnalysis(root: string, options: SharedOptions, repoRoot:
       console.log(
         pc.yellow(
           `  most of this repository is ${backbonePhrase(backbone)}, which App Atlas cannot read — ` +
-            `the numbers below cover only the ${s.files} ${s.files === 1 ? 'file' : 'files'} it can`,
+            `the numbers below cover only the ${s.files.toLocaleString('en-US')} ${s.files === 1 ? 'file' : 'files'} it can`,
         ),
       );
+    } else if (path.resolve(repoRoot) !== path.resolve(root)) {
+      // `--scope frontend-discourse` narrows to one package, and the package is readable
+      // TypeScript, so the hedge above stays quiet while 7,153 unread Ruby files sit
+      // around it (#273). Narrowing the code must not narrow the repo — the same reason
+      // this function is handed a `repoRoot` at all — and a reader who picked one of 52
+      // packages is owed the same sentence the workspace listing gives.
+      //
+      // Only in the `else`. A package that is itself mostly unread has already said so,
+      // and two yellow lines a clause apart teach a reader to skip both.
+      const around = await countRepoLanguages(repoRoot, options.ignore);
+      const outside = unreadBackbone(around.unreadLanguages, around.read);
+      if (outside) {
+        console.log(
+          pc.yellow(
+            `  most of the repository around this package is ${backbonePhrase(outside)}, ` +
+              'which App Atlas cannot read — the numbers below cover this package only',
+          ),
+        );
+      }
     }
     // Above the counts, because "what did it do to my app since Tuesday" is the question
     // somebody who let an agent write code all weekend came here with. The counts are
@@ -558,6 +578,23 @@ async function runWorkspaceAnalysis(
       `  ${pc.bold(String(scopes.length))} ${plural(scopes.length, 'package', 'packages')} in this workspace` +
         (apps > 0 && apps < scopes.length ? pc.dim(`, ${apps} of them ${plural(apps, 'an app', 'apps')}`) : ''),
     );
+    // Above the list, because it is about what every line of it is worth (#273). The
+    // per-map hedge cannot reach here: discourse's Rails application is in none of the 52
+    // packages, so there is no map for it to appear on, and the reader gets 52 confident
+    // package lines with no hint that the application is not among them. Said once, at
+    // the level it is true of — `repoPublishedPorts` below is the same shape of fact and
+    // the precedent for saying it here.
+    const repo = await countRepoLanguages(root, options.ignore);
+    const backbone = unreadBackbone(repo.unreadLanguages, repo.read);
+    if (backbone) {
+      console.log(
+        pc.yellow(
+          `  most of this repository is ${backbonePhrase(backbone)}, which App Atlas cannot read — ` +
+            `every package below is drawn from the ${repo.read.toLocaleString('en-US')} ` +
+            `${repo.read === 1 ? 'file' : 'files'} it can`,
+        ),
+      );
+    }
     // Said, not silently dropped (#185, and #143's aside is the precedent). A list that
     // quietly omits a third of what the manifest declares reads as "this is all there
     // is", and somebody looking for a fixture would conclude the tool cannot see it.

@@ -1,0 +1,5 @@
+{
+  "name": "forum",
+  "private": true,
+  "workspaces": ["frontend/*"]
+}

@@ -76,7 +76,9 @@ export function classifyArchetype({ project, nodes }: ArchetypeInput): Archetype
       label: 'Mostly a language App Atlas cannot read',
       because: [
         `${backbonePhrase(backbone)} this tool does not parse`,
-        `only ${project.files.length} ${project.files.length === 1 ? 'file' : 'files'} could be read`,
+        // Grouped like the phrase above it, which is the whole reason this line exists:
+        // the two numbers are read against each other and one of them is now five digits.
+        `only ${project.files.length.toLocaleString('en-US')} ${project.files.length === 1 ? 'file' : 'files'} could be read`,
       ],
     };
   }

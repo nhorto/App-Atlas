@@ -84,8 +84,15 @@ export function unreadBackbone(
   return { languages, total };
 }
 
-/** "469 Ruby files" / "512 Java and Kotlin files" — the noun phrase every surface shares. */
+/**
+ * "469 Ruby files" / "512 Java and Kotlin files" — the noun phrase every surface shares.
+ *
+ * Grouped, the way every other count in prose here is (`unimported.ts`, `tours.ts`,
+ * `markdown.ts`). It never mattered while the biggest number this phrase had ever printed
+ * was huginn's 469; discourse's is `10848`, which a reader has to stop and count digits
+ * on, in the one sentence written to be read before anything else (#273).
+ */
 export function backbonePhrase(backbone: UnreadBackbone): string {
   const named = backbone.languages.slice(0, 2).join(' and ');
-  return `${backbone.total} ${named} ${backbone.total === 1 ? 'file' : 'files'}`;
+  return `${backbone.total.toLocaleString('en-US')} ${named} ${backbone.total === 1 ? 'file' : 'files'}`;
 }
