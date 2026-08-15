@@ -378,6 +378,27 @@ export function authHeadline(stats: AtlasStats): AuthHeadline | null {
   // 469 Ruby files nothing here parses, and the auth question was never asked of the
   // application at all — which outranks every other reading of "zero routes".
   const backbone = unreadBackbone(stats.unreadLanguages, stats.files);
+  // A framework declared with no route reader is a fact about this repository whether or
+  // not something else happened to contribute a route, and the condition used to be
+  // "there are no routes at all" (#271). windmill is the correction: a workflow engine
+  // whose axum backend serves hundreds of endpoints, of which this tool reads none — and
+  // whose map read `1 of 2 routes have no auth check`, both of those routes being
+  // websocket servers in two Python debugger scripts. Two incidental doors from a
+  // `debugger/` directory were enough to suppress a hedge about the framework serving the
+  // whole application, and the resulting sentence is more confident and more wrong than
+  // the one #257 fixed, because it hands the reader a denominator to believe.
+  //
+  // #257 was filed on vaultwarden, which had exactly zero doors, so zero read as the
+  // condition at the time. The fact was never about the count.
+  const unreadFrameworks = stats.unreadFrameworks ?? [];
+  // Said differently above and below, and deliberately. At zero routes the honest
+  // sentence is that the question was never asked; with routes in hand it was asked, of
+  // the wrong denominator, so the caveat corrects the denominator rather than the asking.
+  const frameworkCaveat =
+    unreadFrameworks.length > 0
+      ? `this project also declares ${unreadFrameworks.join(', ')}, whose routes App Atlas does not read — ` +
+        'the routes above are only the ones declared by frameworks it does'
+      : null;
   if (routes === 0) {
     if (backbone) {
       return {
@@ -394,7 +415,6 @@ export function authHeadline(stats: AtlasStats): AuthHeadline | null {
     // framework they use, so the auth question was not asked of a single route. This
     // returned `null` before, and a null headline is how a password server with 305
     // Rocket routes got no auth sentence at all rather than a caveat (#257).
-    const unreadFrameworks = stats.unreadFrameworks ?? [];
     if (unreadFrameworks.length > 0) {
       return {
         tone: 'warn',
@@ -443,7 +463,11 @@ export function authHeadline(stats: AtlasStats): AuthHeadline | null {
     return {
       tone: 'warn',
       headline: nothingJudged(routes, unlinked, inTest),
-      caveats: [],
+      // Nothing was judged and a framework went unread: two different not-knowings, and
+      // the headline only carries the first. A reader told "all 30 routes are declared by
+      // the test suite" would otherwise have no way to learn that the application's own
+      // framework was never read at all.
+      caveats: frameworkCaveat ? [frameworkCaveat] : [],
       hedged: false,
     };
   }
@@ -514,6 +538,11 @@ export function authHeadline(stats: AtlasStats): AuthHeadline | null {
       `App Atlas could not read ${unread} ${unread === 1 ? 'file' : 'files'}; whatever they declare is missing from every number here`,
     );
   }
+  // Routes were found AND a declared framework's routes go unread — windmill's axum
+  // backend beside two websocket servers in a debugger script. Placed beside the backbone
+  // caveat because it is the same correction one level in: there, the missing doors are
+  // in a language nothing parses; here, in a framework nothing reads (#271).
+  if (frameworkCaveat) caveats.push(frameworkCaveat);
   // Routes were found AND most of the repository is in a language nothing here reads —
   // a Rails app with a JS sprinkle. The routes above are real; the denominator is not
   // the application's (#171).
@@ -532,7 +561,13 @@ export function authHeadline(stats: AtlasStats): AuthHeadline | null {
   }
 
   return {
-    tone: open > 0 || unknown > 0 || unlinked > 0 || backbone !== null ? 'warn' : 'ok',
+    // `warn` when something is either open or unknown, which is this interface's own
+    // rule a few lines up. A framework whose routes were never read is the second kind
+    // exactly, and it joins `backbone` here for the same reason that one is in the list:
+    // `ok` is the signal saying nothing below needs your eye, and a repository whose
+    // whole backend went unread is not that repository (#271).
+    tone:
+      open > 0 || unknown > 0 || unlinked > 0 || backbone !== null || frameworkCaveat !== null ? 'warn' : 'ok',
     headline,
     caveats,
     hedged,
