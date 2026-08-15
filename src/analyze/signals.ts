@@ -434,8 +434,39 @@ function readsAsAPackage(
   // every internal package in a monorepo says, and `cal.com/packages/ui` is a component
   // library whether or not npm has heard of it. An `exports` field is the declaration
   // that matters: it says where to import this from.
+  //
+  // But it only says that if what it points at is something another package could import,
+  // and the field's presence was standing in for that. `@directus/app` — the Vue admin
+  // interface, 844 files — writes `"main": "dist/index.html"` and an `exports` naming the
+  // same page, so it read as a library and handed back 692 of its own modules as the way
+  // in (#283). Nobody imports an `index.html`; it is the page a browser loads.
   if (!packageJson) return false;
-  return ['main', 'module', 'exports', 'types'].some((field) => packageJson[field] !== undefined);
+  return ['main', 'module', 'exports', 'types'].some((field) => namesSomethingImportable(packageJson[field]));
+}
+
+/**
+ * Whether an entry field points at code another package could import.
+ *
+ * Holding an entry point to its word rather than counting the field, which `isTestSuite`
+ * in `archetype.ts` already does for the other half of the same question — an npm-init
+ * `main` naming a file that does not exist declares nothing either.
+ *
+ * Two targets are discounted, and both are the manifest talking about itself rather than
+ * about importable code. An `.html` file is a built page. `./package.json` is the
+ * self-reference tooling adds to every `exports` map; a library that has it always has a
+ * real entry beside it, so discounting it can never be what flips one.
+ */
+function namesSomethingImportable(value: unknown): boolean {
+  if (typeof value === 'string') {
+    if (value === '') return false;
+    const target = value.replace(/^\.\//, '');
+    return !/\.html?$/i.test(target) && target !== 'package.json';
+  }
+  // An `exports` map nests: subpaths, then conditions (`import`, `require`, `default`).
+  // Arrays are the fallback form, where any entry standing up is enough.
+  if (Array.isArray(value)) return value.some(namesSomethingImportable);
+  if (value && typeof value === 'object') return Object.values(value).some(namesSomethingImportable);
+  return false;
 }
 
 /** The migration folders projects actually use. Checked, not globbed — a glob over an

@@ -1,0 +1,11 @@
+{
+  "name": "admin",
+  "version": "0.0.0",
+  "type": "module",
+  "exports": { ".": "./dist/index.html", "./package.json": "./package.json" },
+  "main": "dist/index.html",
+  "files": ["dist"],
+  "scripts": { "dev": "vite --host", "build": "vite build" },
+  "dependencies": { "react": "^19.0.0", "react-dom": "^19.0.0", "react-router-dom": "^7.0.0" },
+  "devDependencies": { "vite": "^6.0.0" }
+}
