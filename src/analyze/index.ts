@@ -889,6 +889,15 @@ export function computeStats(nodes: AtlasNode[], edges: AtlasEdge[]): AtlasStats
   let routes = 0;
   let likelyOnlyRoutes = 0;
   let testRoutes = 0;
+  /**
+   * What the identity-only middlewares are called, and how many doors each fronts.
+   *
+   * Collected here rather than taken off the tally because the tally counts verdicts and
+   * this needs the name written on the door (#284). Counted over the same nodes in the
+   * same pass, so the name and the number can never come from two different ideas of
+   * which doors those are.
+   */
+  const identityOnlyGuards = new Map<string, number>();
   let unreadFiles = 0;
   let unreadTestFiles = 0;
   let services = 0;
@@ -945,6 +954,18 @@ export function computeStats(nodes: AtlasNode[], edges: AtlasEdge[]): AtlasStats
           // denominator that is right only while that rule holds is one that goes wrong
           // silently the day it changes (#247).
           if (meta.declaredInTest) testRoutes++;
+          // The name `build.ts` wrote on the door when what stood in front of it turned
+          // out to refuse nobody. Read off the node rather than re-derived, so the
+          // caveat names the same middleware the door's own row names (#284).
+          //
+          // Only where nothing else guards it. `build.ts` writes the name whenever such a
+          // middleware reaches a door, including doors that also have a real check —
+          // `GET /admin/settings` behind both `authenticate` and `requireAdmin` — and
+          // those are not in the count this list is read beside. Naming a middleware that
+          // fronts none of the doors the caveat is about is the quiet kind of wrong.
+          if (!meta.declaredInTest && meta.identityOnly && (meta.guards ?? []).length === 0) {
+            identityOnlyGuards.set(meta.identityOnly, (identityOnlyGuards.get(meta.identityOnly) ?? 0) + 1);
+          }
           // A door with guards, none of which the analyzer could prove. Counted here so
           // the headline can carry the grade its cards already carry (#116) — over the
           // doors that headline is about, which is why a test route is not one of them:
@@ -1005,6 +1026,13 @@ export function computeStats(nodes: AtlasNode[], edges: AtlasEdge[]): AtlasStats
     // ran and refused nobody. The split exists so each row can say what that was, not
     // so the total can shrink (#237).
     unprotectedRoutes: open.worthALook + open.identityOnly,
+    // Inside the number above, and said anyway. On directus that fold is 219 of 245, so
+    // without these two the headline could not reach the thing 89% of it was made of —
+    // and #237 wrote the per-door sentence for exactly that reader (#284).
+    identityOnlyRoutes: open.identityOnly,
+    identityOnlyGuards: [...identityOnlyGuards.entries()]
+      .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+      .map(([name]) => name),
     likelyOnlyRoutes,
     // "Unchecked, with a reason." A door the code declares open belongs here beside the
     // marketing page and the sign-in mount — it is the most explicit reason of the three,
