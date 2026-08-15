@@ -11,6 +11,8 @@ use std::env;
 extern crate rocket;
 
 mod api;
+mod guards;
+mod owner;
 
 pub fn bind_address() -> String {
     env::var("ROCKET_ADDRESS").unwrap_or_default()

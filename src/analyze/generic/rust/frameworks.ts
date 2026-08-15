@@ -26,18 +26,22 @@ export function rustFrameworkFor(crate: string): string | null {
 /**
  * The web frameworks this tool can name but whose routes it never reads.
  *
- * `detectRustBoundaries` reads three things — `#[tauri::command]`, sqlx, and the
- * environment — and no route reader runs for any of these. So a crate can declare
- * Rocket, serve 305 routes across 60 files, and produce zero doors. Declining to read
- * them is the deliberate choice that file documents, and it stands.
+ * `detectRustBoundaries` reads the environment, sqlx, `#[tauri::command]` and — since
+ * #257's second half — Rocket's route attributes. No route reader runs for the three
+ * left here, so a crate can declare Axum, serve routes across sixty files, and produce
+ * zero doors. Declining to read them is the deliberate choice that file documents, and
+ * it stands.
  *
  * What does not stand is what the surfaces said next. Zero doors was reported as
  * "nothing answers a URL" about a password server whose own framework list read
  * `["Diesel", "Rocket"]` — a known absence turned into a positive finding, which is
  * the one move this project treats as unrecoverable (#257).
  *
- * Naming them here is what lets every surface stay quiet instead. Tauri is deliberately
- * absent: its commands *are* read, so a Tauri crate with no doors genuinely has none.
- * The data crates are absent for the same reason — sqlx answers no URL either way.
+ * Naming them here is what lets every surface stay quiet instead. **Rocket has left this
+ * set**, because the sentence is only honest while the absence is real: vaultwarden now
+ * reports 305 doors, 255 of them with a check, and a caveat saying its routes are never
+ * in view would be the same kind of false claim in the other direction. Tauri was never
+ * in it for the same reason — its commands are read, so a Tauri crate with no doors
+ * genuinely has none. The data crates are absent because sqlx answers no URL either way.
  */
-export const RUST_ROUTES_NOT_READ = new Set(['Axum', 'Actix Web', 'Rocket', 'warp']);
+export const RUST_ROUTES_NOT_READ = new Set(['Axum', 'Actix Web', 'warp']);
