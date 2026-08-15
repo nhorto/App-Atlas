@@ -273,6 +273,11 @@ const SERVER_PACKAGES: { pkg: string; name: string }[] = [
   { pkg: 'hono', name: 'Hono' },
   { pkg: 'koa', name: 'Koa' },
   { pkg: '@koa/router', name: 'Koa' },
+  // The unscoped package, which is the one in the wild: outline is on `koa-router@7.4.0`
+  // and reported `React · Vite` as its frameworks, because neither spelling above
+  // matched. Without it `frameworkFor` fell through to `/express|Router/` and labelled a
+  // Koa router Express — which is the label the slashless rule below turns on (#269).
+  { pkg: 'koa-router', name: 'Koa' },
   { pkg: '@nestjs/common', name: 'NestJS' },
   { pkg: '@hapi/hapi', name: 'Hapi' },
 ];
@@ -1098,14 +1103,27 @@ function routeCall(call: CallExpression, ctx: DetectorContext): void {
   const holder = parts[parts.length - 2];
   if (!looksLikeRouter(holder, ctx)) return;
 
-  const route = literalString(argAt(call, 0));
-  if (!route || !route.startsWith('/')) return;
-
   const frameworks = serverFrameworks(ctx);
   const framework = frameworkFor(holder, ctx) ?? frameworks[0] ?? 'HTTP';
-  const httpMethod = method === 'all' ? 'ANY' : method.toUpperCase();
 
-  ctx.emit({
+  // Koa's router names a route by putting the name *first*: `router.get('user',
+  // '/users/:id', handler)`, told apart from an ordinary registration by the second
+  // argument also being a string. Verified against `koa-router@7.4.0` rather than
+  // assumed — that layer comes back as `{name: 'user', path: '/users/:id'}`.
+  const named = framework === 'Koa' && literalString(argAt(call, 1)) !== null;
+  const route = literalString(argAt(call, named ? 1 : 0));
+  if (!route) return;
+
+  // A path without a leading slash is not an address, and for most frameworks it is not
+  // a path at all: Express reads `app.get('trust proxy')` as a settings *getter*, and
+  // sails has exactly that line. So the rule stands everywhere except Koa, whose router
+  // accepts a relative path and whose users write them — outline declares 192 of its 226
+  // routes as `router.post('documents.list', …)` and reported 29 ways in out of 226 (#269).
+  const relative = !route.startsWith('/');
+  if (relative && framework !== 'Koa') return;
+
+  const httpMethod = method === 'all' ? 'ANY' : method.toUpperCase();
+  const finding: EndpointFinding = {
     type: 'endpoint',
     endpointKind: 'http-route',
     key: `${httpMethod} ${route}`,
@@ -1122,7 +1140,20 @@ function routeCall(call: CallExpression, ctx: DetectorContext): void {
     // Which router this hangs off, so whatever prefix that router was mounted under
     // becomes part of the address before anything is merged.
     routerVar: holder,
-  });
+  };
+
+  // A relative path is a fragment by definition, and the head is somewhere this pass is
+  // not. outline's chain is two hops and one of them is `koa-mount`: `documents.list`
+  // becomes `/documents.list` when `api.use('/', documents.routes())` normalises it, and
+  // `/api/documents.list` once `mount('/api', api)` puts it back. Printing
+  // `documents.list` would give an address nobody can call and `/documents.list` would
+  // invent the half that is missing, which is #199. `unreadHead` says the true thing.
+  //
+  // It renders as `…documents.list` with no slash, and that is deliberate: the separator
+  // is not knowable either. `use('/', sub.routes())` normalises to `/documents.list`,
+  // while `new Router({prefix: '/api'})` concatenates to `/apidocuments.list` — both
+  // measured against koa-router, and a printed `…/` would be picking one.
+  ctx.emit(relative ? unreadHead(finding, [ctx.ref.relPath, holder], null) : finding);
 }
 
 /** `fastify.route({ method: 'GET', url: '/users', handler })` */
