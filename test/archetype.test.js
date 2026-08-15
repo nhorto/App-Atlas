@@ -96,6 +96,32 @@ test('an app that routes in the browser is still an app', async () => {
   assert.ok(atlas.meta.archetype.because.some((why) => /routes in the browser/.test(why)));
 });
 
+/**
+ * The rule above is switched off by any entry field in the manifest, because an entry
+ * field is where a library says to import it from. `@directus/app` names `dist/index.html`
+ * in both `main` and `exports` — the page a browser loads, which nobody imports — so the
+ * Vue admin interface was filed as "Code other code imports" and handed back 692 of its
+ * own modules as the way in (#283). Removing those two fields and nothing else moved it
+ * from 692 doors to 0.
+ */
+test('an entry point naming a built page is not a package', async () => {
+  const { atlas } = await analyze('spahtml');
+  assert.equal(atlas.meta.archetype.archetype, 'web-app');
+  const doors = atlas.nodes.filter((n) => n.kind === 'endpoint' && n.meta.endpointKind === 'export');
+  assert.deepEqual(doors, [], 'an app does not publish its own components as a public API');
+});
+
+/**
+ * The other direction, which is the one that must not move: a manifest naming a module
+ * is a library however it is built. `sample-lib` says `main: src/index.ts`, and #283's
+ * refuted candidate — reading the build script — would have called `twenty-ui` an app for
+ * running `npx vite build`, the same command as the application beside it in that repo.
+ */
+test('an entry point naming a module is still a package', async () => {
+  const { atlas } = await analyze('lib');
+  assert.equal(atlas.meta.archetype.archetype, 'library');
+});
+
 test('every verdict shows the signals it was built from', async () => {
   for (const name of ['sample', 'lib', 'pipeline']) {
     const { atlas } = await analyze(name);
