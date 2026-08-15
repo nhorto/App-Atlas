@@ -13,6 +13,7 @@ import type { BoundaryFinding } from '../../boundaries/types.js';
 import { readSqlStatement } from '../../sql.js';
 import type { BoundaryInput } from '../languages.js';
 import type { GCall, GenericFile } from '../ir.js';
+import { detectRocketBoundaries } from './rocket.js';
 
 /** The sqlx entry points whose first argument is the SQL, macro and function alike. */
 const SQLX_QUERY = /^sqlx::(query|query_as|query_scalar|query_unchecked|query_as_unchecked|raw_sql)$/;
@@ -30,6 +31,10 @@ export function detectRustBoundaries(input: BoundaryInput): BoundaryFinding[] {
   });
 
   if (signals.cargoPackages.has('tauri')) detectCommands(input, findings);
+  // The manifest is the gate, not the file. Rocket arrives through `#[macro_use] extern
+  // crate rocket;` at the crate root, so the file holding the routes imports nothing to
+  // key on — which is where #195's rule for Tauri does not transfer (#257).
+  if (signals.cargoPackages.has('rocket')) detectRocketBoundaries(input, findings);
   if (signals.cargoPackages.has('sqlx')) detectSqlx(file, findings, at);
   detectEnv(file, findings, at);
 

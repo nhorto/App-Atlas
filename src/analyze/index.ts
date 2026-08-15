@@ -213,7 +213,23 @@ import { dominantZone } from './zones.js';
  * test: unread Rust frameworks (#257) reads from stats rather than from any cached
  * finding, and the bare-mount gate (#260) is the `build.ts` case described above.
  */
-export const TOOL_VERSION = '0.28.0';
+/*
+ * 0.29.0 is the strongest case this comment has ever had to make, because the cached
+ * answer is not merely wrong about a door — it is an empty routing table.
+ *
+ * Rocket's routes are read (#257). vaultwarden holds a 0.28.0 cache saying it has **no
+ * ways in at all**, and it has 305, 255 of them behind a check. An absence is the one
+ * thing a cache can never be asked to re-derive — the same reason 0.27.0 moved for
+ * Strapi's 2-of-233 and Parse Server's empty table — and the replay proves it directly:
+ * the new build reuses all 96 files of that cache and still reports zero.
+ *
+ * Two smaller things travel with it and neither would have moved the number alone. Such a
+ * crate's archetype goes from `pipeline` to `service`, because things in it answer URLs
+ * now; and Rocket leaves `RUST_ROUTES_NOT_READ`, so the caveat #263 added — "its routes
+ * are never in view" — is withdrawn. Leaving that in would be the same false claim as
+ * "nothing answers a URL", pointing the other way.
+ */
+export const TOOL_VERSION = '0.29.0';
 
 export interface AnalyzeOptions {
   maxFiles?: number;
