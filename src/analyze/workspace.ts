@@ -118,7 +118,20 @@ export async function findWorkspace(root: string): Promise<{ scopes: Scope[]; hi
   // because an empty switcher on a repo that has packages is the worse answer — the
   // same floor `scopes.length < 2` draws below.
   const imported = namesTheWorkspaceImports(root, declared, manifests);
-  const shipped = declared.filter((scope) => !isTestFixture(scope, manifests.get(scope.dir) ?? null, imported));
+  const fixtures = new Set(
+    declared.filter((scope) => isTestFixture(scope, manifests.get(scope.dir) ?? null, imported)).map((s) => s.dir),
+  );
+  // What is inside a fixture is that fixture's material. vite declares 278 members; 136
+  // of them are the fake npm packages its playground fixtures resolve against —
+  // `playground/external/dep-that-imports`, `playground/resolve/exports-legacy-fallback/dir`
+  // — each a package.json of three lines, none of them saying "test" in a name because
+  // the whole point is to look like an ordinary dependency to the resolver being tested.
+  // The fixture above them already said it, once, and saying it once is enough.
+  const roots = [...fixtures];
+  for (const scope of declared) {
+    if (roots.some((dir) => scope.dir.startsWith(`${dir}/`))) fixtures.add(scope.dir);
+  }
+  const shipped = declared.filter((scope) => !fixtures.has(scope.dir));
   const scopes = shipped.length > 0 ? shipped : declared;
   const hidden = shipped.length > 0 ? declared.filter((scope) => !shipped.includes(scope)) : [];
 

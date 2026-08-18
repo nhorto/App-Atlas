@@ -49,7 +49,18 @@ test('a test-named package a sibling imports is real code, and stays', async () 
   // `packages/api` says it needs one of them. Hide this and the rule is a word filter.
   const { scopes, hidden } = await findWorkspace(MONO);
   assert.ok(scopes.some((s) => s.dir === 'packages/test-utils'), JSON.stringify(scopes));
-  assert.deepEqual(hidden.map((s) => s.dir), ['packages/acme-tests']);
+  assert.deepEqual(hidden.map((s) => s.dir).sort(), ['packages/acme-tests', 'packages/acme-tests/vendor/fake-dep']);
+});
+
+test('a package inside a fixture is that fixture\'s material, not an app', async () => {
+  // vite is where this half showed up: 278 declared members, 136 of them fake npm
+  // packages living inside playground fixtures so the resolver under test has something
+  // to resolve. `fake-dep` is one of those, and nothing in its own three-line manifest
+  // will ever say "test" — looking like an ordinary dependency is its whole job. The
+  // fixture above it already said so.
+  const { scopes, hidden } = await findWorkspace(MONO);
+  assert.ok(!scopes.some((s) => s.dir.startsWith('packages/acme-tests/')), JSON.stringify(scopes));
+  assert.ok(hidden.some((s) => s.dir === 'packages/acme-tests/vendor/fake-dep'), JSON.stringify(hidden));
 });
 
 test('the hidden fixture is still reachable by name', async () => {
