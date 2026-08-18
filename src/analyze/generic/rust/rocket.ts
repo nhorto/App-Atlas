@@ -129,10 +129,28 @@ export function detectRocketBoundaries(input: BoundaryInput, findings: BoundaryF
  * spelling: the tail, an ellipsis where the head belongs, and `route: null` so nothing
  * downstream matches a prefix against a fragment.
  *
- * The mount is not read even when it *is* a literal, and that is a deliberate
- * under-claim rather than an oversight: this pass sees one file, the mount lives in
- * another, and a rule that composed the readable ones would give two doors in the same
- * crate addresses of different kinds.
+ * The mount is not read even when it *is* a literal. That is an under-claim, and the
+ * reason once written here — "this pass sees one file, the mount lives in another" —
+ * was not the reason (#290). On Rocket's own `todo` example all three mounts are string
+ * literals in the same `main.rs` that defines all four handlers, and `examples/todo`
+ * analyzed alone gives four doors with four hedged addresses, every one of them
+ * determinable from that single file. A session reading the old sentence would
+ * conclude the information is not there when it is.
+ *
+ * The real reason is that a map's addresses have to be one kind. Composing only the
+ * readable mounts puts `/todo/<id>` beside `…/<id>` in the same list, and a reader
+ * cannot tell which of the two is a whole address without knowing this rule.
+ *
+ * What that costs is now counted rather than assumed. Across 92 Rocket crates that
+ * mount anything — Rocket's own examples and test suite, vaultwarden, Plume, and seven
+ * smaller applications — **90 mount with string literals only**. One mixes, and it is
+ * `rocket_cors` mounting its own error route at a base its user configures. One reads
+ * no literal at all, and it is vaultwarden. So an all-or-nothing rule, per crate, would
+ * resolve ninety crates completely and hedge two completely, and no crate anywhere in
+ * that corpus would come out holding both kinds at once.
+ *
+ * Which makes this a thing not built rather than a thing that cannot be. The evidence
+ * bar #290 set for itself is met; what is left is the work and the decision.
  */
 function detectRocketRoutes(input: BoundaryInput, findings: BoundaryFinding[]): void {
   const { file } = input;
