@@ -169,6 +169,15 @@ const FRAMEWORK_SIGNALS: Record<string, string> = {
   vue: 'Vue',
   svelte: 'Svelte',
   '@angular/core': 'Angular',
+  // `ember-source` rather than `ember-cli` or `ember-data`: it is the framework
+  // runtime, and it is the one package an Ember application cannot be without.
+  //
+  // Absent until #293, which is why Ghost's admin — an Ember application since 2015,
+  // 58 Ember packages declared — had its frameworks read `React`. Ghost embeds a few
+  // React panes inside that admin, so `react` was in the dependency list and Ember was
+  // in no table at all; the headline named the guest and not the house. discourse's
+  // front end, which has no such guest, read `[]`.
+  'ember-source': 'Ember',
   express: 'Express',
   fastify: 'Fastify',
   hono: 'Hono',

@@ -34,6 +34,16 @@ const UI_FRAMEWORKS = new Set([
   'Vue',
   'Svelte',
   'Angular',
+  // An Ember application routes in the browser and renders into one page, which is the
+  // shape the SPA branch below exists for. Ghost's admin reaches that branch today only
+  // because a few React panes are embedded in it; the next Ember admin without one is
+  // filed as a library and handed its own components as a public API (#293).
+  //
+  // An addon is the false positive to watch, and it declares `ember-source` too —
+  // every one of them lists it to build and test against. What keeps addons out is the
+  // branch's third condition, not this table: an addon has a `main`, and an app that is
+  // only ever built and served does not.
+  'Ember',
   'Next.js',
   'Next.js App Router',
   'Next.js Pages Router',
