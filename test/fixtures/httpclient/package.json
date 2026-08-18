@@ -1,0 +1,12 @@
+{
+  "name": "httpclient-fixture",
+  "private": true,
+  "version": "0.0.0",
+  "dependencies": {
+    "express": "^4.19.0"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.48.0",
+    "supertest": "^7.0.0"
+  }
+}
