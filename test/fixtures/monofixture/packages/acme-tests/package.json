@@ -1,0 +1,7 @@
+{
+  "name": "@acme/tests",
+  "version": "0.0.1",
+  "main": "src/index.js",
+  "dependencies": { "express": "^4.21.2" },
+  "scripts": { "start": "node ." }
+}

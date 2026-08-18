@@ -1,0 +1,6 @@
+{
+  "name": "@acme/ui",
+  "version": "1.0.0",
+  "main": "src/index.js",
+  "dependencies": { "react-dom": "^18.0.0" }
+}
