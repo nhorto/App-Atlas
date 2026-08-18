@@ -1137,6 +1137,40 @@ function routeCall(call: CallExpression, ctx: DetectorContext): void {
   const relative = !route.startsWith('/');
   if (relative && !koa) return;
 
+  // And something to answer at it. A registration hands over a handler; an HTTP *client*
+  // takes a path and query parameters and hands over nothing, and the two are otherwise
+  // spelled from the same five tokens (#236):
+  //
+  //   app.get('/res_redirect/1', (_req, res) => res.redirect('/'))   a door
+  //   api.delete('/canned-responses', { _id: cannedResponseId })     a call to one
+  //
+  // Rocket.Chat is what this is measured on. It reported 163 ways in, and 150 of them were
+  // its Playwright suite calling a deployed Rocket.Chat over HTTP — while its ~173 real
+  // `API.v1.addRoute(…)` registrations came out as none. The map was the test suite's
+  // outbound traffic with the application missing.
+  //
+  // Three wrong things came from the one mistake, and the third is why this is a rule
+  // rather than a tidy-up. The addresses were fragments — that client prepends
+  // `API_PREFIX = '/api/v1'` — printed as whole and resolved, which is #199. And found in
+  // a spec they were marked `declaredInTest`, whose verdict reads "nobody outside a test
+  // run can knock on this", said about `/api/v1/canned-responses`.
+  //
+  // The receiver cannot do this job: `looksLikeRouter` accepts `app`, `api`, `server` or
+  // `r` on the name alone, and the comment above already names `api.get('users')` on an
+  // HTTP client as the risk it runs. Nor can the path — both are leading-slash strings.
+  //
+  // Express agrees with the shape of the question. `app.get('/x')` with no handler
+  // registers nothing, and `app.get('trust proxy')` is the settings getter the
+  // leading-slash rule above exists to catch; this is the same fact one argument along.
+  //
+  // What it deliberately does not do is judge *which* argument is the handler. Frameworks
+  // disagree about the order and about how many middlewares sit in between, so the
+  // question asked is the one every one of them answers the same way — is there anything
+  // here that could run — and a maybe is read as a yes. `#247`'s doors are the reason:
+  // Sails stands its entire surface up inside its own suite, handler and all, and those
+  // are real doors for the length of a run.
+  if (!handsOverAHandler(call, named ? 1 : 0)) return;
+
   const httpMethod = method === 'all' ? 'ANY' : method.toUpperCase();
   const finding: EndpointFinding = {
     type: 'endpoint',
@@ -1552,6 +1586,47 @@ function middlewareGuards(call: CallExpression, ctx: DetectorContext): GuardInfo
 
 function looksLikeRouter(name: string, ctx: DetectorContext): boolean {
   return isRouter(name, ctx.locals);
+}
+
+/**
+ * Whether anything after the path could be the thing that answers at it (#236).
+ *
+ * Generous on purpose. Every framework spells the tail differently — handler last for
+ * Express and gin, handler first for Echo, an options bag in between for Fastify, an
+ * array of them for anyone with a middleware list — so this asks whether *any* argument
+ * past the path is a runnable thing rather than trying to pick which one. A registration
+ * that is hard to read still registers something; a client call has nothing to offer.
+ *
+ * What is excluded is the short list of shapes that cannot run: a string, a number, an
+ * object literal. That is exactly what an HTTP client's second argument is — query
+ * parameters, a request body, headers — and it is why `{ _id: cannedResponseId }` is the
+ * discriminator and `(_req, res) => …` is not.
+ */
+function handsOverAHandler(call: CallExpression, pathIndex: number): boolean {
+  return call.getArguments().slice(pathIndex + 1).some(couldRun);
+}
+
+/** One argument, asked whether it could be called. */
+function couldRun(arg: Node): boolean {
+  // `handler satisfies RequestHandler`, `handler as any`, `(handler)` — wrappers a type
+  // checker leaves behind, none of which change what is underneath.
+  if (Node.isAsExpression(arg) || Node.isSatisfiesExpression(arg) || Node.isParenthesizedExpression(arg)) {
+    return couldRun(arg.getExpression());
+  }
+  if (Node.isSpreadElement(arg)) return couldRun(arg.getExpression());
+  // `router.get('/x', [requireAuth, load], show)` — Express takes arrays of handlers, and
+  // an empty one is a middleware list somebody left empty rather than a handler.
+  if (Node.isArrayLiteralExpression(arg)) return arg.getElements().some(couldRun);
+  return (
+    Node.isArrowFunction(arg) ||
+    Node.isFunctionExpression(arg) ||
+    Node.isIdentifier(arg) ||
+    Node.isPropertyAccessExpression(arg) ||
+    Node.isElementAccessExpression(arg) ||
+    Node.isCallExpression(arg) ||
+    Node.isAwaitExpression(arg) ||
+    Node.isConditionalExpression(arg)
+  );
 }
 
 function frameworkFor(name: string, ctx: DetectorContext): string | null {
