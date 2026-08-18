@@ -1,0 +1,5 @@
+{
+  "name": "monofixture",
+  "private": true,
+  "workspaces": ["packages/*", "packages/acme-tests/vendor/*"]
+}

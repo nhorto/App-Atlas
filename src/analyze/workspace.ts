@@ -75,6 +75,7 @@ export async function findScopes(root: string): Promise<Scope[]> {
  */
 export async function findWorkspace(root: string): Promise<{ scopes: Scope[]; hidden: Scope[] }> {
   const byDir = new Map<string, Scope>();
+  const manifests = new Map<string, Record<string, unknown> | null>();
 
   const globs = workspaceGlobs(root);
   if (globs.length > 0) {
@@ -93,7 +94,9 @@ export async function findWorkspace(root: string): Promise<{ scopes: Scope[]; hi
     for (const manifest of found.map(toPosix).sort()) {
       const dir = path.posix.dirname(manifest);
       if (dir === '.' || byDir.has(dir)) continue;
-      byDir.set(dir, describeScope(root, dir));
+      const pkg = readJson(path.join(root, dir, 'package.json'));
+      manifests.set(dir, pkg);
+      byDir.set(dir, describeScope(root, dir, pkg));
     }
   }
 
@@ -114,7 +117,21 @@ export async function findWorkspace(root: string): Promise<{ scopes: Scope[]; hi
   // Never down to nothing: a repo whose only packages are fixtures still gets them,
   // because an empty switcher on a repo that has packages is the worse answer — the
   // same floor `scopes.length < 2` draws below.
-  const shipped = declared.filter((scope) => classifyZone(`${scope.dir}/package.json`) !== 'test');
+  const imported = namesTheWorkspaceImports(root, declared, manifests);
+  const fixtures = new Set(
+    declared.filter((scope) => isTestFixture(scope, manifests.get(scope.dir) ?? null, imported)).map((s) => s.dir),
+  );
+  // What is inside a fixture is that fixture's material. vite declares 278 members; 136
+  // of them are the fake npm packages its playground fixtures resolve against —
+  // `playground/external/dep-that-imports`, `playground/resolve/exports-legacy-fallback/dir`
+  // — each a package.json of three lines, none of them saying "test" in a name because
+  // the whole point is to look like an ordinary dependency to the resolver being tested.
+  // The fixture above them already said it, once, and saying it once is enough.
+  const roots = [...fixtures];
+  for (const scope of declared) {
+    if (roots.some((dir) => scope.dir.startsWith(`${dir}/`))) fixtures.add(scope.dir);
+  }
+  const shipped = declared.filter((scope) => !fixtures.has(scope.dir));
   const scopes = shipped.length > 0 ? shipped : declared;
   const hidden = shipped.length > 0 ? declared.filter((scope) => !shipped.includes(scope)) : [];
 
@@ -128,6 +145,83 @@ export async function findWorkspace(root: string): Promise<{ scopes: Scope[]; hi
   const files = await measure(root, declared);
   const all = includeTheRootWhenItIsTheProject(root, scopes, files);
   return { scopes: leadWithTheMainApp(all.sort(byKindThenName), files), hidden };
+}
+
+/**
+ * The words a package name uses when the package exists to be tested against.
+ *
+ * Whole segments only, so `ab-testing` and `contest` are not swept up by a rule about
+ * `test`. Matched against the package's declared name as well as its directory, because
+ * `@vitejs/test-alias` says it in the name and `packages/bruno-tests` says it in the
+ * path, and neither repo says it in both.
+ */
+const TEST_NAME = /(^|[-._/])(tests?|e2e|fixtures?|testbench)([-._/]|$)/i;
+
+/** The manifest fields that are one package saying it needs another. */
+const DEPENDENCY_FIELDS = ['dependencies', 'devDependencies', 'peerDependencies', 'optionalDependencies'];
+
+/**
+ * Every package name anything in this workspace declares a dependency on.
+ *
+ * The root manifest counts: a repo that pulls a package in at the top has still said it
+ * needs it. A package listing *itself* would keep itself off the fixture list, which is
+ * the harmless direction — the answer to a broken manifest is to show the package, not
+ * to hide it.
+ */
+function namesTheWorkspaceImports(
+  root: string,
+  declared: Scope[],
+  manifests: Map<string, Record<string, unknown> | null>,
+): Set<string> {
+  const names = new Set<string>();
+  const add = (pkg: Record<string, unknown> | null) => {
+    if (!pkg) return;
+    for (const field of DEPENDENCY_FIELDS) {
+      const deps = pkg[field];
+      if (deps && typeof deps === 'object') for (const name of Object.keys(deps)) names.add(name);
+    }
+  };
+
+  add(readJson(path.join(root, 'package.json')));
+  for (const scope of declared) add(manifests.get(scope.dir) ?? null);
+  return names;
+}
+
+/**
+ * Whether a declared workspace member exists to be tested against rather than shipped.
+ *
+ * Two ways to say it, because real repositories say it two ways. The path is the one
+ * #185 settled — nuxt's `test/fixtures/*`, directus's `tests/e2e` — and it is the
+ * stronger signal, needing nothing else.
+ *
+ * The name is the one bruno needed (#289). `packages/bruno-tests` is the fixture server
+ * bruno's own suite calls against: 18 runtime dependencies, a real entry point, 46
+ * genuine Express routes, and a headline reading "41 of 46 routes unprotected" sitting
+ * in the switcher beside the four scopes where that number means something. Nothing in
+ * #174's rule can reach it — that rule is about a package *of tests*, and this is a
+ * package tests are *pointed at* — and nothing in #185's, because the path says
+ * `packages/` like every other member.
+ *
+ * A name alone would be a guess, so it is never enough on its own. The second fact is
+ * that nothing in the workspace imports it, and the two together were measured across
+ * eight monorepos before being written down. They separate the fixtures —
+ * `packages/bruno-tests`, vite's ~70 `playground/@vitejs/test-*`, turborepo's
+ * `lockfile-tests`, grafana's four `test-plugins/*` — from the test-named packages that
+ * are real code somebody imports: `@grafana/e2e-selectors` (published to npm),
+ * `@grafana/test-utils`, `@turbo/test-utils`, `@immich/e2e-auth-server`. Every one of
+ * those eight is depended on by a sibling; not one of the fixtures is.
+ *
+ * A member with no `package.json` — a `pyproject.toml` member, a `.csproj` project — is
+ * never hidden on its name, because in an ecosystem whose dependency lists we do not
+ * read, "nothing imports it" is not a fact we found. It is a fact we failed to look for.
+ */
+function isTestFixture(scope: Scope, pkg: Record<string, unknown> | null, imported: Set<string>): boolean {
+  if (classifyZone(`${scope.dir}/package.json`) === 'test') return true;
+
+  const name = typeof pkg?.name === 'string' ? pkg.name : null;
+  if (!name) return false;
+  if (!TEST_NAME.test(name) && !TEST_NAME.test(path.posix.basename(scope.dir))) return false;
+  return !imported.has(name);
 }
 
 /** Where files belong that no declared package claims. */
@@ -375,8 +469,7 @@ function dotnetScopes(root: string): Scope[] {
   return out;
 }
 
-function describeScope(root: string, dir: string): Scope {
-  const pkg = readJson(path.join(root, dir, 'package.json'));
+function describeScope(root: string, dir: string, pkg: Record<string, unknown> | null): Scope {
   const pyproject = fs.existsSync(path.join(root, dir, 'pyproject.toml'));
 
   const declared = typeof pkg?.name === 'string' ? pkg.name : null;

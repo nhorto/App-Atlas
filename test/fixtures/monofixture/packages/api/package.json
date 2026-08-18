@@ -1,0 +1,8 @@
+{
+  "name": "@acme/api",
+  "version": "1.0.0",
+  "main": "src/server.js",
+  "dependencies": { "express": "^4.21.2" },
+  "devDependencies": { "@acme/test-utils": "workspace:*" },
+  "scripts": { "start": "node src/server.js" }
+}
