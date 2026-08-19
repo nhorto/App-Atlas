@@ -473,6 +473,48 @@ function detectRoutes(
     return best;
   };
 
+  /**
+   * What to look a wrapper up by.
+   *
+   * A plain function is known by its name, and so is a package's: `RequireAuth`,
+   * `auth.Require`. A *method* is not. `csrfMiddleware.handle`,
+   * `webSessionMiddleware.handle` and `authProxyMiddleware.handle` are three different
+   * functions in one miniflux package, and matching on the last segment the way every
+   * other name in this file is matched hung the one of them that writes a 403 — the
+   * reverse-proxy check, wrapped around a single login page — in front of ninety-eight
+   * routes it has never been near. A number that improved because the evidence got
+   * weaker is the one outcome worse than the gap it filled.
+   *
+   * So a method is keyed by the *constructor* of the thing it hangs off rather than by
+   * the variable it was called on, and `detectCheckers` writes the same key down at the
+   * other end. The constructor is a name both files can spell without seeing each
+   * other: `newCSRFMiddleware#handle` is not `newAuthProxyMiddleware#handle`, whatever
+   * the local variables were called. `#` and not `.` because the merge reads a dotted
+   * name as package-qualified and takes the last segment of it, which is the very thing
+   * being avoided.
+   *
+   * A receiver this file cannot follow back to a constructor — a struct field, a
+   * parameter, a variable assigned somewhere else — gets nothing, and the wrap is
+   * looked up by whatever else is on the chain. An honest gap is the only other answer
+   * available and it is the safe one: the door reads open, which is what it read before
+   * any of this existed.
+   */
+  const wrapperKey = (call: GCall): string | null => {
+    if (!call.receiver) return call.callee;
+    if (imports.has(call.receiver)) return call.callee;
+    if (!call.method) return null;
+    const built = new Set<string>();
+    for (const binding of file.bindings) {
+      if (binding.name !== call.receiver || !binding.callee) continue;
+      built.add(binding.callee.replace(/\(.*$/, ''));
+    }
+    // Two constructors under one name is two types, and picking either would be the
+    // guess this whole key exists to refuse.
+    if (built.size !== 1) return null;
+    const ctor = [...built][0].split('.').pop();
+    return ctor ? `${ctor}#${call.method}` : null;
+  };
+
   /** What a router variable is called outside the function it was built in. */
   const identityOf = (varName: string, index: number): string => {
     for (const alias of aliases) {
@@ -738,6 +780,54 @@ function detectRoutes(
     }
   }
 
+  // --- pass four: a router handed to the check ------------------------------
+  // `return middleware.validateAPIKeyAuth(mux)` — nothing was attached to the router.
+  // The router is the *argument*, and what stands in front of it is the function it was
+  // handed to. Everything registered on that mux answers from behind the wrapper, and
+  // the wrapper's name appears nowhere near a route.
+  //
+  // miniflux writes its whole API this way and its whole UI one file over. Read the
+  // other three passes' way, its fifty-two `/v1` routes — somebody's entire reading
+  // history — came out as fifty-two open doors, with the only lock on the map hung on
+  // `POST /accounts/ClientLogin`, which is the one route in the application that cannot
+  // require a caller to be signed in.
+  //
+  // Walked outward, because the wrappers nest: `withCORSHeaders(validateAPIKeyAuth(
+  // validateBasicAuth(mux)))` puts three names in front of one mux, and only the
+  // innermost of them has the router as an argument it can see. Each hop out really
+  // does receive the wrapped handler, so each is a candidate on the same evidence.
+  //
+  // Nothing here decides that any of these names is a check. `withCORSHeaders` is
+  // handed the same router by the same call as the two beside it, and the merge tells
+  // them apart the way it always has — by which of them writes a 401.
+  for (const call of byPosition) {
+    // A call written *on* a router already had its say in the passes above: that is a
+    // registration, a group or a mount. `r.Mount("/api", api)` hands a router over
+    // without standing in front of it, and reading it as a wrapper would offer `Mount`
+    // as a candidate check.
+    if (call.receiver && routers.has(call.receiver)) continue;
+    if (!wrapsAHandler(call)) continue;
+    for (const arg of call.args) {
+      // A name, not a call. `users.Register(v1.Group("/users"))` hands over a group
+      // that was built on the spot, and pass one already read that line as a mount.
+      if (arg.t !== 'name' || !routers.has(arg.v)) continue;
+      const names: string[] = [];
+      for (let hop: GCall | null = call; hop && wrapsAHandler(hop); hop = enclosingCall(hop)) {
+        const key = wrapperKey(hop);
+        if (key) names.push(key);
+      }
+      if (names.length === 0) continue;
+      findings.push({
+        type: 'router-guard',
+        varName: identityOf(arg.v, call.startIndex),
+        path: file.path,
+        names,
+        how: 'middleware',
+        line: call.line,
+      });
+    }
+  }
+
   return wiring;
 }
 
@@ -874,6 +964,47 @@ function bareType(type: string): string {
 }
 
 /**
+ * Whether a call has the shape of Go's middleware and not of its wiring.
+ *
+ * `func(http.Handler) http.Handler` is the language's whole middleware convention —
+ * every router library in Go and the standard library agree on it — so a wrapper is
+ * called with the handler and nothing else. A function that takes the router *and* four
+ * other things is being handed the router to register on, which is the opposite
+ * relationship: it goes behind the routes rather than in front of them.
+ *
+ * memos is why this is here. `RegisterSSERoutes(gwGroup, s.SSEHub, s.Store, s.Secret)`
+ * registers one SSE route whose handler answers a missing token with a 401 — which makes
+ * the registrar itself read as a function that turns callers away, three hops up — and
+ * without this it stood in front of `ANY /api/v1/*` and `ANY /file/*`, neither of which
+ * it has anything to do with.
+ *
+ * Read at the call rather than at the definition, which is the weaker of the two and the
+ * only one available: the wrapper is defined in another file, and this tier sees one.
+ */
+function wrapsAHandler(call: GCall): boolean {
+  return call.args.length === 1;
+}
+
+/**
+ * The functions in this file that hand back the type a method hangs off.
+ *
+ * `func newMiddleware(s *storage.Storage) *middleware` is what makes `middleware`
+ * nameable from a file that never mentions the type — Go's constructors are unexported
+ * as often as not, but they are the one thing a caller has to write in order to have a
+ * receiver at all. Single-return only: a `(T, error)` pair is a factory that can fail
+ * and this reads the plain case rather than guessing at the shape of the other one.
+ */
+function constructorsOf(file: GenericFile, owner: string | null): string[] {
+  if (!owner) return [];
+  const out: string[] = [];
+  for (const def of file.defs) {
+    if (def.kind !== 'function' || def.owner) continue;
+    if (bareType(def.returns) === owner) out.push(def.name);
+  }
+  return out;
+}
+
+/**
  * `version` → `/version`.
  *
  * Every Go router treats a route path as absolute from the router it is written on, and
@@ -947,7 +1078,16 @@ function detectCheckers(input: BoundaryInput, wiring: Set<string>, findings: Bou
 
     // Named, so that a router that attaches it by name — in this file or four files
     // away — can be told a lock from a logger.
-    findings.push({ type: 'auth-checker', name: def.name, guard, ...(switchedByCaller(def) ? { switched: true } : {}) });
+    const switched = switchedByCaller(def) ? { switched: true } : {};
+    findings.push({ type: 'auth-checker', name: def.name, guard, ...switched });
+
+    // And again under the key a caller who wrote `mw.handle(mux)` is able to build —
+    // see `wrapperKey`. A method's own name is not unique inside a Go package, so the
+    // constructor of the type it hangs off stands in for the type, which is a name the
+    // calling file can write down without seeing this one.
+    for (const ctor of constructorsOf(file, def.owner)) {
+      findings.push({ type: 'auth-checker', name: `${ctor}#${def.name}`, guard, ...switched });
+    }
 
     // And attached to itself, because a handler that does its own checking is guarded,
     // and a route answering with it should not read as wide open. Gin's `ArticleDelete`
