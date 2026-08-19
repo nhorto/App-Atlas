@@ -32,6 +32,7 @@ import {
   looksLikeRouter as isRouter,
   objectProp,
   permitsEverything,
+  stringArray,
 } from './ast.js';
 import { unreadHead } from './address.js';
 import { guardAt, guardFromName } from './auth.js';
@@ -307,6 +308,7 @@ export const nodeRoutesDetector: BoundaryDetector = {
     if (Node.isCallExpression(node)) {
       routeCall(node, ctx);
       fastifyRouteObject(node, ctx);
+      restivusRoute(node, ctx);
       routerMount(node, ctx);
       routerHandoff(node, ctx);
       globalPrefix(node, ctx);
@@ -1243,6 +1245,236 @@ function fastifyRouteObject(call: CallExpression, ctx: DetectorContext): void {
       handlerIsScope: true,
     });
   }
+}
+
+/**
+ * A Restivus registration, in either of the two spellings (#236).
+ *
+ *   API.v1.addRoute(
+ *     'canned-responses.get',
+ *     { authRequired: true, permissionsRequired: ['view-canned-responses'] },
+ *     { async get() { … } },
+ *   );
+ *
+ *   API.v1.get('licenses.info', { authRequired: true, … }, async function action() { … });
+ *
+ * The shape is Restivus', and Rocket.Chat's `APIClass` is descended from it — its own
+ * stack traces still name `packages/nimble_restivus/lib/route.coffee`. It declares its
+ * entire HTTP surface these two ways, 462 times, and every one of them was read as
+ * nothing. What the map showed instead was 13 doors, none of them the API: a chat server
+ * with almost no way in, which is the direction of error this project exists to prevent.
+ *
+ * Neither spelling is a variant of `app.get(path, handler)` that `routeCall` could be
+ * stretched to cover, and they fail to be one for opposite reasons. `addRoute` has no
+ * verb in the callee at all — it is the *key* of the object handed over last, so one call
+ * is as many doors as it has keys. The typed form has the verb in the right place and the
+ * path in the wrong one: relative, on a receiver named `v1`. See `typedVerb`.
+ *
+ * ## What makes it a registration
+ *
+ * The name will not do it. `addRoute` is vue-router's too, with the same two arities: a
+ * record on its own, and a parent name with a child record — `router.addRoute('admin',
+ * { path: 'users', component: AdminUsers })` is a string and an object and a path, and
+ * what it registers is a screen. Route tries have one as well.
+ *
+ * What separates them is #300's fact one level in. A registration hands over handlers,
+ * and here they arrive keyed by verb: `{ async get() {…}, async post() {…} }` is a
+ * framework being told what answers GET and what answers POST, and there is no reading of
+ * it that is not a route. `{ path: 'users', component: … }` has no verb key.
+ *
+ * Restivus also documents `get: { authRequired: true, action() {…} }`, and `APIClass`
+ * generates exactly that internally. It is not read here, because no site in the corpus
+ * writes it — reading a shape nobody uses would be a rule with nothing to measure it
+ * against, which is #281.
+ *
+ * ## The address stays half-read
+ *
+ * `canned-responses.get` answers at `/api/v1/canned-responses.get`, and that head is
+ * assembled at runtime from two fields of a class and a mount in another file:
+ *
+ *   this.apiPath = [properties.apiPath, properties.version].filter(Boolean).join('/')
+ *
+ * So it is printed as unread — `…canned-responses.get`, no separator — which is #199 and
+ * #269's answer rather than a new one. `/canned-responses.get` would be an address
+ * nobody can call.
+ *
+ * ## The framework
+ *
+ * `Restivus`, because that is the convention that found it and it is the one label that
+ * is true of all 462. Rocket.Chat serves them over Hono today and its manifest also
+ * names Express; picking either from the manifest would put a wrong fact on the card,
+ * and it would hand these doors whatever global prefix that framework was given.
+ */
+function restivusRoute(call: CallExpression, ctx: DetectorContext): void {
+  const dotted = dottedName(call.getExpression());
+  if (!dotted?.includes('.')) return;
+
+  const route = literalString(argAt(call, 0));
+  if (!route) return;
+
+  const args = call.getArguments();
+  const called = dotted.slice(dotted.lastIndexOf('.') + 1);
+  const verbs = called === 'addRoute' ? verbKeyedHandlers(args[args.length - 1]) : typedVerb(called, args);
+  if (verbs.length === 0) return;
+
+  // `(path, options, …)` and `(path, handlers)` are both written; the options are
+  // whatever sits between the path and the last argument, and there is nothing to read
+  // when nothing does.
+  const options = args.length > 2 ? args[1] : undefined;
+  // `authRequired: false` is somebody writing down that this door is open on purpose —
+  // the same statement Strapi's `auth: false` makes, and `permitsEverything` reads off a
+  // Nest guard (#152).
+  const open = objectProp(options, 'authRequired')?.getText() === 'false';
+
+  for (const { verb, at } of verbs) {
+    const finding: EndpointFinding = {
+      type: 'endpoint',
+      endpointKind: 'http-route',
+      key: `${verb} ${route}`,
+      name: `${verb} ${route}`,
+      method: verb,
+      route,
+      framework: 'Restivus',
+      writes: WRITE_METHODS.has(verb),
+      ...(open ? { declaredPublic: true } : {}),
+      guards: restivusGuards(options, verb, ctx),
+      site: ctx.site(at, label(called, route, verb)),
+      handlerId: ctx.enclosing(call),
+      handlerIsScope: true,
+    };
+    // Always hedged, and not because of the leading slash. `apiPath` prepends whether or
+    // not the subpath starts with one: `/federation/matrixIds.verify` is registered with
+    // it and answers at `/api/v1/federation/matrixIds.verify` all the same, so a resolved
+    // address would be wrong in the one case that looks resolvable.
+    ctx.emit(unreadHead(finding, [ctx.ref.relPath, called], null));
+  }
+}
+
+/**
+ * The verbs a Restivus handler object answers, and the node that answers each.
+ *
+ * Both halves are required and neither is enough alone. A key named `get` proves nothing
+ * — `permissionsRequired: { GET: ['view-c'] }` is keyed by verb too, and that is this
+ * framework's own options object. A function proves nothing either; `component` and
+ * `beforeEnter` are functions on a vue-router record. A verb bound to something callable
+ * is the registration.
+ */
+function verbKeyedHandlers(node: Node | undefined): { verb: string; at: Node }[] {
+  if (!node || !Node.isObjectLiteralExpression(node)) return [];
+  const found: { verb: string; at: Node }[] = [];
+  for (const prop of node.getProperties()) {
+    if (Node.isMethodDeclaration(prop)) {
+      if (VERB_KEYS.has(prop.getName())) found.push({ verb: prop.getName().toUpperCase(), at: prop });
+      continue;
+    }
+    if (!Node.isPropertyAssignment(prop)) continue;
+    const name = prop.getName().replace(/^['"`]|['"`]$/g, '');
+    if (!VERB_KEYS.has(name)) continue;
+    const value = prop.getInitializer();
+    if (!value || !couldRun(value)) continue;
+    found.push({ verb: name.toUpperCase(), at: value });
+  }
+  return found;
+}
+
+/**
+ * The other spelling: `API.v1.get('licenses.info', { authRequired: true, … }, action)`,
+ * which `APIClass` forwards to `addRoute` with the verb moved into the object. 289 of
+ * Rocket.Chat's 462 registrations are written this way — more than the `addRoute` form
+ * — and they are the newer half, so reading only the other one would leave the map
+ * getting steadily less true as the file moves.
+ *
+ * This one is shaped exactly like `app.get(path, middleware, handler)`, and `routeCall`
+ * is one relaxation away from taking it: the receiver is `v1`, and the path is relative.
+ * That relaxation is the rule this backlog keeps re-learning — Ghost has 5,786 slashless
+ * calls on a router-shaped method, nearly all of them `config.get('url')` — so nothing
+ * here is relaxed. What identifies it is the options object between the two, and only
+ * names this framework invented: `authRequired`, `permissionsRequired`,
+ * `authOrAnonRequired`, `twoFactorRequired`, `validateParams`. `config.get('url')` has
+ * no second argument at all, and no library that is not this one writes those words.
+ *
+ * 288 of the 289 carry one. The one that does not declares only its response schema,
+ * and is left unread rather than reached for by loosening the list to `response` — a
+ * word half the ecosystem uses.
+ */
+function typedVerb(called: string, args: Node[]): { verb: string; at: Node }[] {
+  if (!VERB_KEYS.has(called) || args.length < 3) return [];
+  if (!RESTIVUS_OPTIONS.some((name) => objectProp(args[1], name))) return [];
+  const action = args[2];
+  return couldRun(action) ? [{ verb: called.toUpperCase(), at: action }] : [];
+}
+
+/**
+ * What to print beside the file and line, which is the method as it was written and not
+ * the whole chain it was written on.
+ *
+ * `APIClass`'s verbs return `this`, and Rocket.Chat uses that: one `API.v1` carries
+ * eleven registrations in `ee/server/api/abac/index.ts` alone. `dottedName` flattens the
+ * chain, so quoting it verbatim gives a reader
+ * `API.v1.post.delete.post.put.delete.get.post.post.put.get.delete('abac/attributes/:_id')`
+ * — a call nobody wrote, and one that reads as ten methods on one door.
+ */
+function label(called: string, route: string, verb: string): string {
+  return called === 'addRoute'
+    ? `addRoute('${route}', … { ${verb.toLowerCase()} })`
+    : `${called}('${route}', …)`;
+}
+
+const VERB_KEYS = new Set(HTTP_METHODS.map((method) => method.toLowerCase()));
+
+const RESTIVUS_OPTIONS = [
+  'authRequired',
+  'authOrAnonRequired',
+  'permissionsRequired',
+  'twoFactorRequired',
+  'validateParams',
+];
+
+/**
+ * The checks on a Restivus route, which are the options with a refusal contract.
+ *
+ * `authRequired`, `twoFactorRequired` and `permissionsRequired` are enforced by
+ * middleware that answers 401 or 403 and never calls `next()` — the framework saying, in
+ * as many words, that this is what decides whether the request proceeds, which is the
+ * evidence standard `@UseGuards` and Strapi's `policies` meet.
+ *
+ * Three of the words that identify a registration deliberately do not qualify as one of
+ * its checks. `validateParams` refuses a malformed body, not a caller. `license` gates
+ * the deployment rather than whoever is knocking, and reading it as a lock would put a
+ * check on a door that has none for anybody on a licensed install — the wrong direction,
+ * and #241's mistake exactly. `authOrAnonRequired` passes an anonymous caller whenever
+ * the setting behind it is on, which is #237: a middleware that reads identity and
+ * refuses nobody is not a lock.
+ *
+ * `permissionsRequired` has three spellings and the last two are keyed by method, so
+ * they are read per verb rather than pooled: a permission written under `POST` is not a
+ * check on the `GET` that shares the registration.
+ */
+function restivusGuards(options: Node | undefined, verb: string, ctx: DetectorContext): GuardInfo[] {
+  const guards: GuardInfo[] = [];
+  const at = (node: Node): Pick<GuardInfo, 'how' | 'provider' | 'path' | 'line' | 'confidence'> => ({
+    how: 'config',
+    provider: 'Restivus',
+    path: ctx.ref.relPath,
+    line: node.getStartLineNumber(),
+    confidence: 'certain',
+  });
+
+  for (const name of ['authRequired', 'twoFactorRequired']) {
+    const value = objectProp(options, name);
+    if (value?.getText() === 'true') guards.push({ name, ...at(value) });
+  }
+
+  const required = objectProp(options, 'permissionsRequired');
+  if (required) {
+    const forVerb = Node.isObjectLiteralExpression(required)
+      ? objectProp(required, verb) ?? objectProp(required, verb.toLowerCase())
+      : required;
+    const list = forVerb && Node.isObjectLiteralExpression(forVerb) ? objectProp(forVerb, 'permissions') : forVerb;
+    for (const name of stringArray(list)) guards.push({ name, ...at(required) });
+  }
+
+  return guards;
 }
 
 /**
